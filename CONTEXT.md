@@ -116,6 +116,31 @@ The UI is in English for v1 (one operator, an engineer). Call content is Vietnam
 rendered verbatim. Pipeline vocabulary appears on screen as-is (`endpoint_wait`, not a
 translation), with a one-line plain-language gloss where a term first appears.
 
+### Look and feel — interim palette until the design system lands
+
+A full design system (theme, style guide, typography, logo usage) arrives later as its own
+task. Until then every screen uses the palette below, taken from the brand lockup
+`public/fonnus-lockup-horizontal.svg` and the marketing site's hero (2026-09-07), and is
+built for layout and reading flow first — nothing in a screen should be hard to restyle
+when the system lands. Font family is not decided: system sans until the style guide says.
+
+| Token | Value | Taken from |
+|---|---|---|
+| `ink` (headings, body) | `#261F18` | the wordmark fill |
+| `accent` (links, the highlighted word, the logo arc) | `#B85C2B` | the lockup's arc stroke |
+| `accent-strong` (primary buttons) | `#A04E1F` | hero call-to-action buttons |
+| `muted` (secondary text, captions) | `#5C5249` | hero subtitle |
+| `bg` (page) | `#F7EEE1` | hero background cream |
+| `surface` (cards, nav bar) | `#FEF7EA` | nav card |
+| `surface-raised` (inputs) | `#FFFBF2` | phone input |
+| `border` (dividers, card edges) | `#E1D4C4` | hero divider |
+| `border-strong` (outline buttons) | `#D1CDC5` | "Đăng nhập" outline |
+
+Rendering rules that follow from the palette: warm cream ground, rounded cards on it,
+one accent for anything clickable, no dark mode. Caveats (cost floor, consented-only,
+first-sentence-only, retention age) use `muted` text next to their number, never the
+accent — the accent is for actions, not warnings.
+
 ## Stack
 
 | Layer | Choice | Why (full rationale: `docs/adr/0001-stack.md`) |

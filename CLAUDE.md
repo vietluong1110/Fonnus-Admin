@@ -89,8 +89,8 @@ decision down in `docs/adr/` before code.
 
 ## Commands
 
-Once row A0 of `PLAN.md` lands: `pnpm dev` · `pnpm build` · `pnpm typecheck` · `pnpm lint`
-· `pnpm test`. Until then there is no code here.
+`pnpm dev` · `pnpm build` · `pnpm typecheck` · `pnpm lint` · `pnpm test`. The smoke check
+against a real database is `curl localhost:3000/api/healthz` (`README.md`).
 
 ## Commit messages
 

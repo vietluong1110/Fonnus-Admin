@@ -16,6 +16,10 @@ Role `console`, database `fonnus`, schema `public`, read-only. Two paths, both o
 (contract §2): `postgres:5432` from a container on `fonnus_default`, `127.0.0.1:5432` from
 host networking; from a laptop, an SSH tunnel to the latter (`README.md`).
 
+The probe `/api/healthz` is the one exception to everything below: it issues
+`select current_user` and reads no table, so it depends on no column of the contract — it
+answers only whether the connection stands and which role it was made as.
+
 ## Call list
 
 | Reads | Column(s) | Trap |

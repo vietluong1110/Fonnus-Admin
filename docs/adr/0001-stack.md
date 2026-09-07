@@ -15,12 +15,21 @@
   write path to lose.
 - **Recharts** for the waterfall and the percentile trends — declarative, React-native,
   enough for bars and lines; nothing here needs a canvas.
+- **Tailwind CSS v4** for styling — it is what `create-next-app` sets up, so the scaffold
+  carries no styling decision of its own, and the tables, badges and caveat lines every
+  screen repeats are written once as utility classes rather than as a growing stylesheet.
 - Toolchain mirrors the pipeline so a session that knows one repo knows both: pnpm 11,
   Node 22, `tsconfig` strict flags (`strict`, `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, `noImplicitOverride`, `noFallthroughCasesInSwitch`,
   `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`), ESLint flat config with
   `strictTypeChecked`, vitest for the pure functions (leg spans, percentiles, the consent
   gate).
+  One deliberate gap in the mirror: ESLint stays on 9.x here while the pipeline is on 10.x,
+  because `eslint-config-next` (the React, hooks and Next.js rules every screen leans on)
+  pulls `eslint-plugin-react`, which crashes on ESLint 10. Raise the pin when that plugin
+  catches up; the lint rules a UI codebase needs are worth one major of parity. The three
+  core rules ESLint 10 added to `recommended` are switched on by hand in the meantime, so
+  the rule set itself is equal.
 
 ## Why
 
@@ -43,6 +52,9 @@
   across the two repos' futures (the clinic-facing UI seeds from this one).
 - **Importing the pipeline's Drizzle schema** — see Decision; the contract, not the schema,
   is what this repo may rely on.
+- **Plain CSS instead of Tailwind** — two fewer dependencies and no build step for styles,
+  but every table, badge and caveat line would be styled by hand, and the template would
+  have to be un-wired from Tailwind before the first screen exists.
 - **Grafana over Postgres** — dashboards in minutes, but no call-detail page, no consent
   gate in the reader (trap 4 would be a per-panel SQL discipline nobody checks), and a
   third container on the phone box.

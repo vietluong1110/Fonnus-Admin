@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+/* The interim palette of CONTEXT.md §Look and feel — the brand lockup's colours,
+   in use until the design system task replaces them. Named as Tailwind v4 theme
+   colours so a screen writes `bg-bg`, `text-muted`, `border-border` and the whole
+   set can be swapped in this one block. */
+@theme {
+  --color-ink: #261f18;
+  --color-accent: #b85c2b;
+  --color-accent-strong: #a04e1f;
+  --color-muted: #5c5249;
+  --color-bg: #f7eee1;
+  --color-surface: #fef7ea;
+  --color-surface-raised: #fffbf2;
+  --color-border: #e1d4c4;
+  --color-border-strong: #d1cdc5;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
