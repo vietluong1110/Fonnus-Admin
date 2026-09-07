@@ -29,13 +29,15 @@ answers only whether the connection stands and which role it was made as.
 
 Order: `started_at DESC`; index `call_log_started_idx` serves it. Vocabularies:
 `end_reason` and `outcome` are fixed sets (contract §3.1) — render unknown values as-is
-with a warning, never drop the row.
+with a warning, never drop the row. Every `timestamptz` is an absolute instant; the screens
+render it in `Asia/Ho_Chi_Minh` pinned in code (`src/calls.ts`), never in the process's
+own zone, so the box and a laptop show the same clock.
 
 ## Call detail
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` | everything above plus `caller_phone_e164`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir` | `caller_phone_e164` null may be age (trap 5); `artifact_dir` may be swept (trap 5) — it is a path, not a promise |
+| `call_log` | everything above plus `caller_phone_e164`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot` | `caller_phone_e164` null may be age (trap 5); `artifact_dir` may be swept (trap 5) — it is a path, not a promise; `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6) |
 | `consent_record` | `consent_mode`, `disclosure_completed_at`, `granted_at`, `outcome`, `disclosure_text` | — |
 | `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes` | **`caller_text` only when `outcome = 'granted'`** (trap 4); null text may be age (trap 5); null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it |
 
@@ -57,7 +59,11 @@ end points, copied from `../Fonnus/app/src/domain/latency.ts` and
 
 `endpoint_wait + llm_ttft + tts_ttfb + send` tiles `caller_perceived_ms` exactly; the last
 three tile `pipeline_ms`. A span whose end precedes its start is a fault, rendered "not
-measured" — never a negative bar, never folded into a percentile. Targets (ADR 0007):
+measured" — never a negative bar, never folded into a percentile. The waterfall's axis
+starts at `speech_end`; the pipeline leaves that key out when the audio clock has no
+origin (`effect-runner.ts`: an invented `speech_end` is worse than a missing one), and
+then a leg can have a span but no place on the axis — it is named under the chart as
+"measured but not placed", never drawn from 0 as if it ran alongside the legs before it. Targets (ADR 0007):
 `pipeline_ms` P95 < 1 200; `caller_perceived_ms` alarm at P95 ≥ 3 600 (aspirational).
 
 When `../Fonnus` W2-L3 F2 lands, three more keys appear — `llm_last_token`,

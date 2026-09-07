@@ -8,7 +8,7 @@ it must never do: `CONTEXT.md`. Working here with Claude Code: `CLAUDE.md`.
 
 ```bash
 pnpm install
-pnpm dev          # http://localhost:3000
+pnpm dev          # http://localhost:3000 — `/calls` is the call list, `/calls/<id>` one call
 pnpm build        # needs no database
 pnpm start        # the built app
 pnpm typecheck
