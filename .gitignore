@@ -1,0 +1,17 @@
+# Secrets & machine-specific. The glob also covers .env.bak / .env.prod / .env.local.
+.env*
+!.env.example
+
+# Call artifacts must never land on a tracked path, whatever tool wrote them
+# (same backstop as the pipeline repo).
+*.wav
+*.raw
+**/events.jsonl
+**/call.json
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
