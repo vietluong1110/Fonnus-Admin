@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   LEGS,
   PARTITION_LEGS,
+  STAGES,
   TARGETS,
+  endOfTurnRows,
   legSpans,
   parseMarks,
   spanOf,
@@ -23,6 +25,13 @@ const FULL: Partial<Record<Stage, number>> = {
   tts_first_byte: T0 + 1_150,
   first_audio_out: T0 + 1_260,
   playback_start: T0 + 1_320,
+};
+
+/** The three end-of-turn marks (contract §3.2) of that same turn. */
+const TAIL: Partial<Record<Stage, number>> = {
+  llm_last_token: T0 + 1_050,
+  tts_last_byte: T0 + 1_400,
+  playback_end: T0 + 3_100,
 };
 
 describe('LEGS — copied from ../Fonnus/app/src/domain/latency.ts', () => {
@@ -88,20 +97,12 @@ describe('legSpans', () => {
 });
 
 describe('parseMarks — the jsonb trust boundary', () => {
-  it('keeps the seven known keys', () => {
-    expect(parseMarks({ ...FULL })).toEqual(FULL);
-  });
-
-  it('drops keys outside the committed contract, F2 marks included', () => {
-    expect(
-      parseMarks({
-        speech_end: T0,
-        llm_last_token: T0 + 1,
-        tts_last_byte: T0 + 2,
-        playback_end: T0 + 3,
-        whatever: 4,
-      }),
-    ).toEqual({ speech_end: T0 });
+  it('keeps the ten keys of contract §3.2 and drops everything else', () => {
+    const kept = { ...FULL, ...TAIL };
+    expect(Object.keys(kept)).toHaveLength(STAGES.length);
+    // `answered` is a real mark, but of `call_log.greeting_marks` (§3.5), not
+    // of `turn.marks`; `foo` stands for a key a later pipeline may add.
+    expect(parseMarks({ ...kept, answered: T0 - 5_000, foo: 2 })).toEqual(kept);
   });
 
   it('drops values that are not finite numbers', () => {
@@ -158,5 +159,50 @@ describe('waterfallRows', () => {
     const rows = waterfallRows(parseMarks({}));
     expect(rows).toHaveLength(6);
     expect(rows.every((row) => row.spanMs === null && row.offsetMs === null)).toBe(true);
+  });
+});
+
+describe('endOfTurnRows — the end-of-turn marks of contract §3.2', () => {
+  it('returns the three spans in the contract order, placed from speech_end', () => {
+    expect(endOfTurnRows({ ...FULL, ...TAIL })).toEqual([
+      { from: 'llm_first_token', to: 'llm_last_token', offsetMs: 900, spanMs: 150 },
+      { from: 'tts_first_byte', to: 'tts_last_byte', offsetMs: 1_150, spanMs: 250 },
+      { from: 'playback_start', to: 'playback_end', offsetMs: 1_320, spanMs: 1_780 },
+    ]);
+  });
+
+  it('reports a half-stamped pair as not measured, keeping the other two', () => {
+    const half = { ...FULL, ...TAIL };
+    delete half.tts_last_byte;
+    const rows = endOfTurnRows(half);
+    expect(rows.map((row) => row.spanMs)).toEqual([150, null, 1_780]);
+  });
+
+  it('reports a reversed pair as null rather than a negative span', () => {
+    const rows = endOfTurnRows({ ...FULL, ...TAIL, playback_end: T0 + 1_000 });
+    expect(rows[2]).toEqual({
+      from: 'playback_start',
+      to: 'playback_end',
+      offsetMs: 1_320,
+      spanMs: null,
+    });
+  });
+
+  it('measures a span it cannot place when there is no speech_end', () => {
+    const noOrigin = { ...FULL, ...TAIL };
+    delete noOrigin.speech_end;
+    expect(endOfTurnRows(noOrigin)).toEqual([
+      { from: 'llm_first_token', to: 'llm_last_token', offsetMs: null, spanMs: 150 },
+      { from: 'tts_first_byte', to: 'tts_last_byte', offsetMs: null, spanMs: 250 },
+      { from: 'playback_start', to: 'playback_end', offsetMs: null, spanMs: 1_780 },
+    ]);
+  });
+
+  it('returns all three rows even when the turn stamped none of them', () => {
+    expect(endOfTurnRows({})).toEqual([
+      { from: 'llm_first_token', to: 'llm_last_token', offsetMs: null, spanMs: null },
+      { from: 'tts_first_byte', to: 'tts_last_byte', offsetMs: null, spanMs: null },
+      { from: 'playback_start', to: 'playback_end', offsetMs: null, spanMs: null },
+    ]);
   });
 });

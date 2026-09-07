@@ -2,7 +2,7 @@
  * Per-turn latency marks and legs — copied, not imported, from
  * `../Fonnus/app/src/domain/latency.ts` (ADR 0001: the pipeline is a separate
  * repository and this console reads its data, so the rule travels as a copy with
- * a test pinning it to the pipeline's names). The stage list is the seven keys
+ * a test pinning it to the pipeline's names). The stage list is the ten keys
  * of `../Fonnus/docs/read-contract.md` §3.2; the legs are
  * `../Fonnus/PIPELINE_ARCHITECTURE.md` §6.
  *
@@ -17,19 +17,25 @@ export type Stage =
   | 'endpoint_decision'
   | 'stt_final'
   | 'llm_first_token'
+  | 'llm_last_token'
   | 'tts_first_byte'
+  | 'tts_last_byte'
   | 'playback_start'
-  | 'first_audio_out';
+  | 'first_audio_out'
+  | 'playback_end';
 
-/** The seven keys `turn.marks` may carry today; anything else is dropped. */
+/** The ten keys `turn.marks` may carry today; anything else is dropped. */
 export const STAGES = [
   'speech_end',
   'endpoint_decision',
   'stt_final',
   'llm_first_token',
+  'llm_last_token',
   'tts_first_byte',
+  'tts_last_byte',
   'playback_start',
   'first_audio_out',
+  'playback_end',
 ] as const satisfies readonly Stage[];
 
 export const LEGS = [
@@ -46,6 +52,20 @@ export const LEGS = [
   /** Sink → FreeSWITCH says it played a chunk (advisory). */
   { name: 'playback', from: 'first_audio_out', to: 'playback_start' },
 ] as const satisfies readonly { name: string; from: Stage; to: Stage }[];
+
+/*
+ * The three end-of-turn spans (`../Fonnus/docs/read-contract.md` §3.2, which
+ * calls them the end-of-turn marks). They are deliberately NOT legs: the
+ * pipeline names no leg for them and its own test pins that adding them must
+ * not change the partition (`../Fonnus/app/src/domain/__tests__/latency.test.ts`,
+ * "ignores the end-of-turn marks"). So this console coins no name for them
+ * either — each row is identified by its mark pair and nothing else.
+ */
+const END_OF_TURN_PAIRS = [
+  { from: 'llm_first_token', to: 'llm_last_token' },
+  { from: 'tts_first_byte', to: 'tts_last_byte' },
+  { from: 'playback_start', to: 'playback_end' },
+] as const satisfies readonly { from: Stage; to: Stage }[];
 
 export type LegName = (typeof LEGS)[number]['name'];
 
@@ -93,6 +113,39 @@ export function legSpans(marks: Partial<Record<Stage, number>>): Record<LegName,
  * pipeline adds marks additively (contract §4), and an unknown key has no leg to
  * belong to. A non-finite or non-number value is dropped for the same reason.
  */
+export interface EndOfTurnRow {
+  from: Stage;
+  to: Stage;
+  spanMs: number | null;
+  /** Where the span starts on the axis whose origin is `speech_end`. */
+  offsetMs: number | null;
+}
+
+/**
+ * The three end-of-turn spans, always all three and always in this order, on
+ * the same axis as `waterfallRows` so they can be drawn under the legs. Same
+ * two null rules: a reversed or half-stamped pair has no span, and a span with
+ * no `speech_end` to place it from has no offset (it is listed, not drawn).
+ *
+ * Two readings the caller of this function must carry on screen, both §3.2:
+ * on an `interrupted` turn `playback_end` is the last lull before the barge-in,
+ * not the end of the reply; on `source = 'reopen'` these marks are the last
+ * generation's while the head marks are the first's.
+ */
+export function endOfTurnRows(marks: Partial<Record<Stage, number>>): EndOfTurnRow[] {
+  const origin = marks.speech_end;
+  return END_OF_TURN_PAIRS.map((pair) => {
+    const start = marks[pair.from];
+    const offset = origin === undefined || start === undefined ? null : start - origin;
+    return {
+      from: pair.from,
+      to: pair.to,
+      spanMs: spanOf(start, marks[pair.to]) ?? null,
+      offsetMs: offset === null || offset < 0 ? null : offset,
+    };
+  });
+}
+
 export function parseMarks(value: unknown): Partial<Record<Stage, number>> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
   const source = value as Record<string, unknown>;

@@ -37,15 +37,18 @@ own zone, so the box and a laptop show the same clock.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` | everything above plus `caller_phone_e164`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot` | `caller_phone_e164` null may be age (trap 5); `artifact_dir` may be swept (trap 5) — it is a path, not a promise; `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6) |
+| `call_log` | everything above plus `caller_phone_e164`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5); `artifact_dir` may be swept (trap 5) — it is a path, not a promise; `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `greeting_marks` itself is not read until row A1b draws the greeting axis |
 | `consent_record` | `consent_mode`, `disclosure_completed_at`, `granted_at`, `outcome`, `disclosure_text` | — |
-| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes` | **`caller_text` only when `outcome = 'granted'`** (trap 4); null text may be age (trap 5); null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it |
+| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | **`caller_text` only when `outcome = 'granted'`** (trap 4); null text may be age (trap 5); null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7) |
 
 ### The waterfall
 
 `turn.marks` is a JSON object of absolute wall-clock instants (ms since epoch), one key
-per stage the turn reached; every key optional (contract §3.2). The six legs and their
-end points, copied from `../Fonnus/app/src/domain/latency.ts` and
+per stage the turn reached; every key optional (contract §3.2). Ten keys since migration
+0008: `speech_end`, `endpoint_decision`, `stt_final`, `llm_first_token`, `llm_last_token`,
+`tts_first_byte`, `tts_last_byte`, `playback_start`, `first_audio_out`, `playback_end`;
+`src/latency.ts` keeps exactly these and drops any other key. The six legs and their end
+points, copied from `../Fonnus/app/src/domain/latency.ts` and
 `PIPELINE_ARCHITECTURE.md` §6:
 
 | Leg | from → to | Render note |
@@ -66,17 +69,24 @@ then a leg can have a span but no place on the axis — it is named under the ch
 "measured but not placed", never drawn from 0 as if it ran alongside the legs before it. Targets (ADR 0007):
 `pipeline_ms` P95 < 1 200; `caller_perceived_ms` alarm at P95 ≥ 3 600 (aspirational).
 
-When `../Fonnus` W2-L3 F2 lands, three more keys appear — `llm_last_token`,
-`tts_last_byte`, `playback_end` — and the waterfall extends past first byte with
-`llm_first_token → llm_last_token`, `tts_first_byte → tts_last_byte`,
-`playback_start → playback_end`. Absent keys stay absent bars.
+Under the six legs the waterfall draws the three **end-of-turn marks** of W2-L3 F2 as
+spans by mark pair — `llm_first_token → llm_last_token`, `tts_first_byte → tts_last_byte`,
+`playback_start → playback_end` — outside the partition. The pipeline names no leg for
+them (`app/src/domain/__tests__/latency.test.ts` pins that tail spans are not legs), so
+this console coins none: the label is the pair. Absent keys are absent bars; the reversed
+and not-placed rules above apply unchanged. Two facts the turn card states only when they
+apply (contract §3.2): on an `interrupted` turn `playback_end` is the last lull before the
+barge-in, not the end of the reply; on `source = 'reopen'` the head marks are the first
+generation's and the end-of-turn marks the last's.
 
-### The call timeline (after `../Fonnus` W2-L3 F5)
+### The call timeline (row A1b — not built yet; its data landed with `../Fonnus` W2-L3 F5–F6, 2026-09-07)
 
-F5 writes every record the pipeline's recorder puts in `events.jsonl` into a Postgres
-table as well — name, columns and vocabulary are the pipeline ADR's, read from the
-contract §3 when it lands; the shape the row is designed around is `call_id, seq, ts,
-kind, type, gen, turn_idx, phase, data jsonb`, ordered by `(call_id, seq)`. The record set
+F5 writes every record the pipeline's recorder puts in `events.jsonl` into the Postgres
+table `call_event` (pipeline ADR 0018, migration 0009; contract §3 "`call_event`") — shape
+`call_id, seq, ts, kind, type, gen, turn_idx, phase, data jsonb`, read ordered by
+`(call_id, seq)`. Nothing here reads it until A1b first consumes it; the traps of the
+contract's §5 (8–11) are folded into this section then. F6 added the sub-stage instants
+named below, including `tts/generation_sent` (the instant behind `CONTEXT.md` trap 8). The record set
 is `PIPELINE_ARCHITECTURE.md` §7's; the ones the timeline draws, and how the pipeline's own
 reader pairs them (`../Fonnus/tools/lib/call-report.ts` — copy the rules, do not import):
 
@@ -104,26 +114,44 @@ collapsed under the reply; it is what the model was doing before its first conte
 
 ## Dashboard
 
-Reads `turn` joined to `call_log` for the window (`started_at >= since`), the same rows the
-pipeline's `turnMetricRows` reads (`../Fonnus/app/src/persistence/call-queries.ts`), then
-computes per-leg spans from `marks` and takes nearest-rank P50 / P95 / max — the
-pipeline's rule (`tools/lib/call-report.ts`), chosen because turn counts are small and
-interpolation would invent values. Two numbers the pipeline's baseline JSON does not
-carry and this screen must compute itself: the percentiles of `caller_perceived_ms` and
-`pipeline_ms`.
+`/dashboard` (PLAN row A2), a server-rendered screen over a window `since` (the pipeline's
+`report-calls --since` forms: `7d`, `36h`, `15m`, or an ISO instant; default `7d`) and a
+grouping (`none`, `llm_model`, `stt_model`, `tts_model`, `config`, or `key:<snapshot key>`).
+Two hand-written queries in `src/queries/dashboard.ts`, both bounded by the window only —
+**no `LIMIT` on turn rows**, the trap the pipeline's own `turnMetricRows`
+(`../Fonnus/app/src/persistence/call-queries.ts`) falls into by capping turns after the
+join. A window longer than 366 days is refused on screen, because the pool gives a
+statement 10 seconds (`src/db.ts`) and the screen reads every turn in the window.
 
-Grouping columns available today: `turn.llm_model`, `call_log.stt_model`,
-`call_log.tts_model`, and `call_log.config_snapshot` (contract §3.4, on record since
-2026-09-06). The snapshot is a jsonb object of the pipeline settings the call ran under
-plus the build SHA; group by the whole object for "this exact configuration", or by one key
-(`config_snapshot->>'STT_UTTERANCE_END_MS'`) for "this setting". Two calls on the same
-build with one changed key are the comparison the hypothesis loop is made of
-(`CONTEXT.md` §Why now); the dashboard shows the differing keys side by side, not the
-whole object twice. A null snapshot is a call written before F1 — group it as "unknown",
-never drop it.
+| Reads | Column(s) | Trap |
+|---|---|---|
+| `call_log` LEFT JOIN `consent_record` on `call_id`, `started_at >= since`, ordered by `started_at` (`callsSince`) | `call_log.id`, `started_at`, `stt_model`, `tts_model`, `config_snapshot`; `consent_record.outcome` | Every call in the window, consented or not — the denominator of "N of M calls" (trap 1); a null snapshot is a call written before F1, grouped as "unknown", never dropped (§3.4) |
+| `turn` JOIN `call_log` on `call_id`, `call_log.started_at >= since`, ordered by `started_at, idx` (`turnsSince`) | `turn.call_id`, `idx`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `interrupted`, `source`, `failed_leg`, `failed_stage`, `failed_after_ms` | Only consented calls have rows (trap 1); a reversed span is excluded from its leg's sample, a failed or interrupted turn is included — the rule of `../Fonnus/tools/lib/cross-call-report.ts`; per-leg `count` is turns with both marks, not the turn count. `marks` is nullable: the turn count means what the pipeline's `turnCount` means (rows with a non-null `marks`, the filter `turnMetricRows` applies in SQL) so the A2 acceptance against `report-calls` holds, but a null-marks row is not filtered out — it is listed under "Turns outside the percentile" and counted in the caveat as "U more without marks, excluded from every number" |
 
-Caveat that travels with every percentile: unconsented calls have no `turn` rows (trap 1),
-so the numbers stand on consented calls only — show the count.
+Computation is in TypeScript (`src/dashboard.ts`), never in SQL, so the copied pipeline
+rule is the one that runs and the one the tests pin: per-leg spans from `legSpans` over the
+six legs, nearest-rank P50 / P95 / max copied from `../Fonnus/tools/lib/call-report.ts`
+(`sorted[min(n−1, ceil(q·n)−1)]`, null on empty), and the two headline percentiles of
+`caller_perceived_ms` and `pipeline_ms` — which the pipeline's baseline JSON does not carry —
+against the ADR 0007 targets. Day buckets take the **call's** `started_at` (a turn has no
+timestamp of its own) in `Asia/Ho_Chi_Minh`, the zone every screen pins; a day with no turn
+between the first and the last bucket is a null point, so the trend line breaks there
+instead of drawing through it.
+
+Grouping by `config` keys on the whole `config_snapshot` object ("this exact
+configuration", labelled by its `FONNUS_BUILD_SHA`) and shows only the keys whose values
+differ across the groups, side by side — never the whole object twice; `key:<K>` groups on
+one setting (`config_snapshot->>K`, evaluated in TypeScript). Two calls on the same build
+with one changed key are the comparison the hypothesis loop is made of (`CONTEXT.md` §Why
+now). Group rows are built from turn rows, so a group's call count is "calls with turns on
+record" — said in the column header. "Turns outside the percentile" lists the window's turns
+whose marks lack `first_audio_out` (the reply never became audible) with `source`,
+`interrupted`, `failed_leg`, `failed_stage` (null under a set leg = "provider error", §3.1)
+and `failed_after_ms` (elapsed since `endpoint_decision`, not the bound — trap 7).
+
+Caveats that travel with the numbers, on the screen: "consented calls only — N of M calls,
+T turns" beside the headline stats; "turns with both marks, not turns" on the count column;
+"first sentence of the reply only" on the `tts_ttfb` row.
 
 ## Baselines
 

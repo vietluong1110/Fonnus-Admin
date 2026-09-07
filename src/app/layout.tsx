@@ -1,32 +1,98 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { Baloo_2, Be_Vietnam_Pro, IBM_Plex_Sans } from 'next/font/google';
 import Image from 'next/image';
+import NavLink from '@/ui/nav-link';
 import './globals.css';
+
+/*
+ * The three faces of the design system (ADR 0003 point 2), loaded by next/font
+ * rather than by the Web-UI's Google Fonts @import: self-hosted at build time,
+ * no render-blocking request to a third party. The `vietnamese` subset is the
+ * reason these faces were chosen — without it every accented glyph falls back
+ * to a system font mid-word. Weights are those of
+ * ../Fonnus-Web-UI/src/styles/tokens/fonts.css.
+ */
+const baloo = Baloo_2({
+  subsets: ['vietnamese', 'latin'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--font-baloo',
+});
+
+const beVietnam = Be_Vietnam_Pro({
+  subsets: ['vietnamese', 'latin'],
+  weight: ['300', '400', '500', '600', '700'],
+  style: ['normal', 'italic'],
+  display: 'swap',
+  variable: '--font-be-vietnam',
+});
+
+const plex = IBM_Plex_Sans({
+  subsets: ['vietnamese', 'latin'],
+  weight: ['400', '500', '600'],
+  display: 'swap',
+  variable: '--font-plex',
+});
 
 export const metadata: Metadata = {
   title: 'Fonnus Admin',
   description: 'Read-only console over the Fonnus voice pipeline.',
 };
 
+/** The console's destinations. `/dashboard` lands in Piece 2 (PLAN.md row A2). */
+const NAV = [
+  { href: '/calls', label: 'Calls', icon: 'answered' },
+  { href: '/dashboard', label: 'Dashboard', icon: 'report' },
+] as const;
+
+/*
+ * The shell is ../Fonnus-Web-UI/src/app/AppShell.tsx: a 216px card-surface
+ * sidebar on the left, paper content on the right, the sidebar narrowing to a
+ * 64px icon rail below 900px. The Web-UI's phone tab bar is not copied — one
+ * operator, on a laptop (ADR 0003 point 5).
+ */
 export default function RootLayout({ children }: { children: ReactNode }) {
   // No dark mode (CONTEXT.md §Look and feel): the warm cream ground is the page.
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full bg-bg text-ink">
-        <header className="border-b border-border bg-surface">
-          <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3">
-            {/* The brand lockup (CONTEXT.md §Look and feel); viewBox 339.3 × 108.9. */}
-            <Image
-              src="/fonnus-lockup-horizontal.svg"
-              alt="Fonnus"
-              width={112}
-              height={36}
-              priority
-            />
-            <span className="text-sm text-muted">Admin</span>
-          </div>
-        </header>
-        {children}
+    <html
+      lang="en"
+      className={`h-full ${baloo.variable} ${beVietnam.variable} ${plex.variable}`}
+    >
+      <body className="min-h-full">
+        <div className="grid min-h-screen grid-cols-[216px_minmax(0,1fr)] bg-surface-page max-[900px]:grid-cols-[64px_minmax(0,1fr)]">
+          <aside
+            aria-label="Console"
+            className="sticky top-0 flex h-screen flex-col gap-[3px] overflow-hidden border-r border-border-hairline bg-surface-card px-[14px] pt-[22px] pb-[18px] max-[900px]:px-[10px] max-[900px]:pt-[18px] max-[900px]:pb-[14px]"
+          >
+            {/* The brand lockup (CONTEXT.md §Look and feel); viewBox 339.3 × 108.9.
+                There is no square mark asset in this repo, so the rail drops it
+                rather than shrink the wordmark past reading size. */}
+            <div className="flex items-center px-[10px] pb-5 max-[900px]:hidden">
+              <Image
+                src="/fonnus-lockup-horizontal.svg"
+                alt="Fonnus"
+                width={112}
+                height={36}
+                priority
+              />
+            </div>
+
+            <nav className="flex flex-col gap-[3px]">
+              {NAV.map((entry) => (
+                <NavLink key={entry.href} href={entry.href} label={entry.label} icon={entry.icon} />
+              ))}
+            </nav>
+          </aside>
+
+          <main className="flex min-w-0 flex-col gap-[18px] px-9 pt-7 pb-10 max-[900px]:px-5 max-[900px]:pt-5 max-[900px]:pb-8">
+            {/* Centred rather than capped-and-left: a wide window otherwise puts
+                36px of margin on one side and 300px on the other. */}
+            <div className="mx-auto flex w-full min-w-0 max-w-[1180px] flex-col gap-[18px]">
+              {children}
+            </div>
+          </main>
+        </div>
       </body>
     </html>
   );

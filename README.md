@@ -8,8 +8,8 @@ it must never do: `CONTEXT.md`. Working here with Claude Code: `CLAUDE.md`.
 
 ```bash
 pnpm install
-pnpm dev          # http://localhost:3000 — `/calls` is the call list, `/calls/<id>` one call
-pnpm build        # needs no database
+pnpm dev          # http://localhost:3000 — `/calls` the call list, `/calls/<id>` one call, `/dashboard` the latency dashboard
+pnpm build        # needs no database; does need egress to fonts.googleapis.com once (next/font downloads the three faces at build time)
 pnpm start        # the built app
 pnpm typecheck
 pnpm lint

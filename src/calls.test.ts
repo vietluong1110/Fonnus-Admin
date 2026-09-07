@@ -1,13 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CALL_STATE_LABEL,
+  CALL_STATE_TONE,
+  CONSENT_OUTCOMES,
+  END_REASONS,
+  UNKNOWN_VOCABULARY_TONE,
   callState,
+  consentOutcomeTone,
+  endReasonTone,
   formatCount,
   formatDuration,
   formatMs,
   formatWhen,
+  failureLine,
   isKnownConsentOutcome,
   isKnownEndReason,
+  isKnownFailedLeg,
+  isKnownFailedStage,
   isKnownTurnSource,
   isUuid,
   parseCostVnd,
@@ -71,6 +80,43 @@ describe('fixed vocabularies — contract §3.1', () => {
     expect(isKnownTurnSource('utterance_end')).toBe(true);
     expect(isKnownTurnSource('carry_over')).toBe(true);
     expect(isKnownTurnSource('barge_in')).toBe(false);
+    expect(isKnownFailedLeg('llm')).toBe(true);
+    expect(isKnownFailedLeg('tts')).toBe(true);
+    // The speech-to-text leg never fails a reply (contract §3.1).
+    expect(isKnownFailedLeg('stt')).toBe(false);
+    expect(isKnownFailedStage('ttfb')).toBe(true);
+    expect(isKnownFailedStage('idle')).toBe(true);
+    expect(isKnownFailedStage('total')).toBe(true);
+    expect(isKnownFailedStage('deadline')).toBe(false);
+  });
+});
+
+describe('failureLine — trap 7', () => {
+  it('says nothing when the turn did not fail', () => {
+    // `failed_leg` is the test for "failed"; an interrupted turn with no leg
+    // is a barge-in, not a failure.
+    expect(failureLine(null, null, null)).toBeNull();
+    expect(failureLine(null, 'ttfb', 15_040)).toBeNull();
+  });
+
+  it('names the leg, the deadline stage and the elapsed time', () => {
+    expect(failureLine('llm', 'ttfb', 15_040)).toBe('Failed on llm at ttfb after 15 040 ms');
+    expect(failureLine('tts', 'idle', 4_200)).toBe('Failed on tts at idle after 4 200 ms');
+  });
+
+  it('calls a null stage a provider error rather than a missing measurement', () => {
+    expect(failureLine('tts', null, 900)).toBe(
+      'Failed on tts — provider error, no deadline stage after 900 ms',
+    );
+  });
+
+  it('says why the elapsed time is missing when there is no endpoint_decision', () => {
+    expect(failureLine('llm', 'total', null)).toBe(
+      'Failed on llm at total; elapsed not measured (no endpoint_decision mark)',
+    );
+    expect(failureLine('llm', null, null)).toBe(
+      'Failed on llm — provider error, no deadline stage; elapsed not measured (no endpoint_decision mark)',
+    );
   });
 });
 
@@ -145,5 +191,39 @@ describe('isUuid — the route parameter never reaches SQL unchecked', () => {
     for (const value of ['', 'abc', "1' or '1'='1", '4f1f2c3a1b2c4d5e8f900123456789ab']) {
       expect(isUuid(value)).toBe(false);
     }
+  });
+});
+
+describe('badge tones for the fixed vocabularies', () => {
+  it('gives every contract end reason a tone', () => {
+    for (const reason of END_REASONS) {
+      expect(endReasonTone(reason)).not.toBe(UNKNOWN_VOCABULARY_TONE);
+    }
+    expect(endReasonTone('provider_failure')).toBe('error');
+    expect(endReasonTone('caller_hangup')).toBe('neutral');
+    expect(endReasonTone('max_turns')).toBe('info');
+  });
+
+  it('gives every contract consent outcome a tone', () => {
+    for (const outcome of CONSENT_OUTCOMES) {
+      expect(['success', 'warning']).toContain(consentOutcomeTone(outcome));
+    }
+    expect(consentOutcomeTone('granted')).toBe('success');
+    expect(consentOutcomeTone('hung_up_before_disclosure')).toBe('warning');
+    expect(consentOutcomeTone('hung_up_before_consent')).toBe('warning');
+  });
+
+  it('marks a value outside the vocabulary rather than colouring it as normal', () => {
+    // The vocabularies grow additively (contract §4), so this is the case the
+    // console meets first when the pipeline ships a new value.
+    expect(endReasonTone('carrier_reset')).toBe('warning');
+    expect(consentOutcomeTone('withdrawn')).toBe('warning');
+    expect(UNKNOWN_VOCABULARY_TONE).toBe('warning');
+  });
+
+  it('badges only the call states that are not the normal one (trap 2)', () => {
+    expect(CALL_STATE_TONE.finalized).toBeNull();
+    expect(CALL_STATE_TONE.in_progress).toBe('info');
+    expect(CALL_STATE_TONE.not_finalized).toBe('warning');
   });
 });

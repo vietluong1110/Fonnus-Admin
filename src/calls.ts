@@ -4,6 +4,8 @@
  * Vocabulary is the pipeline's, unchanged (CLAUDE.md §Ground rules).
  */
 
+import type { BadgeTone } from './ui/badge';
+
 /** Contract §3.1 — `call_log.end_reason`. */
 export const END_REASONS = [
   'max_duration',
@@ -22,6 +24,12 @@ export const CONSENT_OUTCOMES = [
   'hung_up_before_consent',
 ] as const;
 
+/** Contract §3.1 — `turn.failed_leg`: the two legs a reply can fail on. */
+export const FAILED_LEGS = ['llm', 'tts'] as const;
+
+/** Contract §3.1 — `turn.failed_stage`: which deadline tripped. */
+export const FAILED_STAGES = ['ttfb', 'idle', 'total'] as const;
+
 /** Contract §3.1 — `turn.source`. */
 export const TURN_SOURCES = ['speech_final', 'utterance_end', 'carry_over', 'reopen'] as const;
 
@@ -31,6 +39,45 @@ export const TURN_SOURCES = ['speech_final', 'utterance_end', 'carry_over', 'reo
  * is most likely a pipeline the console has not caught up with.
  */
 export const UNKNOWN_VOCABULARY_TITLE = "value outside the contract's vocabulary";
+
+/*
+ * Which badge tone each fixed vocabulary value wears. Pure data beside the
+ * vocabularies it colours, so a value added upstream shows up here as a missing
+ * key rather than as a silently grey pill.
+ *
+ * The tones are the design system's, and they carry the operator's reading:
+ * `error` only for a failure the pipeline itself owns (`provider_failure`),
+ * `info` for a limit the pipeline applied on purpose, `neutral` for an ending
+ * nobody needs to act on. An unknown value is `warning` — see
+ * UNKNOWN_VOCABULARY_TITLE.
+ */
+export const UNKNOWN_VOCABULARY_TONE: BadgeTone = 'warning';
+
+// Typed as an open map so an unknown key reads `undefined` at the lookup, and
+// `satisfies` still fails the build if a contract value loses its tone.
+const END_REASON_TONE: Record<string, BadgeTone> = {
+  max_duration: 'info',
+  max_turns: 'info',
+  max_reprompts: 'info',
+  provider_failure: 'error',
+  caller_hangup: 'neutral',
+  shutdown: 'neutral',
+  media_stream_closed: 'neutral',
+} satisfies Record<(typeof END_REASONS)[number], BadgeTone>;
+
+const CONSENT_OUTCOME_TONE: Record<string, BadgeTone> = {
+  granted: 'success',
+  hung_up_before_disclosure: 'warning',
+  hung_up_before_consent: 'warning',
+} satisfies Record<(typeof CONSENT_OUTCOMES)[number], BadgeTone>;
+
+export function endReasonTone(value: string): BadgeTone {
+  return END_REASON_TONE[value] ?? UNKNOWN_VOCABULARY_TONE;
+}
+
+export function consentOutcomeTone(value: string): BadgeTone {
+  return CONSENT_OUTCOME_TONE[value] ?? UNKNOWN_VOCABULARY_TONE;
+}
 
 export function isKnownEndReason(value: string): boolean {
   return (END_REASONS as readonly string[]).includes(value);
@@ -42,6 +89,39 @@ export function isKnownConsentOutcome(value: string): boolean {
 
 export function isKnownTurnSource(value: string): boolean {
   return (TURN_SOURCES as readonly string[]).includes(value);
+}
+
+export function isKnownFailedLeg(value: string): boolean {
+  return (FAILED_LEGS as readonly string[]).includes(value);
+}
+
+export function isKnownFailedStage(value: string): boolean {
+  return (FAILED_STAGES as readonly string[]).includes(value);
+}
+
+/**
+ * The sentence a failed turn carries. `failed_leg` is the test for "failed"
+ * (trap 7: `interrupted` alone does not tell a barge-in from a mid-reply
+ * failure), so a null leg is not a failure and gets no line at all.
+ *
+ * A null stage with a leg is a provider error rather than a deadline (§3.1),
+ * and it is said in words — an absent stage rendered as a dash would read as a
+ * missing measurement. A null `failed_after_ms` means the turn has no
+ * `endpoint_decision` mark to measure the elapsed time from (§3.2 column note).
+ */
+export function failureLine(
+  failedLeg: string | null,
+  failedStage: string | null,
+  failedAfterMs: number | null,
+): string | null {
+  if (failedLeg === null) return null;
+  const where =
+    failedStage === null
+      ? `Failed on ${failedLeg} — provider error, no deadline stage`
+      : `Failed on ${failedLeg} at ${failedStage}`;
+  return failedAfterMs === null
+    ? `${where}; elapsed not measured (no endpoint_decision mark)`
+    : `${where} after ${formatNumber(failedAfterMs)} ms`;
 }
 
 export type CallState = 'finalized' | 'in_progress' | 'not_finalized';
@@ -63,6 +143,13 @@ export const CALL_STATE_LABEL = {
   in_progress: 'in progress',
   not_finalized: 'not finalized — process died or finish failed',
 } as const satisfies Record<CallState, string | null>;
+
+/** `finalized` is the normal case and wears no badge at all. */
+export const CALL_STATE_TONE = {
+  finalized: null,
+  in_progress: 'info',
+  not_finalized: 'warning',
+} as const satisfies Record<CallState, BadgeTone | null>;
 
 /**
  * Trap 4: the consent obligation lives in this reader. `turn.caller_text` is

@@ -47,10 +47,12 @@ caveats; the decisions stay with the person reading it.
    collapsed under the reply, each TTS sentence as sent → generation frame sent → first
    byte → settled, first audio out, playback start and end, and a failure marker naming
    the stage and the milliseconds it failed after; the greeting gets the same axis from
-   the moment the call was answered. Data arrives in three steps: `turn.marks` today
-   (seven instants per turn); the call event table of `../Fonnus` PLAN row W2-L3 F5 with
-   the sub-stage instants of F6 and the reasoning of F7; and the bucket (W2-L1) for the
-   verbatim files behind a step (the LLM stream, the sentence audio).
+   the moment the call was answered. Data arrives in three steps: `turn.marks` (ten
+   instants per turn since `../Fonnus` W2-L3 F2, plus the failure scalars and the
+   greeting's own marks); the call event table (`call_event`, W2-L3 F5, on record since
+   2026-09-07) with the sub-stage instants of F6 and, once F7 lands, the reasoning; and
+   the bucket (W2-L1) for the verbatim files behind a step (the LLM stream, the sentence
+   audio).
 3. **Latency dashboard** — P50 / P95 / max per leg over a chosen window, the trend by
    day, and the same numbers **grouped by the pipeline configuration the calls ran
    under** (`call_log.config_snapshot`, on record since `../Fonnus` W2-L3 F1, 2026-09-06),
@@ -97,9 +99,10 @@ Two more that are the console's own:
    the one playing. The leg is labelled so wherever it appears.
 8. The first TTS sentence after an idle period pays the Cartesia socket handshake: the
    `tts/sentence` record is written before the socket is (re)opened, so on the timeline that
-   sentence reads slower than the provider was. Until `../Fonnus` W2-L3 F6 adds the
-   "generation frame sent" instant, label the first sentence of a call — or of a reply
-   after a five-minute gap — as "includes connection".
+   sentence reads slower than the provider was. `../Fonnus` W2-L3 F6 (2026-09-07) records
+   the instant the generation request left as `tts/generation_sent`; until the call
+   timeline (`PLAN.md` row A1b) draws it, label the first sentence of a call — or of a reply
+   after a five-minute gap — as "includes connection". The trap retires with A1b.
 
 ### Security posture
 
@@ -116,30 +119,27 @@ The UI is in English for v1 (one operator, an engineer). Call content is Vietnam
 rendered verbatim. Pipeline vocabulary appears on screen as-is (`endpoint_wait`, not a
 translation), with a one-line plain-language gloss where a term first appears.
 
-### Look and feel — interim palette until the design system lands
+### Look and feel — the product's design system, by copy
 
-A full design system (theme, style guide, typography, logo usage) arrives later as its own
-task. Until then every screen uses the palette below, taken from the brand lockup
-`public/fonnus-lockup-horizontal.svg` and the marketing site's hero (2026-09-07), and is
-built for layout and reading flow first — nothing in a screen should be hard to restyle
-when the system lands. Font family is not decided: system sans until the style guide says.
+The look is Fonnus-Web-UI's (`../Fonnus-Web-UI`, the marketing site and the clinic app):
+its rulebook is `design-reference/ui-ux-principles.md` there, its tokens are copied verbatim
+into `src/styles/tokens/` here (ADR 0003 — copy, never edit; a token change is re-copied).
+Code uses the alias layer only (`--surface-card`, `--text-muted`, `--border-hairline`,
+`--chart-1/2/3`, `--font-display/ui/num`), never a base hex name. Fonts: Baloo 2 for
+headings, Be Vietnam Pro for UI text, IBM Plex Sans for numbers, loaded with the
+Vietnamese subset. The shell is the Web-UI's `AppShell` geometry — a 216 px sidebar with
+the lockup and the nav, a 1180 px content column on the cream page ground — without the
+phone-width tab bar (one operator on a laptop).
 
-| Token | Value | Taken from |
-|---|---|---|
-| `ink` (headings, body) | `#261F18` | the wordmark fill |
-| `accent` (links, the highlighted word, the logo arc) | `#B85C2B` | the lockup's arc stroke |
-| `accent-strong` (primary buttons) | `#A04E1F` | hero call-to-action buttons |
-| `muted` (secondary text, captions) | `#5C5249` | hero subtitle |
-| `bg` (page) | `#F7EEE1` | hero background cream |
-| `surface` (cards, nav bar) | `#FEF7EA` | nav card |
-| `surface-raised` (inputs) | `#FFFBF2` | phone input |
-| `border` (dividers, card edges) | `#E1D4C4` | hero divider |
-| `border-strong` (outline buttons) | `#D1CDC5` | "Đăng nhập" outline |
+Two deliberate deviations from the Web-UI's conventions, both recorded in ADR 0003:
+Tailwind stays (utilities resolve to the copied tokens through `@theme inline`), and
+numeric lists are real `<table>` elements, not grid rows.
 
-Rendering rules that follow from the palette: warm cream ground, rounded cards on it,
-one accent for anything clickable, no dark mode. Caveats (cost floor, consented-only,
-first-sentence-only, retention age) use `muted` text next to their number, never the
-accent — the accent is for actions, not warnings.
+Rendering rules that follow: warm cream ground, rounded cards on it, one accent for
+anything clickable, no dark mode, sentence case everywhere. Caveats (cost floor,
+consented-only, first-sentence-only, retention age) use muted text next to their number —
+once per column, in the header — never the accent: the accent is for actions, not warnings.
+A dashed border means "no content yet", never a button.
 
 ## Stack
 

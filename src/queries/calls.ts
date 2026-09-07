@@ -65,6 +65,8 @@ export interface CallDetailRow extends CallListRow {
   consent_disclosure_completed_at: Date | null;
   granted_at: Date | null;
   disclosure_text: string | null;
+  /** §3.5 — `first_audio_out − answered` for the greeting; null before 0008. */
+  greeting_first_audio_ms: number | null;
 }
 
 /** One call, or null when the id names no row. */
@@ -87,6 +89,7 @@ export async function getCall(id: string): Promise<CallDetailRow | null> {
             call_log.tts_bytes,
             call_log.artifact_dir,
             call_log.config_snapshot,
+            call_log.greeting_first_audio_ms,
             consent_record.consent_mode,
             consent_record.disclosure_completed_at as consent_disclosure_completed_at,
             consent_record.granted_at,
@@ -118,6 +121,11 @@ export interface TurnRow {
   tokens_cached: number | null;
   tts_chars: number | null;
   tts_bytes: number | null;
+  /** §3.1 vocabularies; all three are null on rows written before 0008. */
+  failed_leg: string | null;
+  failed_stage: string | null;
+  /** Elapsed from `endpoint_decision` to the failure, not the bound (trap 7). */
+  failed_after_ms: number | null;
 }
 
 /** The turns on record for one call, in the order they were spoken. */
@@ -138,7 +146,10 @@ export async function getTurns(callId: string): Promise<TurnRow[]> {
             tokens_out,
             tokens_cached,
             tts_chars,
-            tts_bytes
+            tts_bytes,
+            failed_leg,
+            failed_stage,
+            failed_after_ms
        from turn
       where call_id = $1
       order by idx`,
