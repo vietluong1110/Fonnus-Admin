@@ -95,11 +95,20 @@ the same owner's PAT pulls this package too, so the login is usually already in 
 One account per team member, never a shared one (ADR 0002 point 2). `hash-password` prompts
 for the password and prints the bcrypt hash:
 
+Do this **while logged into the box** (`ssh fonnus`), not as a one-liner from your laptop:
+a bcrypt hash is `$2a$14$…`, and a double-quoted `ssh fonnus "…"` command hands those `$`
+segments to your local shell, which expands them to nothing. The file then holds a truncated
+hash and Caddy refuses it with a base64 error that names neither the file nor the line.
+
 ```bash
 docker run --rm -it caddy:2.11 caddy hash-password
 printf '%s %s\n' '<name>' '<hash>' >> ~/fonnus-admin/caddy/users
 chmod 600 ~/fonnus-admin/caddy/users
+grep -cE '^[^[:space:]]+[[:space:]]+\$2[aby]\$[0-9]{2}\$.{53}$' ~/fonnus-admin/caddy/users
 ```
+
+The last line must count one per person; anything less means a hash arrived mangled.
+`ops/deploy.sh` checks the same shape before it touches anything.
 
 Repeat per person. The file is read by the committed `Caddyfile` through
 `import /etc/caddy/users`; it never enters git.

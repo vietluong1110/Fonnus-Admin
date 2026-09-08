@@ -38,6 +38,14 @@ done
 # Without accounts the Caddyfile's `import` fails and the site would come up open
 # to the world if it came up at all.
 [ -s ./caddy/users ] || fail "caddy/users is missing or empty - one '<name> <bcrypt>' line per person (docs/deploy.md §4)"
+# Every account line must be a name and a bcrypt hash. The hash is full of `$`,
+# which a double-quoted shell command mangles on the way into this file; Caddy
+# then fails deep inside module provisioning with a base64 complaint that names
+# neither the file nor the line. Catch it here instead.
+# shellcheck disable=SC2016  # the `$` are literal: they are bcrypt's own separators.
+if grep -vE '^[[:space:]]*(#|$)' ./caddy/users | grep -qvE '^[^[:space:]]+[[:space:]]+\$2[aby]\$[0-9]{2}\$.{53}$'; then
+  fail "caddy/users has a line that is not '<name> <bcrypt hash>' - a hash mangled by shell expansion of its \$ is the usual cause (docs/deploy.md §1.4)"
+fi
 [ -f ./caddy/Caddyfile ] || fail "caddy/Caddyfile is missing"
 
 # Compose interpolates ADMIN_IMAGE from .env; this shell does not. Mirror it so the
