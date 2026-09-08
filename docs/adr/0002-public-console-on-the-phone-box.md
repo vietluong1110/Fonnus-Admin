@@ -1,6 +1,6 @@
 # ADR 0002: A public console on the phone box
 
-**Status:** proposed · **Date:** 2026-09-06 · flips to accepted when PLAN row A3 ships
+**Status:** accepted · **Date:** 2026-09-08 (proposed 2026-09-06; accepted when PLAN row A3 shipped)
 
 ## Decision
 
@@ -11,14 +11,20 @@ with these defences and no others in v1:
    auto-TLS). The `admin` container sits on the pipeline's bridge network
    `fonnus_default` (`external: true`) and publishes no port; Caddy reaches it by service
    name. Postgres keeps its `127.0.0.1` clamp (ADR 0017 §3) — nothing here reopens it.
-2. **`basic_auth` in Caddy, one operator account**, bcrypt hash in the `Caddyfile`, the
-   password in the operator's password manager. The app itself has no login and trusts
-   nothing from the request beyond what Caddy forwards.
+   The `ufw` rules of point 4 record that intent but do not enforce it for these two ports:
+   Docker's published ports are DNAT'd ahead of the host's INPUT chain, so the off-switch
+   for the public surface is `docker compose stop caddy`, not a firewall rule.
+2. **`basic_auth` in Caddy, one account per team member.** The bcrypt hashes live in
+   `~/fonnus-admin/caddy/users` on the box — hand-maintained, gitignored, never copied by
+   CI — and the committed `Caddyfile` pulls them in with `import` inside the `basic_auth`
+   block, carrying no hash itself. No shared account: a departure is one deleted line
+   (`docs/deploy.md` §4). The app itself has no login and trusts nothing from the request
+   beyond what Caddy forwards.
 3. **The database role is read-only** (`console`, ADR 0017). A compromise of the web tier
    yields reads of what the console already shows — call logs, consented transcripts,
    consent-gated caller numbers for 90 days (ADR 0008) — and no write path to the pipeline.
 4. **`ufw allow 80,443/tcp`** and nothing more. Fail2ban or Caddy rate limiting on the auth
-   endpoint is ASSUMED unnecessary for one account with a long random password; the
+   endpoint is ASSUMED unnecessary for a few accounts with long random passwords; the
    observation that settles it is the Caddy access log showing brute-force volume.
 5. **The pipeline's `CONTEXT.md` §Deployment live-state block gains the new listeners in
    the same change** that opens them, so the phone repo's deploy runbook never describes a
@@ -46,9 +52,9 @@ with these defences and no others in v1:
 
 ## Revisit when
 
-- A second person needs access, or a clinic does (`../Fonnus` W5-A): `basic_auth` is
-  replaced by a real login with sessions, and per-tenant scoping is a query predicate this
-  ADR does not cover.
+- A clinic needs access (`../Fonnus` W5-A): `basic_auth` is replaced by a real login with
+  sessions, and per-tenant scoping is a query predicate this ADR does not cover. Another
+  person on the team is not a trigger — that is one more line in `caddy/users`.
 - The Caddy access log shows credential-stuffing volume: rate limiting or an identity
   proxy (Cloudflare Access, Tailscale) is added, as a pipeline-repo network decision.
 - The console gains a write path (bookings, notes): ADR 0013's trigger — a service

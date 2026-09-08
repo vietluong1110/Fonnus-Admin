@@ -1,0 +1,103 @@
+# Push to main: run the four gates, build the image, push it to GHCR tagged by the
+# full commit SHA, then swap the console on the VPS. The same shape as the pipeline
+# repo's workflow (../Fonnus/.github/workflows/deploy.yml), minus what has no
+# equivalent here: one image, and no scratch database — the suites are pure.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+# One deploy at a time, and never cancel one in flight: a cancelled run can leave
+# the box mid-swap.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  ADMIN_IMAGE: ghcr.io/voidkeishi/fonnus-admin
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Version comes from package.json's packageManager field — one pin, kept in
+      # step with the Dockerfile.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm lint
+      # Needs egress to fonts.googleapis.com: next/font downloads the three faces
+      # at build time.
+      - run: pnpm build
+
+  build-admin:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.ADMIN_IMAGE }}
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=admin
+          cache-to: type=gha,scope=admin,mode=max
+
+  deploy:
+    needs: build-admin
+    # A repository variable, not an environment one: this `if` is evaluated before
+    # the job enters the environment (../Fonnus/docs/runbook.md §6.2).
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pinned host key, never ssh-keyscan: keyscan-at-deploy-time trusts
+          # whatever answers, which is no host verification at all.
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+      # Compose file, deploy script and Caddyfile only. The live .env and
+      # caddy/users are hand-maintained on the box and never travel through CI.
+      - name: Copy compose file, deploy script and Caddyfile
+        run: |
+          scp -i ~/.ssh/deploy_key compose.yml ops/deploy.sh \
+            "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}:~/fonnus-admin/"
+          scp -i ~/.ssh/deploy_key caddy/Caddyfile \
+            "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}:~/fonnus-admin/caddy/"
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}" \
+            "cd ~/fonnus-admin && ADMIN_IMAGE_TAG=${{ github.sha }} bash deploy.sh"

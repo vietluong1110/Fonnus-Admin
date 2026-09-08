@@ -1,0 +1,85 @@
+# The two containers this repo runs on the phone box, in ~/fonnus-admin beside the
+# pipeline's own ~/fonnus (../Fonnus/CONTEXT.md §Deployment). The box holds no source
+# tree: `deploy.sh` names the image tag on every command, and `docs/deploy.md` is the
+# procedure.
+#
+# Pinned project name: network and volume names stay `fonnus-admin_*` whatever the
+# directory is called.
+name: fonnus-admin
+
+services:
+  # This app. Pulled from GHCR by full commit SHA and swapped by ops/deploy.sh,
+  # which sets ADMIN_IMAGE_TAG for the duration of the deploy.
+  admin:
+    image: ${ADMIN_IMAGE:-ghcr.io/voidkeishi/fonnus-admin}:${ADMIN_IMAGE_TAG:-local}
+    restart: unless-stopped
+    # No `ports:` — Caddy reaches admin:3000 over this project's default network,
+    # and nothing else may. No `build:` either: the box has no source, so a
+    # forgotten tag must fail at `pull` naming `:local` rather than build something.
+    # Every command on the box names the tag:
+    #   ADMIN_IMAGE_TAG=$(cat .admin-last-good) docker compose up -d admin
+    #
+    # src/config.ts reads process.env only (it never opens a file), so the secrets
+    # come in as environment rather than as a bind-mounted .env. Compose parses this
+    # file, so `$` in a value is interpolation: the console password is generated
+    # without one (docs/deploy.md §1.5).
+    env_file: [./.env]
+    # `default` carries Caddy; `fonnus_default` is the pipeline's bridge, where
+    # postgres:5432 answers as role `console` (../Fonnus/docs/runbook.md §9).
+    networks: [default, fonnus_default]
+    healthcheck:
+      # Status only — ops/deploy.sh is what asserts the body (the role). A 503 is
+      # unhealthy: `docker compose ps` must not read `healthy` while the console
+      # cannot reach Postgres. curl is not in the slim image, so this uses node's
+      # own fetch.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
+
+  # The only process on this box bound to a public interface (ADR 0002 point 1):
+  # auto-TLS for ADMIN_DOMAIN, one basic_auth account per team member, reverse
+  # proxy to admin:3000.
+  caddy:
+    image: caddy:2.11
+    restart: unless-stopped
+    # No 443/udp: the Caddyfile serves h1 and h2 only, so nothing listens for HTTP/3.
+    ports: ['80:80', '443:443']
+    environment:
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:?set ADMIN_DOMAIN in .env}
+    volumes:
+      # The directory, not the two files: a single-file bind mount pins an inode,
+      # and an editor that writes-and-renames caddy/users would leave the container
+      # reading the old accounts forever.
+      - ./caddy:/etc/caddy:ro
+      # Certificates and the ACME account. Never `down -v` here — re-issuing runs
+      # into Let's Encrypt's rate limits.
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
+
+networks:
+  # The pipeline's compose bridge (`name: fonnus` there, so the network is
+  # `fonnus_default`). Declared external: this project never creates or removes it.
+  fonnus_default:
+    external: true
+
+volumes:
+  caddy-data:
+  caddy-config:

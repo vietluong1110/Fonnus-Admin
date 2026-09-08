@@ -51,7 +51,7 @@ pnpm dev                  # http://localhost:3000
 The `console` password is the one set on the box per `../Fonnus/docs/runbook.md` §9. It is
 the only credential this repo holds. As of 2026-09-08 that step has not been run: the role
 exists but cannot log in, so the tunnel path cannot connect either until the operator runs
-§9 — which happens when the console is first deployed (`PLAN.md` row A3).
+§9 — which is step 1.5 of the box's one-time setup (`docs/deploy.md`).
 
 ## Run locally against the pipeline's dev database
 
@@ -72,4 +72,12 @@ Then `DATABASE_URL=postgres://console:<pw>@127.0.0.1:<port>/fonnus`.
 
 ## Deploy
 
-Not yet — `PLAN.md` row A3. The target shape is in `CONTEXT.md` §Deployment.
+On the phone box, behind Caddy at `admin.<domain>` with one `basic_auth` account per team
+member. Every push to `main` deploys itself: `.github/workflows/deploy.yml` runs the four
+gates, pushes the image to GHCR tagged by the full commit SHA, and runs `ops/deploy.sh` on
+the box over ssh (health gate on `/api/healthz`, rollback to the last good SHA).
+
+The one-time box setup in order, deploys and rollbacks by hand, adding and removing team
+accounts, rotating the `console` password: `docs/deploy.md`. What the box looks like:
+`CONTEXT.md` §Deployment. Why it is deployed this way:
+`docs/adr/0002-public-console-on-the-phone-box.md`.

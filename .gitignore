@@ -2,6 +2,11 @@
 .env*
 !.env.example
 
+# The Caddy basic_auth accounts: one `<name> <bcrypt hash>` line per team member,
+# hand-maintained on the box (docs/deploy.md §4). A throwaway copy made locally for
+# a `caddy validate` run must never be committed either.
+caddy/users
+
 # Call artifacts must never land on a tracked path, whatever tool wrote them
 # (same backstop as the pipeline repo).
 *.wav

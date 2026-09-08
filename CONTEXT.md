@@ -116,8 +116,9 @@ The console is deployed on the same VPS that answers the phone, with a public do
 ADR 0013 kept a web surface out of the pipeline *process*; this puts one on the pipeline's
 *machine*. The defence is ADR 0002 of this repo: the reverse proxy is the only thing bound
 to the public interface, the console container sits on the compose bridge network, one
-operator account guards it, and the database role it holds cannot write. A second user
-or a clinic-facing surface is that ADR's revisit trigger.
+`basic_auth` account per team member guards it — the bcrypt hashes hand-maintained on the
+box, outside the repo — and the database role it holds cannot write. A clinic-facing
+surface is that ADR's revisit trigger.
 
 ### Language
 
@@ -165,15 +166,24 @@ The box itself — host, user, what runs on it, the compose project `fonnus`, th
 live-state block that must be updated when this console goes live (a new listener on
 80/443 is a change to the box's network posture).
 
-What this repo adds on the box (target; nothing is deployed yet — `PLAN.md` row A3):
+What this repo adds on the box — the compose project `fonnus-admin`; the procedure is
+`docs/deploy.md`:
 
-- A directory `~/fonnus-admin` holding `compose.yml`, `Caddyfile`, and the hand-maintained
-  `.env` (`DATABASE_URL` with the `console` password).
-- Two containers: `admin` (this app, bridge network, joins `fonnus_default` declared
+- A directory `~/fonnus-admin` holding `compose.yml`, `deploy.sh` and `caddy/Caddyfile`
+  (all three copied in by CI on every deploy), the hand-maintained `.env` (`DATABASE_URL`
+  with the `console` password, `ADMIN_DOMAIN`, `ADMIN_IMAGE`) and `caddy/users` (the
+  bcrypt hashes, one line per team member), and `.admin-last-good` / `.admin-previous`,
+  the SHAs `deploy.sh` writes.
+- Two containers: `admin` (this app, no published port, joins `fonnus_default` declared
   `external: true`, reaches `postgres:5432`) and `caddy` (the only process bound to
-  `0.0.0.0:80` and `:443`, TLS from Let's Encrypt, `basic_auth` with one account).
+  `0.0.0.0:80` and `:443`, TLS from Let's Encrypt, `basic_auth` with one account per team
+  member imported from `caddy/users`).
 - Two `ufw` rules: 80/tcp and 443/tcp. Nothing for 5432 — the database stays on the
-  bridge (`../Fonnus/docs/adr/0017-console-read-access.md` §3).
+  bridge (`../Fonnus/docs/adr/0017-console-read-access.md` §3). The rules record intent:
+  Docker's published ports are DNAT'd ahead of the host's INPUT chain, so the off-switch
+  for the public surface is `docker compose stop caddy`.
+- The image comes from GHCR tagged by full commit SHA; every push to `main` runs the four
+  gates, builds it and deploys it (`.github/workflows/deploy.yml`).
 - A domain, not chosen yet — placeholder `admin.<domain>` throughout.
 
 Consequence to know: while `admin` is attached to `fonnus_default`, `docker compose down`

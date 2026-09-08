@@ -1,0 +1,20 @@
+# The build context is the repo root. Everything the image does not need is kept
+# out: a smaller context, and no chance of a secret or a stale build reaching a layer.
+node_modules
+.next
+.git
+.github
+.claude
+.env
+.env.*
+*.tsbuildinfo
+next-env.d.ts
+docs
+ops
+caddy
+compose.yml
+Dockerfile
+.dockerignore
+*.md
+eslint.config.mjs
+vitest.config.mts

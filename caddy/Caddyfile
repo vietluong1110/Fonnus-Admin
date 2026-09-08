@@ -1,0 +1,37 @@
+# Mounted at /etc/caddy (compose.yml mounts the whole ./caddy directory). The
+# accounts themselves are in ./caddy/users on the box — hand-maintained, gitignored,
+# never copied by CI. This file carries no hash.
+{
+	# No admin API: nothing on this box needs to reconfigure Caddy over HTTP. The
+	# price is that `caddy reload` cannot work; the in-process reload is SIGUSR1
+	# (`docker compose kill -s USR1 caddy`, docs/deploy.md §4).
+	admin off
+	servers {
+		# HTTP/1.1 and HTTP/2 only, so no UDP port has to be published or firewalled.
+		protocols h1 h2
+	}
+}
+
+{$ADMIN_DOMAIN} {
+	basic_auth {
+		# One `<name> <bcrypt hash>` line per team member (ADR 0002 point 2).
+		import /etc/caddy/users
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	# To stdout, so `docker compose logs caddy` is where ADR 0002 point 4's
+	# brute-force observation gets read.
+	log {
+		output stdout
+		format json
+	}
+
+	reverse_proxy admin:3000
+}
