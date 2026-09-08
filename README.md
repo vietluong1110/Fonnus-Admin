@@ -49,7 +49,9 @@ pnpm dev                  # http://localhost:3000
 ```
 
 The `console` password is the one set on the box per `../Fonnus/docs/runbook.md` §9. It is
-the only credential this repo holds.
+the only credential this repo holds. As of 2026-09-08 that step has not been run: the role
+exists but cannot log in, so the tunnel path cannot connect either until the operator runs
+§9 — which happens when the console is first deployed (`PLAN.md` row A3).
 
 ## Run locally against the pipeline's dev database
 

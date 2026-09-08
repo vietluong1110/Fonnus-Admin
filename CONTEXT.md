@@ -16,9 +16,10 @@ second console has to be written.
 
 ## Users
 
-- **v1: one operator** — the person tuning the pipeline. They are the only login.
+- **v1: the internal team** — the people tuning the pipeline, one account each at the
+  reverse proxy. Nobody outside the team has a way in.
 - **Later: a clinic** viewing its own calls. Out of scope until `../Fonnus` PLAN row W5-A
-  gives calls a tenant to filter by and a real login replaces the single account.
+  gives calls a tenant to filter by and a real login replaces the proxy accounts.
 
 ## Why now — the hypothesis loop
 
@@ -59,7 +60,10 @@ caveats; the decisions stay with the person reading it.
    so a change to an endpointing or flush setting is visible as a step and not guessed at.
    Every pipeline change from W3 on is one snapshot, and this grouping is how it is judged.
 4. **Audio and per-sentence views** — play the call, see each synthesized sentence on
-   the timeline. Waits on the artifact bucket on Vietnix S3 (`../Fonnus` PLAN row W2-L1).
+   the timeline. The artifact bucket on Vietnix S3 landed with `../Fonnus` PLAN row W2-L1 on
+   2026-09-07, so this is unblocked; `call_log.artifact_state` says whether a given call's
+   files are in the bucket yet. The bucket holds internal test calls only for as long as this
+   repo's account-wide key exists off the VPS (`../Fonnus` ADR 0019).
 
 Not here: any write (bookings, notes, tenant configuration), the onboarding UI, the
 landing page. The first is ADR 0013's revisit trigger; the other two are other repos.
@@ -89,7 +93,9 @@ From the contract's §5, restated as what the screen must do:
    cell shows the outcome. The store does not enforce this; this code does.
 5. Null transcripts and null caller numbers may be **age** (retention TTLs), and
    `artifact_dir` may point at a swept directory. Compare `started_at` against the TTLs
-   before calling anything "missing".
+   before calling anything "missing". Since the pipeline's migration 0010 the row says this
+   itself: `artifact_state = 'expired'` means the disk copy is gone, and the files are
+   reached in the bucket through `artifact_key_prefix` instead (contract §6, trap 12).
 
 Two more that are the console's own:
 

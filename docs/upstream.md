@@ -37,7 +37,7 @@ own zone, so the box and a laptop show the same clock.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` | everything above plus `caller_phone_e164`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5); `artifact_dir` may be swept (trap 5) — it is a path, not a promise; `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `greeting_marks` itself is not read until row A1b draws the greeting axis |
+| `call_log` | everything above plus `caller_phone_e164`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5); `artifact_dir` may be swept (trap 5) — it is a path, not a promise, and since the pipeline's migration 0010 the row says so itself in `artifact_state` (§Artifacts); `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `greeting_marks` itself is not read until row A1b draws the greeting axis |
 | `consent_record` | `consent_mode`, `disclosure_completed_at`, `granted_at`, `outcome`, `disclosure_text` | — |
 | `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | **`caller_text` only when `outcome = 'granted'`** (trap 4); null text may be age (trap 5); null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7) |
 
@@ -166,25 +166,66 @@ consented calls only, so the two agree on leg percentiles only over the same cal
 compare by `callIds`, not by window. A backlog row imports these files to overlay committed
 numbers on the dashboard.
 
-## Artifacts (not readable yet)
+## Artifacts (not read yet — row A4)
 
-`call.wav`, `events.jsonl`, `call.json`, `turns/NNN/{llm.request.json, llm.stream.jsonl,
-tts.input.txt, tts.output.wav}` live in the pipeline's artifact directory
-`calls/YYYY-MM-DD/<uuid>/` (UTC start date). They become readable through the Vietnix S3
-bucket with `../Fonnus` PLAN row W2-L1, under the same keys and with the object-key half of the
-contract. The spike (`../Fonnus/docs/research/2026-09-07-vietnix-s3-spike.md`, 2026-09-07)
-settled how this app reaches them: endpoint `https://s3.vn-hcm-1.vietnix.cloud`, region
-`vn-hcm-1`; presigned GET works and honours `Range`, so the audio player links straight at
-the bucket with a short-lived presigned URL and never proxies bytes through this app — the
-VPS-to-Vietnix path measured only ~0.9 MB/s, while the viewer's own connection is far faster.
-The bucket holds internal test calls only during this phase; the consent rule applies to them
-unchanged. Whether the stored `Content-Type` (`audio/vnd.wave` today from the CLI; the
-uploader will set it explicitly) plays inline in a browser is unverified — one page load in
-A4 settles it, and the answer goes back to the pipeline's W2-L1 row. The `events.jsonl` record set (every line has a wall-clock `ts` and a
-recording offset `a_ms`) is described in `PIPELINE_ARCHITECTURE.md` §7; the per-sentence
-TTS timing pairs `tts/sentence` with `tts/settled` per generation and, after W2-L3 F4,
-`tts/first_byte`. Once F5 lands the same records are in Postgres (§The call timeline);
-the bucket then serves the audio and the verbatim files, not the timing.
+The bucket landed with `../Fonnus` PLAN row W2-L1 on 2026-09-07 (its ADR 0019, migration
+0010, read contract §6 and trap 12). Nothing here reads it until row A4; these are the facts
+A4 is built on.
+
+**Where a call's files are.** One bucket, `recordinginternal`, endpoint
+`https://s3.vn-hcm-1.vietnix.cloud`, region `vn-hcm-1`. A call's objects sit under
+`call_log.artifact_key_prefix`, which is `calls/YYYY-MM-DD/<uuid>` on the call's UTC start
+day; each regular file of the artifact directory is one object whose key is the prefix plus
+its relative path: `call.wav`, `events.jsonl`, `call.json`, and per turn
+`turns/NNN/{llm.request.json, llm.stream.jsonl, tts.input.txt, tts.output.wav}` with `NNN`
+zero-padded. Two dotfiles, `.caller.raw` and `.bot.raw`, exist only when the stereo
+interleave failed — then *they* are the audio, so a listing that hides dotfiles hides the
+only evidence left of that call.
+
+**Whether the files are there at all — `call_log.artifact_state`.** The column is the
+gate, and the screen reads it before offering anything (contract §6, trap 12):
+`archived` = every object is present, verified by ETag; `expired` with a non-null
+`artifact_key_prefix` = swept from the box's disk but still in the bucket, so fetch it;
+`expired` with a null prefix = gone everywhere; `spooled`, `failed`, or NULL = not in the
+bucket (yet) — render "not archived yet", never a 404; NULL together with a non-null
+`artifact_dir` is a row written before migration 0010, "unknown, probably spooled". A
+`call.json` object under the prefix means the set is complete, because the uploader puts it
+last. The predicate the pipeline itself uses, to be copied rather than re-derived
+(`app/src/persistence/call-queries.ts:180-203`):
+`artifact_state = 'archived' OR (artifact_state = 'expired' AND artifact_key_prefix IS NOT NULL)`.
+`artifact_dir` remains the disk copy only — a path on the box that nobody outside it can
+open; it is not a bucket key.
+
+**When they arrive.** The uploader runs only while no call is active, so a call that just
+ended reaches the bucket seconds to minutes later. This is why the screen reads
+`artifact_state` and never assumes the audio exists because the call does.
+
+**Playing them.** Presigned GET works and honours `Range` (206), so the player links
+straight at the bucket through a short-lived presigned URL — built with
+`@aws-sdk/s3-request-presigner` over the same client — and this app never proxies bytes: the
+VPS-to-Vietnix path measured only ~0.9 MB/s while the viewer's own connection is far faster.
+The uploader stores `call.wav` as `audio/wav` (`../Fonnus/app/src/recording/object-store.ts`),
+which settles the Content-Type question; what is still unverified is whether a browser plays
+that inline, and one page load in A4 answers it — the observation is owed back to
+`../Fonnus/docs/runbook.md` §2.5 row 30. CORS on the bucket was deliberately not configured:
+a plain `<audio src>` needs none, a `fetch()` would. The presign expiry ceiling Vietnix
+accepts is also unverified.
+
+**The SDK.** `@aws-sdk/client-s3` v3 works against this endpoint with default settings; the
+pipeline pins `3.1127.0` and sets `forcePathStyle: false` with `maxAttempts: 1` and a 90 s
+socket timeout. Match `forcePathStyle: false` and choose `maxAttempts` deliberately here too
+rather than taking the SDK's silent retry default.
+
+**Consent, unchanged.** Every caller-derived byte — the left channel of `call.wav`, caller
+text, everything under `turns/`, the `sensitive` records in `events.jsonl` — is offered only
+when `consent_record.outcome = 'granted'`; an unconsented call has no `turns/` objects at
+all. The bucket says nothing about consent; the row does.
+
+**What the files carry.** The `events.jsonl` record set (every line has a wall-clock `ts` and
+a recording offset `a_ms`) is described in `PIPELINE_ARCHITECTURE.md` §7; the per-sentence TTS
+timing pairs `tts/sentence` with `tts/settled` per generation and, after W2-L3 F4,
+`tts/first_byte`. With F5 landed the same records are in Postgres (§The call timeline), so the
+bucket serves the audio and the verbatim files, not the timing.
 
 ## Waiting on `../Fonnus`
 
