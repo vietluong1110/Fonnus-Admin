@@ -25,6 +25,14 @@ fail() {
 
 # ── Preconditions: name the missing thing instead of rolling back later ──────
 [ -n "${ADMIN_IMAGE_TAG:-}" ] || fail "ADMIN_IMAGE_TAG is not set - pass the image tag to deploy"
+# A tag that is not a tag reaches `docker pull` as an invalid reference, whose
+# error names neither the variable nor where it came from. The usual source is a
+# `$(git rev-parse …)` that was never expanded, because the ssh command carrying
+# it was quoted so the substitution stayed literal (docs/deploy.md §1.8).
+case "$ADMIN_IMAGE_TAG" in
+  *[!A-Za-z0-9._-]* | -* | .* | '')
+    fail "ADMIN_IMAGE_TAG is not a Docker tag: '${ADMIN_IMAGE_TAG}' - if it still shows a \$(...) command, resolve the SHA before the ssh command (docs/deploy.md §1.8)" ;;
+esac
 [ -f ./.env ] || fail "no .env in $(pwd) - the live secrets file is hand-maintained on this box"
 
 # DATABASE_URL gates the app's every screen; ADMIN_DOMAIN is what Caddy serves and

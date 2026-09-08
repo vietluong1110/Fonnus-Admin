@@ -166,9 +166,16 @@ Do it by hand once, so the certificate is obtained while you are watching:
 ```bash
 scp compose.yml ops/deploy.sh fonnus:~/fonnus-admin/
 scp caddy/Caddyfile fonnus:~/fonnus-admin/caddy/
-ssh fonnus 'cd ~/fonnus-admin && ADMIN_IMAGE_TAG='"$(git rev-parse origin/main)"' bash deploy.sh'
+SHA=$(git rev-parse origin/main)              # on your laptop: the box has no checkout
+ssh fonnus "cd ~/fonnus-admin && ADMIN_IMAGE_TAG=$SHA bash deploy.sh"
 ssh fonnus 'cd ~/fonnus-admin && docker compose logs -f caddy'   # wait for "certificate obtained"
 ```
+
+Resolve the SHA on the laptop and let ssh carry the finished string, as above. Nesting the
+`$(git …)` inside the quoted remote command works only from an interactive bash on the
+laptop; run it on the box, or from another shell, and `deploy.sh` is handed the literal text
+`$(git rev-parse origin/main)` as its image tag. It refuses that outright — the tag must
+look like a Docker tag — but the two-line form removes the trap.
 
 The image must already be in GHCR: push to `main` first and let `build-admin` finish.
 Then set `DEPLOY_ENABLED=true` and every later push deploys itself.
