@@ -89,6 +89,27 @@ jobs:
           # whatever answers, which is no host verification at all.
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
+          # Never fall back to password auth. Without this, a rejected key makes
+          # ssh try the password three times against an absent tty and die on the
+          # box's MaxAuthTries with "Too many authentication failures", which hides
+          # the real cause; with it the run fails at once on "Permission denied
+          # (publickey)".
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+            IdentitiesOnly yes
+            BatchMode yes
+          EOF
+          chmod 600 ~/.ssh/config
+      # An empty VPS_USER makes the scp target "@host", so ssh silently uses the
+      # runner's own login name and authentication fails for a reason no log line
+      # names. Check both before the first connection.
+      - name: Check the deploy target is configured
+        env:
+          VPS_USER: ${{ vars.VPS_USER }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+        run: |
+          test -n "$VPS_USER" || { echo "::error::variable VPS_USER is unset in the production environment (expected: deploy)"; exit 1; }
+          test -n "$VPS_HOST" || { echo "::error::variable VPS_HOST is unset in the production environment"; exit 1; }
       # Compose file, deploy script and Caddyfile only. The live .env and
       # caddy/users are hand-maintained on the box and never travel through CI.
       - name: Copy compose file, deploy script and Caddyfile

@@ -15,7 +15,7 @@ project `fonnus-admin` in `~/fonnus-admin`, beside the pipeline's `fonnus` proje
 | `deploy.sh` | CI, every deploy (the copy of `ops/deploy.sh`, at the top level — `bash deploy.sh`, never `ops/deploy.sh`) |
 | `caddy/Caddyfile` | CI, every deploy |
 | `caddy/users` | **you, by hand.** One `<name> <bcrypt hash>` line per team member. CI never touches it |
-| `.env` | **you, by hand.** `DATABASE_URL`, `ADMIN_DOMAIN`, `ADMIN_IMAGE`. CI never touches it |
+| `.env` | **you, by hand.** `DATABASE_URL`, `ADMIN_DOMAIN`, `ADMIN_IMAGE`; optionally the five `S3_*` keys and `CONSENT_GATE` (§1.6). CI never touches it |
 | `.admin-last-good`, `.admin-previous` | `deploy.sh`, on every successful deploy |
 
 Two containers: `admin` (this app, no published port, on the pipeline's network
@@ -59,6 +59,12 @@ Then, in Settings → Secrets and variables → Actions:
 `if: vars.DEPLOY_ENABLED == 'true'` is evaluated before the job enters the `production`
 environment, so an environment-level value reads as empty there and the job is silently
 skipped (`../Fonnus/docs/runbook.md` §6.2). Leave it unset until §1.8 has passed by hand.
+
+`VPS_USER` and `VPS_HOST` must both actually be set; the deploy job stops with a named
+error if either is empty. An empty `VPS_USER` makes the scp target `@103.74.100.161`,
+so ssh connects as the runner's own login name `runner`, that user does not exist on the
+box, and the run dies on `Too many authentication failures` — a message that points at the
+key rather than at the missing variable.
 
 The CI keypair is this repo's own — one more line in the box's `~/.ssh/authorized_keys`,
 so it can be revoked without touching the pipeline's deploys:
@@ -137,6 +143,28 @@ ADMIN_IMAGE=ghcr.io/voidkeishi/fonnus-admin
 ENV
 chmod 600 ~/fonnus-admin/.env
 ```
+
+To play recordings (ADR 0004), append the bucket group — this console's **own** key pair,
+created in the Vietnix panel (Storage → S3 → Manage Access Key → Create), never the
+pipeline's `app` key or a laptop's `dev` key (`../Fonnus/docs/runbook.md` §6.1: one key per
+holder, so a leak is rotated in one file). All five or none; a partial group refuses to
+start. `CONSENT_GATE=off` is the internal test posture (ADR 0005) — leave it out once
+anyone outside the team has an account.
+
+```bash
+cat >> ~/fonnus-admin/.env <<'ENV'
+S3_ENDPOINT=https://s3.vn-hcm-1.vietnix.cloud
+S3_REGION=vn-hcm-1
+S3_BUCKET=recordinginternal
+S3_ACCESS_KEY_ID=<console key>
+S3_SECRET_ACCESS_KEY=<its secret>
+CONSENT_GATE=off
+ENV
+```
+
+A later edit takes effect on the next `up -d` of `admin` (§3); `deploy.sh` checks only
+`DATABASE_URL` and `ADMIN_DOMAIN`, so a missing bucket key is a "not configured" page,
+not a failed deploy.
 
 `ADMIN_IMAGE_TAG` is deliberately absent: `deploy.sh` passes it per run, and compose falls
 back to `:local` — which does not exist in the registry — so a command that forgets the tag
