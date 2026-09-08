@@ -72,7 +72,7 @@ Then `DATABASE_URL=postgres://console:<pw>@127.0.0.1:<port>/fonnus`.
 
 ## Deploy
 
-On the phone box, behind Caddy at `admin.<domain>` with one `basic_auth` account per team
+On the phone box, behind Caddy at `admin.fonnus.me` with one `basic_auth` account per team
 member. Every push to `main` deploys itself: `.github/workflows/deploy.yml` runs the four
 gates, pushes the image to GHCR tagged by the full commit SHA, and runs `ops/deploy.sh` on
 the box over ssh (health gate on `/api/healthz`, rollback to the last good SHA).

@@ -184,7 +184,8 @@ What this repo adds on the box — the compose project `fonnus-admin`; the proce
   for the public surface is `docker compose stop caddy`.
 - The image comes from GHCR tagged by full commit SHA; every push to `main` runs the four
   gates, builds it and deploys it (`.github/workflows/deploy.yml`).
-- A domain, not chosen yet — placeholder `admin.<domain>` throughout.
+- The hostname `admin.fonnus.me`, chosen 2026-09-08; Caddy holds its Let's Encrypt
+  certificate and `ADMIN_DOMAIN` in `~/fonnus-admin/.env` is the only place it is configured.
 
 Consequence to know: while `admin` is attached to `fonnus_default`, `docker compose down`
 in `~/fonnus` cannot remove that network and says so (`../Fonnus/docs/runbook.md` §9).

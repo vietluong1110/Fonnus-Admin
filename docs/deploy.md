@@ -70,12 +70,12 @@ ssh fonnus 'cat >> ~/.ssh/authorized_keys' < ~/.ssh/fonnus_admin_ci.pub
 
 ### 1.2 DNS
 
-Pick the hostname (`admin.<domain>` throughout this repo) and give it an A record pointing
-at `103.74.100.161`. Confirm it resolves **before** Caddy ever starts — Let's Encrypt
+The console's hostname is `admin.fonnus.me`. Give it an A record pointing at
+`103.74.100.161`. Confirm it resolves **before** Caddy ever starts — Let's Encrypt
 rate-limits failed validation attempts, so a premature first start costs an hour of waiting:
 
 ```bash
-dig +short admin.<domain>       # must answer 103.74.100.161
+dig +short admin.fonnus.me      # must answer 103.74.100.161
 ```
 
 ### 1.3 Directories and the registry login
@@ -123,7 +123,7 @@ ssh fonnus 'cd ~/fonnus && docker compose exec -T postgres psql -U fonnus -d fon
 ```bash
 cat > ~/fonnus-admin/.env <<'ENV'
 DATABASE_URL=postgres://console:<value>@postgres:5432/fonnus
-ADMIN_DOMAIN=admin.<domain>
+ADMIN_DOMAIN=admin.fonnus.me
 ADMIN_IMAGE=ghcr.io/voidkeishi/fonnus-admin
 ENV
 chmod 600 ~/fonnus-admin/.env
@@ -175,7 +175,7 @@ deployed SHA:
 
 > Since <date> the console (`../Fonnus-Admin`, its ADR 0002) runs on this box too, as
 > compose project `fonnus-admin` in `~/fonnus-admin`: `caddy` (`caddy:2.11`) is the only
-> process bound to `0.0.0.0:80` and `:443` — auto-TLS for `<ADMIN_DOMAIN>`, `basic_auth`
+> process bound to `0.0.0.0:80` and `:443` — auto-TLS for `admin.fonnus.me`, `basic_auth`
 > with one account per team member in `~/fonnus-admin/caddy/users` — and `admin`
 > (`ghcr.io/voidkeishi/fonnus-admin:<sha>`, recorded in `~/fonnus-admin/.admin-last-good`)
 > publishes no port and is attached to `fonnus_default`, reaching `postgres:5432` as role
