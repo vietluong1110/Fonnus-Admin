@@ -24,8 +24,8 @@ answers only whether the connection stands and which role it was made as.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` | `id`, `started_at`, `ended_at`, `end_reason`, `turn_count`, `total_cost_vnd`, `did`, `stt_model`, `tts_model` | `turn_count` = rows written (trap 1); `total_cost_vnd` is a floor (trap 3); `numeric` arrives as a string — parse, and treat an unparseable one as missing, not 0 |
-| `consent_record` (LEFT JOIN on `call_id`) | `outcome` | A missing row = not finalized (trap 2): in progress when `ended_at IS NULL`, else died or the finish transaction failed |
+| `call_log` | `id`, `started_at`, `ended_at`, `end_reason`, `turn_count`, `total_cost_vnd`, `caller_phone_e164`, `artifact_state`, `artifact_key_prefix` | `turn_count` = rows written (trap 1); `total_cost_vnd` is a floor (trap 3); `numeric` arrives as a string — parse, and treat an unparseable one as missing, not 0; `caller_phone_e164` null is age or a call that never reached the row — "not on record", never blank (trap 5); `artifact_state` + `artifact_key_prefix` feed only the archived predicate of §Artifacts (trap 12) — the list shows a signal that a recording can be fetched, and presigns nothing. `did`, `stt_model`, `tts_model` left the list row (identical on every row) and are read by the detail only |
+| `consent_record` (LEFT JOIN on `call_id`) | `outcome` | A missing row = not finalized (trap 2): in progress when `ended_at IS NULL`, else died or the finish transaction failed. The row's "how it ended" cell renders `outcome` and `end_reason` together: quiet text when ordinary (`granted` + `caller_hangup`), the existing `Vocabulary`/`Badge` tones for every other value and for not-finalized |
 
 Order: `started_at DESC`; index `call_log_started_idx` serves it. Vocabularies:
 `end_reason` and `outcome` are fixed sets (contract §3.1) — render unknown values as-is
@@ -37,9 +37,9 @@ own zone, so the box and a laptop show the same clock.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` | everything above plus `caller_phone_e164`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5); `artifact_dir` may be swept (trap 5) — it is a path, not a promise, and since the pipeline's migration 0010 the row says so itself in `artifact_state` (§Artifacts); `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `greeting_marks` itself is not read until row A1b draws the greeting axis |
+| `call_log` | everything above plus `did`, `stt_model`, `tts_model`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5) — the head says "Call" without a number, never a blank; `recording_started_at` is the origin of the audio ↔ marks mapping (§Artifacts) and null means no turn of the call can be placed on the recording's axis; `artifact_state` + `artifact_key_prefix` decide, through the one `recordingAccess` of ADR 0004, whether a player renders and whether `/calls/[id]/recording` presigns; `artifact_dir` may be swept (trap 5) — it is a path, not a promise, and since the pipeline's migration 0010 the row says so itself in `artifact_state` (§Artifacts); `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `greeting_marks` itself is not read until row A1b draws the greeting axis |
 | `consent_record` | `consent_mode`, `disclosure_completed_at`, `granted_at`, `outcome`, `disclosure_text` | — |
-| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | **`caller_text` only when `outcome = 'granted'`** (trap 4); null text may be age (trap 5); null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7) |
+| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | **`caller_text` only when `outcome = 'granted'`** (trap 4) — through `showCallerData(outcome, gate)`, the one gate, which the test-phase switch of ADR 0005 can open; the same function withholds the recording; null text may be age (trap 5); `speech_start_ms` / `speech_end_ms` are offsets into `call.wav` already (§Artifacts, the mapping), so a bubble's voice length is `speech_end_ms − speech_start_ms` and a null pair is a bubble with text but no place on the strip; null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7) |
 
 ### The waterfall
 
@@ -166,11 +166,12 @@ consented calls only, so the two agree on leg percentiles only over the same cal
 compare by `callIds`, not by window. A backlog row imports these files to overlay committed
 numbers on the dashboard.
 
-## Artifacts (not read yet — row A4)
+## Artifacts (row A5 reads `call.wav`; the per-turn files wait for row A4)
 
 The bucket landed with `../Fonnus` PLAN row W2-L1 on 2026-09-07 (its ADR 0019, migration
-0010, read contract §6 and trap 12). Nothing here reads it until row A4; these are the facts
-A4 is built on.
+0010, read contract §6 and trap 12). Row A5 (the call review) is the first consumer: the
+detail page plays `call.wav` through a presigned GET (ADR 0004). `turns/NNN/*` stays unread
+until row A4. These are the facts both rows are built on.
 
 **Where a call's files are.** One bucket, `recordinginternal`, endpoint
 `https://s3.vn-hcm-1.vietnix.cloud`, region `vn-hcm-1`. A call's objects sit under
@@ -190,11 +191,15 @@ gate, and the screen reads it before offering anything (contract §6, trap 12):
 bucket (yet) — render "not archived yet", never a 404; NULL together with a non-null
 `artifact_dir` is a row written before migration 0010, "unknown, probably spooled". A
 `call.json` object under the prefix means the set is complete, because the uploader puts it
-last. The predicate the pipeline itself uses, to be copied rather than re-derived
-(`app/src/persistence/call-queries.ts:180-203`):
+last. The predicate the pipeline itself uses, copied rather than re-derived
+(`app/src/persistence/call-queries.ts:180-203`, `fetchableCallsSince`) into
+`src/artifacts.ts` as `isFetchable` and pinned by its test:
 `artifact_state = 'archived' OR (artifact_state = 'expired' AND artifact_key_prefix IS NOT NULL)`.
-`artifact_dir` remains the disk copy only — a path on the box that nobody outside it can
-open; it is not a bucket key.
+It is the gate for every recording surface — the list's signal, the detail's player, the
+`/calls/[id]/recording` route — and nothing else in `src/` compares `artifact_state` to a
+literal. A value outside the contract's vocabulary is not fetchable and is shown with the
+`Vocabulary` warning. `artifact_dir` remains the disk copy only — a path on the box that
+nobody outside it can open; it is not a bucket key.
 
 **When they arrive.** The uploader runs only while no call is active, so a call that just
 ended reaches the bucket seconds to minutes later. This is why the screen reads
@@ -204,12 +209,70 @@ ended reaches the bucket seconds to minutes later. This is why the screen reads
 straight at the bucket through a short-lived presigned URL — built with
 `@aws-sdk/s3-request-presigner` over the same client — and this app never proxies bytes: the
 VPS-to-Vietnix path measured only ~0.9 MB/s while the viewer's own connection is far faster.
-The uploader stores `call.wav` as `audio/wav` (`../Fonnus/app/src/recording/object-store.ts`),
-which settles the Content-Type question; what is still unverified is whether a browser plays
-that inline, and one page load in A4 answers it — the observation is owed back to
-`../Fonnus/docs/runbook.md` §2.5 row 30. CORS on the bucket was deliberately not configured:
-a plain `<audio src>` needs none, a `fetch()` would. The presign expiry ceiling Vietnix
-accepts is also unverified.
+The `<audio>` element's `src` is this app's `/calls/[id]/recording`, which redirects to a
+URL presigned for 900 s at that moment (ADR 0004), so a page left open keeps playing and
+seeking. The uploader stores `call.wav` as `audio/wav`
+(`../Fonnus/app/src/recording/object-store.ts`), which settles the Content-Type question;
+what is still unverified is whether a browser plays that inline, and the first page load of
+A5 answers it — the observation is owed back to `../Fonnus/docs/runbook.md` §2.5 row 30.
+CORS on the bucket was deliberately not configured: a plain `<audio src>` needs none, a
+`fetch()` would — which is also why no waveform is drawn from the bytes: the browser cannot
+read them, only play them. The presign expiry ceiling Vietnix accepts is also unverified
+(ASSUMED ≥ 900 s; the first `302` that plays settles it).
+
+### Audio ↔ marks — placing a turn on the recording
+
+No new data is needed to line the transcript and the waterfall up with the audio; the
+recording clock is the wall clock (pipeline ADR 0012). The rules, copied from
+`../Fonnus/app/src/recording/wav-writer.ts` and `artifact-recorder.ts` into `src/playback.ts`
+and pinned by its tests:
+
+- **Origin.** Sample 0 of `call.wav` is `call_log.recording_started_at` exactly, on both
+  channels (`RawTrack.sampleAt(wallMs) = round((wallMs − startedAt) / 1000 × sampleRate)`;
+  L = caller, R = bot; a channel that has no track is silence, which is what an unconsented
+  call's L is). The sample rate is in the file's own header (`config_snapshot.SAMPLE_RATE`
+  for the record); the browser reads it, this code never needs it.
+- **A mark's place in the audio** is `mark − recording_started_at`, clamped at 0 and
+  rounded — the pipeline's own `recordingMsAt` (`artifact-recorder.ts:515-540`,
+  `max(0, round(wallMs − recordingStartedAt))`). `turn.speech_start_ms` and `speech_end_ms`
+  are already that number (written by `recordingMsAt` in `app/src/session/effect-runner.ts:839-840`); they
+  are not re-derived from marks.
+- **Error bound.** The writer pads a gap of more than `GAP_TOLERANCE_MS = 100` with silence
+  and never rewinds a track (a frame that arrives early is appended, not overlapped), so a
+  mark's place is right to within ~100 ms and can only drift *late* relative to the
+  audio, never early. The playhead line on the waterfall is read at that precision.
+- **A turn's block on the call strip** runs from `speech_start_ms` to the place of
+  `marks.playback_end`; when `playback_end` is absent (a failed leg, a turn cut before the
+  reply played) the block ends at the latest mark present by value, and when no mark is
+  present at all, at `speech_end_ms`. When no turn of the call can be placed (null
+  `recording_started_at`, or every `speech_start_ms` null) the transcript still selects a
+  turn by click and the waterfall follows the selection; the strip says why nothing is
+  drawn. A turn with a null `speech_start_ms` has no block
+  (there is nothing to start it from, whatever its marks say): it is listed as "not
+  placed" under the strip and its bubble has no voice element, never a block at 0.
+- **The turn under the playhead** is the placed turn with the latest start at or before
+  the playhead; before the first placed turn there is none. Between a reply's end and the
+  next utterance the previous turn stays current (its waterfall is still the one being
+  heard out). Overlapping blocks (a barge-in starts the next turn before `playback_end`
+  of the last) resolve the same way — the later start wins the moment it begins.
+- **The playhead on the waterfall** is `playhead − (speech_end − recording_started_at)`,
+  because the waterfall's axis starts at `speech_end` (§The waterfall); no `speech_end`
+  mark or a null `recording_started_at` → no line, the chart's "not placed" rule unchanged.
+  A value outside the chart's domain is simply not drawn.
+- **Null `recording_started_at`** places nothing: no block, no line, the transcript still
+  reads. The contract sets it on every call that has `call_event` rows; a call without it
+  is one that never had a recorder clock.
+- **Bubble length and where a bubble seeks to.** Caller: `speech_end_ms − speech_start_ms`,
+  seeking to `speech_start_ms`. Assistant: the bot's channel starts in `call.wav` where
+  `first_audio_out` says (the recorder writes the bot's frames from the hand-over to the
+  sink, before FreeSWITCH's advisory `playback_start`), so the bubble seeks to the place of
+  `first_audio_out` and its length is `playback_end − first_audio_out`; `playback_start`
+  is the fallback when `first_audio_out` is absent. On an `interrupted` turn that is the
+  length heard before the barge-in, said by the pill on the bubble, not by the number.
+
+Observations this player owes back to `../Fonnus/docs/runbook.md` §2.5: row 10 (the bot's
+first sentence is heard where `first_audio_out − recording_started_at` says) and row 30
+(browser inline playback of a presigned `audio/wav`).
 
 **The SDK.** `@aws-sdk/client-s3` v3 works against this endpoint with default settings; the
 pipeline pins `3.1127.0` and sets `forcePathStyle: false` with `maxAttempts: 1` and a 90 s

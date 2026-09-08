@@ -9,7 +9,7 @@
  * Vocabulary is the pipeline's, unchanged (CLAUDE.md §Ground rules).
  */
 
-import { shortSha } from './calls';
+import { isConsentGranted, shortSha } from './calls';
 import { LEGS, type LegName, legSpans, parseMarks } from './latency';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
 
@@ -444,7 +444,7 @@ export function aggregate(
   // stands on granted calls only. A call that has turns is counted as consented
   // whatever its outcome column says — the turns are on record either way.
   const consented = calls.filter(
-    (call) => call.outcome === 'granted' || withTurns.has(call.id),
+    (call) => isConsentGranted(call.outcome) || withTurns.has(call.id),
   ).length;
 
   const rows: DashboardGroup[] = [...groups.entries()].map(([key, group]) => ({

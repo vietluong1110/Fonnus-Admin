@@ -36,12 +36,18 @@ caveats; the decisions stay with the person reading it.
 
 ## What the console shows (target state; `PLAN.md` says what exists)
 
-1. **Call list** — recent calls with when, how long, how it ended, consent outcome,
-   turns on record, cost.
-2. **Call detail** — the turns of one call (caller text, assistant text), and for every
-   turn a **waterfall of the six latency legs** (`stt_emit`, `endpoint_wait`, `llm_ttft`,
+1. **Call list** — recent calls, one click target per row, with when, the caller's number,
+   how long, how it ended (consent outcome and end reason together — quiet when ordinary,
+   a pill when not), turns on record, whether a recording can be fetched, cost.
+2. **Call detail** — built for the call review, non-technical reader first: an overview
+   strip, then the recording player beside the transcript as chat bubbles (caller left,
+   assistant right, each with its voice length; a click seeks the audio), and under the
+   player the **call strip** (one block per turn on the recording's axis with the
+   playhead) over the **waterfall of the six latency legs** of the turn being heard (`stt_emit`, `endpoint_wait`, `llm_ttft`,
    `tts_ttfb`, `send`, `playback` — `../Fonnus/PIPELINE_ARCHITECTURE.md` §6) with the
-   two headline spans against their ADR 0007 targets. The waterfall grows into a **call
+   two headline spans against their ADR 0007 targets; the per-turn research detail
+   (tokens, marks, the config snapshot, the consent record, identity fields, cost) sits
+   below in a collapsed "Pipeline detail" section. The waterfall grows into a **call
    timeline**: one time axis per turn carrying every step and sub-step with its
    timestamp — each STT partial and the final (text under the consent rule), the turn
    end, the LLM request sent / first token / last token with the model's reasoning
@@ -59,10 +65,13 @@ caveats; the decisions stay with the person reading it.
    under** (`call_log.config_snapshot`, on record since `../Fonnus` W2-L3 F1, 2026-09-06),
    so a change to an endpointing or flush setting is visible as a step and not guessed at.
    Every pipeline change from W3 on is one snapshot, and this grouping is how it is judged.
-4. **Audio and per-sentence views** — play the call, see each synthesized sentence on
-   the timeline. The artifact bucket on Vietnix S3 landed with `../Fonnus` PLAN row W2-L1 on
-   2026-09-07, so this is unblocked; `call_log.artifact_state` says whether a given call's
-   files are in the bucket yet. The bucket holds internal test calls only for as long as this
+4. **Audio and per-sentence views** — the call itself plays on the detail page (row A5,
+   ADR 0004: the browser reads `call.wav` straight from the bucket through a short-lived
+   presigned URL; the playhead drives the transcript and the waterfall, and no new pipeline
+   data was needed because the recording clock is the wall clock — `docs/upstream.md`
+   §Artifacts). Each synthesized sentence on the timeline is row A4. The artifact bucket on
+   Vietnix S3 landed with `../Fonnus` PLAN row W2-L1 on 2026-09-07; `call_log.artifact_state`
+   says whether a given call's files are in the bucket yet. The bucket holds internal test calls only for as long as this
    repo's account-wide key exists off the VPS (`../Fonnus` ADR 0019).
 
 Not here: any write (bookings, notes, tenant configuration), the onboarding UI, the
@@ -90,7 +99,10 @@ From the contract's §5, restated as what the screen must do:
    pipeline's `/healthz` lists `unpricedModels`; until the console can read that, every
    cost figure carries the floor caveat.
 4. **Caller text is shown only when `consent_record.outcome = 'granted'`.** Otherwise the
-   cell shows the outcome. The store does not enforce this; this code does.
+   cell shows the outcome. The store does not enforce this; this code does — one function,
+   `showCallerData`, gates caller text and the recording alike. During the internal test
+   phase the gate is a deployment switch (ADR 0005, `CONSENT_GATE`): on by default, off
+   only in the test `.env`, and every screen says so while it is off.
 5. Null transcripts and null caller numbers may be **age** (retention TTLs), and
    `artifact_dir` may point at a swept directory. Compare `started_at` against the TTLs
    before calling anything "missing". Since the pipeline's migration 0010 the row says this
@@ -118,7 +130,12 @@ ADR 0013 kept a web surface out of the pipeline *process*; this puts one on the 
 to the public interface, the console container sits on the compose bridge network, one
 `basic_auth` account per team member guards it — the bcrypt hashes hand-maintained on the
 box, outside the repo — and the database role it holds cannot write. A clinic-facing
-surface is that ADR's revisit trigger.
+surface is that ADR's revisit trigger. Caller-derived bytes (text, the recording) are
+withheld unless consent was granted; during the internal test phase that gate is a
+deployment switch, on by default and off only in the test `.env` (ADR 0005) — the first
+account for someone outside the team deletes the switch. The recording is never proxied:
+the browser plays it from the bucket through a URL presigned for 15 minutes by the
+`/calls/<id>/recording` route, which enforces the same gate (ADR 0004).
 
 ### Language
 

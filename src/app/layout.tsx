@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Baloo_2, Be_Vietnam_Pro, IBM_Plex_Sans } from 'next/font/google';
 import Image from 'next/image';
+import { getConsentGate } from '@/config';
+import Caveat from '@/ui/caveat';
 import NavLink from '@/ui/nav-link';
 import './globals.css';
 
@@ -53,6 +55,12 @@ const NAV = [
  * operator, on a laptop (ADR 0003 point 5).
  */
 export default function RootLayout({ children }: { children: ReactNode }) {
+  // ADR 0005: while the gate is open every screen says so, so the line is the
+  // shell's and no page can forget it. Read through `getConsentGate`, not
+  // `getConfig`, because the shell must render on a machine with no database
+  // configured at all — `next build` prerenders it for `/_not-found`.
+  const gate = getConsentGate();
+
   // No dark mode (CONTEXT.md §Look and feel): the warm cream ground is the page.
   return (
     <html
@@ -66,8 +74,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             className="sticky top-0 flex h-screen flex-col gap-[3px] overflow-hidden border-r border-border-hairline bg-surface-card px-[14px] pt-[22px] pb-[18px] max-[900px]:px-[10px] max-[900px]:pt-[18px] max-[900px]:pb-[14px]"
           >
             {/* The brand lockup (CONTEXT.md §Look and feel); viewBox 339.3 × 108.9.
-                There is no square mark asset in this repo, so the rail drops it
-                rather than shrink the wordmark past reading size. */}
+                On the icon rail the wordmark would shrink past reading size, so
+                the rail shows the square mark instead — the same glyph the
+                lockup carries over its "o", and the tab's favicon (src/app/icon.svg). */}
             <div className="flex items-center px-[10px] pb-5 max-[900px]:hidden">
               <Image
                 src="/fonnus-lockup-horizontal.svg"
@@ -76,6 +85,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 height={36}
                 priority
               />
+            </div>
+            <div className="hidden items-center justify-center pb-5 max-[900px]:flex">
+              <Image src="/fonnus-mark.svg" alt="Fonnus" width={28} height={28} priority />
             </div>
 
             <nav className="flex flex-col gap-[3px]">
@@ -89,6 +101,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             {/* Centred rather than capped-and-left: a wide window otherwise puts
                 36px of margin on one side and 300px on the other. */}
             <div className="mx-auto flex w-full min-w-0 max-w-[1180px] flex-col gap-[18px]">
+              {gate === 'off' ? (
+                <Caveat>
+                  consent gate off: caller text and recordings are shown for every call
+                  (internal test phase)
+                </Caveat>
+              ) : null}
               {children}
             </div>
           </main>

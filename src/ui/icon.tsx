@@ -18,7 +18,7 @@ interface PathPrim {
 /** The handset body shared by the call icons; heavier so it reads at 16px. */
 const HANDSET: PathPrim = { d: 'M6 7.5A13 13 0 0 0 16.5 18', w: 3 };
 
-export type IconName = 'answered' | 'report';
+export type IconName = 'answered' | 'report' | 'play' | 'pause';
 
 const ICONS: Record<IconName, readonly PathPrim[]> = {
   /** Nghe máy — handset with the rising arc of a voice. */
@@ -28,6 +28,16 @@ const ICONS: Record<IconName, readonly PathPrim[]> = {
     { d: 'M5.5 19V13.4M18.5 19V10.4', w: 2.6 },
     { d: 'M12 19V6.6', accent: true, w: 2.6 },
   ],
+  /*
+   * Player controls, copied unchanged from the Web-UI's icons.ts. Both are
+   * exceptions the source already makes to the one-accent rule: they carry NO
+   * accent part, because a transport control is read as a whole shape and a
+   * terracotta half would read as two glyphs at 16px.
+   */
+  play: [
+    { d: 'M8.4 5.8v12.4a1 1 0 0 0 1.5.9l10-6.2a1 1 0 0 0 0-1.8l-10-6.2a1 1 0 0 0-1.5.9z', w: 2.2 },
+  ],
+  pause: [{ d: 'M8.6 6v12M15.4 6v12', w: 2.6 }],
 };
 
 /** Stroke compensates for size so the shape never changes, only the line. */

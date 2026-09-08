@@ -1,5 +1,6 @@
 'use client';
 
+import Button from '@/ui/button';
 import Card from '@/ui/card';
 import PageHead from '@/ui/page-head';
 
@@ -15,13 +16,7 @@ export default function Error({ reset }: { error: Error; reset: () => void }) {
           that the connection is up, then try again.
         </p>
         <div>
-          <button
-            type="button"
-            onClick={reset}
-            className="rounded-sm bg-action-primary px-4 py-2 text-[length:var(--size-ui)] font-medium text-text-on-accent hover:bg-action-primary-hover"
-          >
-            Try again
-          </button>
+          <Button onClick={reset}>Try again</Button>
         </div>
       </Card>
     </>

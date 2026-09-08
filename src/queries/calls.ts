@@ -18,9 +18,12 @@ export interface CallListRow {
   turn_count: number;
   /** `numeric(14,4)`: `pg` returns it as a string to keep the precision. */
   total_cost_vnd: string | null;
-  did: string | null;
-  stt_model: string | null;
-  tts_model: string | null;
+  /** Trap 5: null is age or a call that never reached it, never "no number". */
+  caller_phone_e164: string | null;
+  /** Contract §6 vocabulary `spooled | archived | expired | failed`; null before migration 0010. */
+  artifact_state: string | null;
+  /** The bucket key prefix the call's objects live under (contract §6). */
+  artifact_key_prefix: string | null;
   /** LEFT JOIN: null means no `consent_record` row — trap 2, not "no consent". */
   outcome: string | null;
 }
@@ -38,9 +41,9 @@ export async function listCalls(limit: number): Promise<CallListRow[]> {
             call_log.end_reason,
             call_log.turn_count,
             call_log.total_cost_vnd,
-            call_log.did,
-            call_log.stt_model,
-            call_log.tts_model,
+            call_log.caller_phone_e164,
+            call_log.artifact_state,
+            call_log.artifact_key_prefix,
             consent_record.outcome
        from call_log
        left join consent_record on consent_record.call_id = call_log.id
@@ -52,7 +55,10 @@ export async function listCalls(limit: number): Promise<CallListRow[]> {
 }
 
 export interface CallDetailRow extends CallListRow {
-  caller_phone_e164: string | null;
+  /** Identical on every row today, so they are the detail's alone, not the list's. */
+  did: string | null;
+  stt_model: string | null;
+  tts_model: string | null;
   recording_started_at: Date | null;
   disclosure_completed_at: Date | null;
   stt_audio_ms: number | null;
@@ -78,10 +84,12 @@ export async function getCall(id: string): Promise<CallDetailRow | null> {
             call_log.end_reason,
             call_log.turn_count,
             call_log.total_cost_vnd,
+            call_log.caller_phone_e164,
+            call_log.artifact_state,
+            call_log.artifact_key_prefix,
             call_log.did,
             call_log.stt_model,
             call_log.tts_model,
-            call_log.caller_phone_e164,
             call_log.recording_started_at,
             call_log.disclosure_completed_at,
             call_log.stt_audio_ms,

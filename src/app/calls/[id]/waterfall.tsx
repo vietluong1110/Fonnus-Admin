@@ -1,7 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  Bar,
+  BarChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type { TooltipContentProps } from 'recharts';
 import { formatMs, formatNumber } from '@/calls';
 import type { EndOfTurnRow, Stage, WaterfallRow } from '@/latency';
@@ -15,12 +23,22 @@ import type { EndOfTurnRow, Stage, WaterfallRow } from '@/latency';
  */
 const FALLBACK = 'currentColor';
 
-/** `--chart-1` the partition legs, `--chart-3` the ones outside it, muted axes. */
-function useChartColours(): { partition: string; outside: string; axis: string } {
+/**
+ * `--chart-1` the partition legs, `--chart-3` the ones outside it, muted axes,
+ * `--action-primary` the playhead — it is the one thing on the chart the
+ * operator is driving, and the accent is for what is acted on (ADR 0003).
+ */
+function useChartColours(): {
+  partition: string;
+  outside: string;
+  axis: string;
+  playhead: string;
+} {
   const [colours, setColours] = useState({
     partition: FALLBACK,
     outside: FALLBACK,
     axis: FALLBACK,
+    playhead: FALLBACK,
   });
 
   useEffect(() => {
@@ -36,6 +54,7 @@ function useChartColours(): { partition: string; outside: string; axis: string }
       partition: read('--chart-1', FALLBACK),
       outside: read('--chart-3', FALLBACK),
       axis: read('--text-muted', FALLBACK),
+      playhead: read('--action-primary', FALLBACK),
     });
   }, []);
 
@@ -75,7 +94,22 @@ function pairLabel(row: EndOfTurnRow): string {
  * scale, so the eye reads them as the tail of the same turn. They sit outside
  * the partition, like `stt_emit` and `playback`, and wear the muted colour.
  */
-export default function Waterfall({ rows, tail }: { rows: WaterfallRow[]; tail: EndOfTurnRow[] }) {
+export default function Waterfall({
+  rows,
+  tail,
+  playheadMs,
+}: {
+  rows: WaterfallRow[];
+  tail: EndOfTurnRow[];
+  /**
+   * Where the recording's playhead falls on this turn's axis, in ms from
+   * `speech_end` (`waterfallPlayheadMs`, `src/playback.ts`). Null or absent —
+   * no `speech_end` mark to place it from, or no player at all — draws no
+   * line, and a value outside the shared domain is discarded by the chart
+   * rather than pinned to an edge it does not mean.
+   */
+  playheadMs?: number | null;
+}) {
   const colours = useChartColours();
   const legRows: SpanRow[] = rows.map((row) => ({
     label: row.leg,
@@ -106,11 +140,23 @@ export default function Waterfall({ rows, tail }: { rows: WaterfallRow[]; tail: 
 
   return (
     <div className="flex flex-col gap-1">
-      <SpanChart rows={legRows} colours={colours} domainMax={domainMax} height="h-56" />
+      <SpanChart
+        rows={legRows}
+        colours={colours}
+        domainMax={domainMax}
+        height="h-56"
+        playheadMs={playheadMs ?? null}
+      />
       <div className="mt-2 text-[length:var(--size-eyebrow)] text-text-muted">
         End-of-turn marks
       </div>
-      <SpanChart rows={tailRows} colours={colours} domainMax={domainMax} height="h-28" />
+      <SpanChart
+        rows={tailRows}
+        colours={colours}
+        domainMax={domainMax}
+        height="h-28"
+        playheadMs={playheadMs ?? null}
+      />
       <p className="mb-0 text-[length:var(--size-eyebrow)] text-text-muted">
         Milliseconds from <code>speech_end</code>. Muted bars sit outside the partition:{' '}
         <code>stt_emit</code> overlaps <code>endpoint_wait</code>; <code>playback</code> is
@@ -138,11 +184,13 @@ function SpanChart({
   colours,
   domainMax,
   height,
+  playheadMs,
 }: {
   rows: SpanRow[];
-  colours: { partition: string; outside: string; axis: string };
+  colours: { partition: string; outside: string; axis: string; playhead: string };
   domainMax: number | 'auto';
   height: string;
+  playheadMs: number | null;
 }) {
   // The span is split across two series rather than coloured cell by cell: one
   // of the two is always null for a given row, so the stack is still the span.
@@ -175,6 +223,17 @@ function SpanChart({
             stroke={colours.axis}
           />
           <Tooltip content={<SpanTooltip rows={rows} />} cursor={false} />
+          {typeof playheadMs === 'number' ? (
+            <ReferenceLine
+              x={playheadMs}
+              // Both charts share one domain, so a playhead before this turn's
+              // `speech_end` or past its last mark simply is not drawn — never
+              // clamped to an edge, which would read as "the audio is here".
+              ifOverflow="discard"
+              stroke={colours.playhead}
+              strokeDasharray="4 4"
+            />
+          ) : null}
           <Bar dataKey="offsetMs" stackId="span" fill="transparent" isAnimationActive={false} />
           <Bar
             dataKey="partitionMs"

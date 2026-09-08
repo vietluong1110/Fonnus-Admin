@@ -48,10 +48,25 @@ pnpm install
 pnpm dev                  # http://localhost:3000
 ```
 
-The `console` password is the one set on the box per `../Fonnus/docs/runbook.md` §9. It is
-the only credential this repo holds. As of 2026-09-08 that step has not been run: the role
+The `console` password is the one set on the box per `../Fonnus/docs/runbook.md` §9. It
+and the bucket key below are the only credentials this repo holds. As of 2026-09-08 that step has not been run: the role
 exists but cannot log in, so the tunnel path cannot connect either until the operator runs
 §9 — which is step 1.5 of the box's one-time setup (`docs/deploy.md`).
+
+### Recordings and the consent gate (optional keys)
+
+The call detail plays `call.wav` from the artifact bucket (ADR 0004). That needs the five
+`S3_*` keys of `.env.example` — this repo's own account-wide `console` key pair for the
+bucket `recordinginternal`. Set all five or none: with none the pages render and every
+recording surface says "recording access not configured"; with some but not all the app
+refuses to start and names the missing keys. The browser fetches the audio straight from
+the bucket through a short-lived presigned URL (`/calls/<id>/recording` redirects to it);
+this app never proxies the bytes.
+
+`CONSENT_GATE` (ADR 0005) is `on` when unset: caller text and recordings are withheld
+unless the call's consent outcome is `granted`. During the internal test phase, where
+every caller is a team member, the test deployment's `.env` sets `CONSENT_GATE=off` and
+every screen then carries a muted line saying so. Any other value refuses to start.
 
 ## Run locally against the pipeline's dev database
 

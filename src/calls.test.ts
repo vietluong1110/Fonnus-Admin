@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CALL_STATE_LABEL,
@@ -9,6 +12,7 @@ import {
   consentOutcomeTone,
   endReasonTone,
   formatCount,
+  formatClock,
   formatDuration,
   formatMs,
   formatWhen,
@@ -18,9 +22,10 @@ import {
   isKnownFailedLeg,
   isKnownFailedStage,
   isKnownTurnSource,
+  isOrdinaryEnding,
   isUuid,
   parseCostVnd,
-  showCallerText,
+  showCallerData,
   shortSha,
 } from './calls';
 
@@ -48,12 +53,52 @@ describe('callState — read contract trap 2', () => {
   });
 });
 
-describe('showCallerText — read contract trap 4', () => {
-  it('is true only for a granted outcome', () => {
-    expect(showCallerText('granted')).toBe(true);
-    for (const outcome of ['hung_up_before_disclosure', 'hung_up_before_consent', 'GRANTED', '', null]) {
-      expect(showCallerText(outcome)).toBe(false);
+describe('showCallerData — read contract trap 4, gated by ADR 0005', () => {
+  // Every value the outcome column can carry, plus the absent row (trap 2) and
+  // a few near misses a hand-restored row could hold.
+  const outcomes: (string | null)[] = [...CONSENT_OUTCOMES, 'GRANTED', 'denied', '', null];
+
+  it('shows caller data only for a granted outcome while the gate is on', () => {
+    expect(showCallerData('granted', 'on')).toBe(true);
+    for (const outcome of outcomes.filter((value) => value !== 'granted')) {
+      expect(showCallerData(outcome, 'on')).toBe(false);
     }
+  });
+
+  it('shows caller data for every outcome while the gate is off', () => {
+    // The internal test phase: every caller is a team member who consented
+    // off-band, and the calls whose disclosure needs tuning are exactly the
+    // ones with no grant on record.
+    for (const outcome of outcomes) {
+      expect(showCallerData(outcome, 'off')).toBe(true);
+    }
+  });
+});
+
+describe('the consent gate has one enforcement point (ADR 0005)', () => {
+  // The obligation lives in this reader, and a reader with two gates has one
+  // that drifts: no other module may compare an outcome to the literal.
+  // The dashboard's consented-sample count is not a gate; it goes through
+  // `isConsentGranted` from the same file rather than a literal of its own.
+  const ALLOWED = new Set(['src/calls.ts']);
+
+  it('mentions the granted literal nowhere else under src/', () => {
+    const root = fileURLToPath(new URL('.', import.meta.url));
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        const rel = `src/${relative(root, full).split(sep).join('/')}`;
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
+          if (/'granted'|"granted"/.test(readFileSync(full, 'utf8')) && !ALLOWED.has(rel)) {
+            offenders.push(rel);
+          }
+        }
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -194,6 +239,31 @@ describe('isUuid — the route parameter never reaches SQL unchecked', () => {
   });
 });
 
+describe('isOrdinaryEnding — what the call list says quietly', () => {
+  it('is true only for a consented call the caller hung up', () => {
+    expect(isOrdinaryEnding('granted', 'caller_hangup')).toBe(true);
+  });
+
+  it('is false for every other end reason under a granted call', () => {
+    for (const reason of END_REASONS.filter((value) => value !== 'caller_hangup')) {
+      expect(isOrdinaryEnding('granted', reason)).toBe(false);
+    }
+    // A value the contract does not name is an exception too (§4).
+    expect(isOrdinaryEnding('granted', 'carrier_reset')).toBe(false);
+    expect(isOrdinaryEnding('granted', null)).toBe(false);
+  });
+
+  it('is false for every outcome other than granted, and for none at all', () => {
+    for (const outcome of CONSENT_OUTCOMES.filter((value) => value !== 'granted')) {
+      expect(isOrdinaryEnding(outcome, 'caller_hangup')).toBe(false);
+    }
+    expect(isOrdinaryEnding('withdrawn', 'caller_hangup')).toBe(false);
+    // Trap 2: no consent row is a state to show, never an ordinary ending.
+    expect(isOrdinaryEnding(null, 'caller_hangup')).toBe(false);
+    expect(isOrdinaryEnding(null, null)).toBe(false);
+  });
+});
+
 describe('badge tones for the fixed vocabularies', () => {
   it('gives every contract end reason a tone', () => {
     for (const reason of END_REASONS) {
@@ -225,5 +295,24 @@ describe('badge tones for the fixed vocabularies', () => {
     expect(CALL_STATE_TONE.finalized).toBeNull();
     expect(CALL_STATE_TONE.in_progress).toBe('info');
     expect(CALL_STATE_TONE.not_finalized).toBe('warning');
+  });
+});
+
+describe('formatClock', () => {
+  it('reads a length in milliseconds as m:ss', () => {
+    expect(formatClock(0)).toBe('0:00');
+    expect(formatClock(9_000)).toBe('0:09');
+    expect(formatClock(75_000)).toBe('1:15');
+    expect(formatClock(600_000)).toBe('10:00');
+  });
+
+  it('floors rather than rounds: the clock never reaches a second early', () => {
+    expect(formatClock(1_999)).toBe('0:01');
+    expect(formatClock(59_999)).toBe('0:59');
+  });
+
+  it('clamps a negative length to zero rather than showing -0:01', () => {
+    expect(formatClock(-1)).toBe('0:00');
+    expect(formatClock(-90_000)).toBe('0:00');
   });
 });

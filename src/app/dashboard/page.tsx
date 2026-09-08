@@ -21,9 +21,11 @@ import {
 import { LEGS, TARGETS } from '@/latency';
 import { callsSince, turnsSince } from '@/queries/dashboard';
 import Badge from '@/ui/badge';
+import Button from '@/ui/button';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
+import LinkRow from '@/ui/link-row';
 import PageHead from '@/ui/page-head';
 import Stat from '@/ui/stat';
 import { Table, TableScroll, Td, Th } from '@/ui/table';
@@ -127,12 +129,7 @@ export default async function DashboardPage({
               ))}
             </select>
           </label>
-          <button
-            type="submit"
-            className="rounded-sm bg-action-primary px-4 py-2 text-[length:var(--size-ui)] font-medium text-text-on-accent hover:bg-action-primary-hover"
-          >
-            Show
-          </button>
+          <Button type="submit">Show</Button>
         </form>
       </Card>
 
@@ -324,7 +321,12 @@ export default async function DashboardPage({
                     {data.outside.map((turn) => {
                       const call = callsById.get(turn.call_id);
                       return (
-                        <tr key={`${turn.call_id}-${String(turn.idx)}`}>
+                        // The whole row opens the call, as the call list's rows
+                        // do; the first cell keeps the real anchor.
+                        <LinkRow
+                          key={`${turn.call_id}-${String(turn.idx)}`}
+                          href={`/calls/${turn.call_id}`}
+                        >
                           <Td>
                             <Link
                               href={`/calls/${turn.call_id}`}
@@ -366,7 +368,7 @@ export default async function DashboardPage({
                             )}
                           </Td>
                           <Td num>{formatMs(turn.failed_after_ms)}</Td>
-                        </tr>
+                        </LinkRow>
                       );
                     })}
                   </tbody>

@@ -4,6 +4,7 @@
  * Vocabulary is the pipeline's, unchanged (CLAUDE.md §Ground rules).
  */
 
+import type { ConsentGate } from './config';
 import type { BadgeTone } from './ui/badge';
 
 /** Contract §3.1 — `call_log.end_reason`. */
@@ -124,6 +125,18 @@ export function failureLine(
     : `${where} after ${formatNumber(failedAfterMs)} ms`;
 }
 
+/**
+ * "How it ended" in one cell. The ordinary ending is a consented call the
+ * caller hung up (`granted` + `caller_hangup`): it is said quietly, without a
+ * pill, because a default is said and not drawn (CONTEXT.md §Look and feel).
+ * Anything else — another outcome, another end reason, a null on either side,
+ * a call with no consent row at all (trap 2) — is the exception the row wears
+ * its existing tone for.
+ */
+export function isOrdinaryEnding(outcome: string | null, endReason: string | null): boolean {
+  return isConsentGranted(outcome) && endReason === 'caller_hangup';
+}
+
 export type CallState = 'finalized' | 'in_progress' | 'not_finalized';
 
 /**
@@ -152,11 +165,29 @@ export const CALL_STATE_TONE = {
 } as const satisfies Record<CallState, BadgeTone | null>;
 
 /**
- * Trap 4: the consent obligation lives in this reader. `turn.caller_text` is
- * rendered only when the call's consent outcome is `granted`; storage does not
- * enforce it, so a hand-restored row could still carry text.
+ * Trap 4: the consent obligation lives in this reader. Every caller-derived
+ * byte — `turn.caller_text`, the recording — is rendered only when the call's
+ * consent outcome is `granted`; storage does not enforce it, so a hand-restored
+ * row could still carry text.
+ *
+ * `gate` is the internal test phase's deployment switch (ADR 0005): `off` shows
+ * caller data for every call, because in that phase every caller is a team
+ * member who consented off-band. This file is the only place in `src/` that
+ * compares an outcome to `granted`, so there is one gate to change when the
+ * phase ends.
  */
-export function showCallerText(outcome: string | null): boolean {
+export function showCallerData(outcome: string | null, gate: ConsentGate): boolean {
+  return gate === 'off' || isConsentGranted(outcome);
+}
+
+/**
+ * The bare fact, not a gate: whether this call's consent outcome is `granted`.
+ * The dashboard counts the consented sample with it (trap 1 — percentiles stand
+ * on consented calls only), and that count must stay the truth about the data
+ * whatever `CONSENT_GATE` is set to. Kept in this file so the literal lives in
+ * one place.
+ */
+export function isConsentGranted(outcome: string | null): boolean {
   return outcome === 'granted';
 }
 
@@ -181,6 +212,18 @@ export function formatDuration(startedAt: Date, endedAt: Date | null): string {
   const ms = endedAt.getTime() - startedAt.getTime();
   if (ms < 0) return 'not measured';
   const seconds = Math.round(ms / 1000);
+  return `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+/**
+ * `m:ss` from a length in milliseconds — the player's clock and a bubble's
+ * voice length. Floored, not rounded, because a clock that reads the end one
+ * second before the audio reaches it is wrong on the way there; and clamped at
+ * zero, because a negative length is a clock fault the caller has already
+ * rendered as "not measured" (contract §3.2), never `-0:01`.
+ */
+export function formatClock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
   return `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
