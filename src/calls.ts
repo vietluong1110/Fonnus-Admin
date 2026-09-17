@@ -150,11 +150,23 @@ export function callState(endedAt: Date | null, outcome: string | null): CallSta
   return endedAt === null ? 'in_progress' : 'not_finalized';
 }
 
-/** The screen text for a state that is not finalized; `finalized` says nothing. */
+/**
+ * The screen text for a state that is not finalized; `finalized` says nothing.
+ * The short phrase alone — every screen that names a call state takes it from
+ * here, so the list and the detail cannot drift apart, and `src/ui/call-state.tsx`
+ * is where the phrase and its caveat are drawn together.
+ */
 export const CALL_STATE_LABEL = {
   finalized: null,
   in_progress: 'in progress',
-  not_finalized: 'not finalized — process died or finish failed',
+  not_finalized: 'not finalized',
+} as const satisfies Record<CallState, string | null>;
+
+/** Why the state is what it is — the sentence that travels with the label. */
+export const CALL_STATE_CAVEAT = {
+  finalized: null,
+  in_progress: 'the consent row is written at finalize',
+  not_finalized: 'process died or finish failed',
 } as const satisfies Record<CallState, string | null>;
 
 /** `finalized` is the normal case and wears no badge at all. */
@@ -227,7 +239,8 @@ export function formatClock(ms: number): string {
   return `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-const CALL_TIME_ZONE = 'Asia/Ho_Chi_Minh';
+/** The clinic's zone, pinned once for every screen — never the process's. */
+export const CALL_TIME_ZONE = 'Asia/Ho_Chi_Minh';
 
 // Vietnam has run one offset with no daylight saving since 1975, so the suffix
 // is a constant rather than a per-instant lookup. It is written out because the

@@ -6,6 +6,13 @@
  * dotenv call here. The read is lazy on purpose: `next build` imports every
  * route module, and a throw at module scope would make the build fail on a
  * machine that has no `.env` — a build needs no database.
+ *
+ * Lazy is not "at the first request", though: `src/instrumentation.ts` calls
+ * `getConfig()` from Next.js's `register()` hook, which runs once before the
+ * server takes its first request and is skipped during `next build`. So a
+ * garbled `.env` — a half-configured `S3_*` group, a `CONSENT_GATE` that is
+ * neither `on` nor `off` — fails the server start with the message below,
+ * instead of surfacing inside a page render as "the database could not be read".
  */
 
 /** The artifact bucket's five keys, read as one group (ADR 0004). */
@@ -56,7 +63,8 @@ const ARTIFACT_STORE_KEYS = [
  * All five set → the store; none set → undefined, which every recording surface
  * renders as "recording access not configured"; some but not all → a throw
  * naming what is missing. A half-configured group is a typo, and a typo must
- * fail at start rather than degrade into "not configured" (ADR 0004).
+ * fail at start rather than degrade into "not configured" (ADR 0004) — the
+ * start is `src/instrumentation.ts`.
  */
 function readArtifactStore(env: Partial<NodeJS.ProcessEnv>): ArtifactStore | undefined {
   const found = ARTIFACT_STORE_KEYS.map(([key, field]) => [key, field, read(env, key)] as const);
@@ -76,9 +84,10 @@ function readArtifactStore(env: Partial<NodeJS.ProcessEnv>): ArtifactStore | und
 const CONSENT_GATES: readonly ConsentGate[] = ['on', 'off'];
 
 /**
- * Unset is the closed gate; a garbled value is loud. This is the one place
- * where "fail open" and "fail closed" differ in kind, so neither is guessed
- * from a value the ADR does not name (ADR 0005).
+ * Unset is the closed gate; a garbled value is loud, at server start rather
+ * than at a page render (`src/instrumentation.ts`). This is the one place where
+ * "fail open" and "fail closed" differ in kind, so neither is guessed from a
+ * value the ADR does not name (ADR 0005).
  */
 export function readConsentGate(env: Partial<NodeJS.ProcessEnv>): ConsentGate {
   const value = read(env, 'CONSENT_GATE');
@@ -111,25 +120,13 @@ export function readConfig(env: Partial<NodeJS.ProcessEnv>): Config {
 
 let cached: Config | undefined;
 
-/** Reads the environment once per process; every caller shares the result. */
+/**
+ * Reads the environment once per process; every caller shares the result — the
+ * root layout's consent gate included, now that no route is prerendered and
+ * every render of the shell happens on a box that has its `.env`
+ * (`src/app/not-found.tsx`).
+ */
 export function getConfig(): Config {
   cached ??= readConfig(process.env);
   return cached;
-}
-
-let cachedGate: ConsentGate | undefined;
-
-/**
- * The gate alone, independent of `DATABASE_URL` — the one piece of configuration
- * the root layout needs (ADR 0005: while the gate is off every screen says so,
- * so the line is rendered by the shell rather than by each page).
- *
- * `getConfig()` cannot serve it: it throws without `DATABASE_URL`, and
- * `next build` renders the root layout for the static routes it prerenders
- * (`/_not-found`) on a machine that has no `.env` at all. A build needs no
- * database, and it must not need one to know whether a caveat line renders.
- */
-export function getConsentGate(): ConsentGate {
-  cachedGate ??= readConsentGate(process.env);
-  return cachedGate;
 }

@@ -155,6 +155,53 @@ describe('grouping', () => {
     expect(snapshotValue(SNAPSHOT_A, 'FONNUS_ENV')).toBe('prod');
   });
 
+  // §3.4: the snapshot is not flat. `runtime` is `{version, config}` and
+  // `SPEECHMATICS_SOUNDS_LIKE` is an object; `JSON.stringify`'s array replacer
+  // filters keys at every level, so both used to hash to `{}` and two calls on
+  // one build SHA with different runtime configuration fell into one group.
+  const NESTED_A = {
+    FONNUS_BUILD_SHA: 'b'.repeat(40),
+    TTS_FLUSH_MS: 120,
+    runtime: { version: 7, config: { tts: { flush_ms: 120 }, stt: { endpointing_ms: 300 } } },
+  };
+  const NESTED_B = {
+    FONNUS_BUILD_SHA: 'b'.repeat(40),
+    TTS_FLUSH_MS: 120,
+    runtime: { version: 7, config: { tts: { flush_ms: 120 }, stt: { endpointing_ms: 900 } } },
+  };
+
+  it('separates two configurations that differ only inside runtime.config', () => {
+    expect(groupKey(call({ config_snapshot: NESTED_A }), turn(), 'config')).not.toBe(
+      groupKey(call({ config_snapshot: NESTED_B }), turn(), 'config'),
+    );
+  });
+
+  it('sorts keys at every level, so a nested insertion order is no difference', () => {
+    const shuffled = {
+      TTS_FLUSH_MS: 120,
+      runtime: {
+        config: { stt: { endpointing_ms: 300 }, tts: { flush_ms: 120 } },
+        version: 7,
+      },
+      FONNUS_BUILD_SHA: NESTED_A.FONNUS_BUILD_SHA,
+    };
+    expect(groupKey(call({ config_snapshot: shuffled }), turn(), 'config')).toBe(
+      groupKey(call({ config_snapshot: NESTED_A }), turn(), 'config'),
+    );
+  });
+
+  it('keeps array order, because order is meaning in OPENROUTER_STOP', () => {
+    expect(
+      groupKey(call({ config_snapshot: { OPENROUTER_STOP: ['a', 'b'] } }), turn(), 'config'),
+    ).not.toBe(
+      groupKey(call({ config_snapshot: { OPENROUTER_STOP: ['b', 'a'] } }), turn(), 'config'),
+    );
+  });
+
+  it('names runtime as the key two nested configurations differ on', () => {
+    expect(differingKeys([NESTED_A, NESTED_B])).toEqual(['runtime']);
+  });
+
   it('does not care what order Postgres handed the snapshot keys over in', () => {
     const first = groupKey(call({ config_snapshot: SNAPSHOT_A }), turn(), 'config');
     const shuffled = { FONNUS_BUILD_SHA: SNAPSHOT_A.FONNUS_BUILD_SHA, FONNUS_ENV: 'prod', TTS_FLUSH_MS: 120 };
@@ -193,6 +240,15 @@ describe('differingKeys', () => {
     expect(snapshotValue({ A: 1 }, 'B')).toBe('absent');
     expect(snapshotValue(null, 'B')).toBe('unknown');
     expect(snapshotValue({ B: false }, 'B')).toBe('false');
+  });
+
+  it('tells an absent key from a null one, as the group identity does', () => {
+    // Two snapshots the dashboard already puts in separate groups must show
+    // the key they differ on, or the two rows read as the same configuration.
+    expect(groupKey(call({ config_snapshot: { A: 1 } }), turn(), 'config')).not.toBe(
+      groupKey(call({ config_snapshot: { A: 1, B: null } }), turn(), 'config'),
+    );
+    expect(differingKeys([{ A: 1 }, { A: 1, B: null }])).toEqual(['B']);
   });
 });
 

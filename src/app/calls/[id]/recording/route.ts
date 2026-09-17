@@ -10,9 +10,8 @@
  */
 import { NextResponse } from 'next/server';
 import { presignCallWav, recordingAccess } from '@/artifacts';
-import { callState, isUuid } from '@/calls';
+import { CALL_STATE_LABEL, callState, isUuid } from '@/calls';
 import { getConfig } from '@/config';
-import { withheldStateReason } from '@/playback';
 import { getCall } from '@/queries/calls';
 
 // A presigned URL is minted per request and expires; nothing here may be cached
@@ -65,7 +64,9 @@ export async function GET(
       return plain(
         403,
         call.outcome === null
-          ? `recording withheld: the call is ${withheldStateReason(callState(call.ended_at, call.outcome))}, no consent outcome on record yet`
+          // A null outcome is what makes the state one of the two labelled
+          // ones, so the `??` branch is for the type and cannot be reached.
+          ? `recording withheld: the call is ${CALL_STATE_LABEL[callState(call.ended_at, call.outcome)] ?? ''}, no consent outcome on record yet`
           : `recording withheld: consent outcome ${call.outcome}`,
       );
     case 'playable': {

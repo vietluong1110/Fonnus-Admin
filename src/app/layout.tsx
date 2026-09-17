@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
+import { connection } from 'next/server';
 import type { ReactNode } from 'react';
 import { Baloo_2, Be_Vietnam_Pro, IBM_Plex_Sans } from 'next/font/google';
 import Image from 'next/image';
-import { getConsentGate } from '@/config';
+import { getConfig } from '@/config';
 import Caveat from '@/ui/caveat';
 import NavLink from '@/ui/nav-link';
 import './globals.css';
@@ -54,12 +55,19 @@ const NAV = [
  * 64px icon rail below 900px. The Web-UI's phone tab bar is not copied — one
  * operator, on a laptop (ADR 0003 point 5).
  */
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Awaited before anything is read: it opts every route that renders inside
+  // this shell out of prerendering, `/_not-found` included — the one route
+  // Next.js otherwise puts on the static path, and a page prerendered inside
+  // the Docker build would carry the build machine's environment, which has no
+  // `.env` at all. Putting it in `src/app/not-found.tsx` is too late: the shell
+  // renders first, and it is the shell that reads the configuration.
+  await connection();
+
   // ADR 0005: while the gate is open every screen says so, so the line is the
-  // shell's and no page can forget it. Read through `getConsentGate`, not
-  // `getConfig`, because the shell must render on a machine with no database
-  // configured at all — `next build` prerenders it for `/_not-found`.
-  const gate = getConsentGate();
+  // shell's and no page can forget it. Read per request, so the line follows
+  // the running box's `.env` rather than whatever the image was built with.
+  const gate = getConfig().consentGate;
 
   // No dark mode (CONTEXT.md §Look and feel): the warm cream ground is the page.
   return (

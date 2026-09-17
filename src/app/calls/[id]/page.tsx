@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { isKnownArtifactState, recordingAccess } from '@/artifacts';
 import {
+  CALL_STATE_CAVEAT,
   CALL_STATE_LABEL,
   CALL_STATE_TONE,
   callState,
@@ -25,17 +26,18 @@ import {
   showCallerData,
 } from '@/calls';
 import { getConfig } from '@/config';
+import { parseSnapshot, renderValue } from '@/dashboard';
 import { TARGETS, endOfTurnRows, parseMarks, waterfallRows } from '@/latency';
 import {
   bubbleView,
   recordingOffsetMs,
   turnSpans,
-  withheldStateReason,
   type TurnBubbleView,
   type TurnSpan,
 } from '@/playback';
 import { getCall, getTurns, type CallDetailRow, type TurnRow } from '@/queries/calls';
 import Badge from '@/ui/badge';
+import CallStateBlock from '@/ui/call-state';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
@@ -55,25 +57,6 @@ export const dynamic = 'force-dynamic';
 /** The grid every definition list on this screen uses. */
 const FIELDS = 'm-0 grid grid-cols-2 gap-4 md:grid-cols-4';
 
-/**
- * `config_snapshot` is jsonb and only promised to be a flat object of config key
- * → value (contract §3.4); a reader must tolerate keys it does not know, so it
- * is read as an unknown value and rendered by `String()`.
- */
-function configEntries(value: unknown): Record<string, string> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const entries: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    entries[key] = String(raw);
-  }
-  return entries;
-}
-
-/** A key the process had no value for is absent, never null (contract §3.4). */
-function configValue(entries: Record<string, string>, key: string): string {
-  return entries[key] ?? 'not configured';
-}
-
 export default async function CallPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   // Checked before any query: a malformed id names no call, so no SQL runs.
@@ -91,6 +74,7 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
   const showCaller = showCallerData(call.outcome, gate);
   const access = recordingAccess(call, config);
   const stateLabel = CALL_STATE_LABEL[state];
+  const stateCaveat = CALL_STATE_CAVEAT[state];
   const stateTone = CALL_STATE_TONE[state];
 
   // The placement rules of `docs/upstream.md` §Artifacts, run once on the
@@ -137,8 +121,10 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
         }
         back={{ href: '/calls', label: 'Calls' }}
       >
-        {stateLabel === null || stateTone === null ? null : (
-          <Badge tone={stateTone}>{stateLabel}</Badge>
+        {stateLabel === null || stateCaveat === null || stateTone === null ? null : (
+          // The long form, because the head has room for the reason and is the
+          // one place a reader meets the state before anything explains it.
+          <Badge tone={stateTone}>{`${stateLabel} — ${stateCaveat}`}</Badge>
         )}
       </PageHead>
 
@@ -179,14 +165,7 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
           <Tile label="Consent outcome">
             {call.outcome === null ? (
               // Trap 2: no consent row is a state of the call, never "no consent".
-              <>
-                {stateTone === null ? null : <Badge tone={stateTone}>{withheldStateReason(state)}</Badge>}
-                <Caveat>
-                  {state === 'in_progress'
-                    ? 'the consent row is written at finalize'
-                    : 'process died or finish failed'}
-                </Caveat>
-              </>
+              <CallStateBlock state={state} />
             ) : (
               <Vocabulary
                 value={call.outcome}
@@ -266,7 +245,9 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
               <Field label="DID">{call.did ?? '—'}</Field>
               <Field label="Started">{formatWhen(call.started_at)}</Field>
               <Field label="Ended">
-                {call.ended_at === null ? 'in progress' : formatWhen(call.ended_at)}
+                {call.ended_at === null
+                  ? CALL_STATE_LABEL.in_progress
+                  : formatWhen(call.ended_at)}
               </Field>
               <Field label="STT model">{call.stt_model ?? 'not reported'}</Field>
               <Field label="TTS model">{call.tts_model ?? 'not reported'}</Field>
@@ -320,15 +301,8 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
 
           <Card title="Consent">
             {call.outcome === null ? (
-              <div>
-                {stateTone === null ? null : (
-                  <Badge tone={stateTone}>{withheldStateReason(state)}</Badge>
-                )}
-                <Caveat>
-                  {state === 'in_progress'
-                    ? 'the consent row is written at finalize'
-                    : 'process died or finish failed'}
-                </Caveat>
+              <div className="flex flex-col items-start gap-1">
+                <CallStateBlock state={state} />
               </div>
             ) : (
               <>
@@ -418,7 +392,9 @@ function OutcomeText({
   call: CallDetailRow;
   state: ReturnType<typeof callState>;
 }) {
-  if (call.outcome === null) return <>{withheldStateReason(state)}</>;
+  // A state with no label is `finalized`, which this branch cannot reach: a
+  // null outcome is exactly what makes the state one of the other two.
+  if (call.outcome === null) return <>{CALL_STATE_LABEL[state] ?? ''}</>;
   return <Vocabulary value={call.outcome} known={isKnownConsentOutcome(call.outcome)} />;
 }
 
@@ -439,11 +415,15 @@ function Ending({
   }
 
   const stateTone = CALL_STATE_TONE[state];
+  const stateLabel = CALL_STATE_LABEL[state];
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       {call.outcome === null ? (
-        stateTone === null ? null : (
-          <Badge tone={stateTone}>{withheldStateReason(state)}</Badge>
+        // The inline lede takes the badge alone: `CallStateBlock` stacks the
+        // caveat under it, which this one-line row has no place for. The caveat
+        // is two tiles below, on the consent tile.
+        stateTone === null || stateLabel === null ? null : (
+          <Badge tone={stateTone}>{stateLabel}</Badge>
         )
       ) : (
         <Vocabulary
@@ -521,7 +501,7 @@ function RecordingBlock({
           {call.outcome === null ? (
             // Trap 2: no consent row is a state of the call, not a refusal —
             // the row is written in the finish transaction.
-            <>the call is {withheldStateReason(state)}, so no consent outcome is on record yet</>
+            <>the call is {CALL_STATE_LABEL[state] ?? ''}, so no consent outcome is on record yet</>
           ) : (
             <>
               consent:{' '}
@@ -548,13 +528,43 @@ function RecordingBlock({
   }
 }
 
+/** A key the process had no value for is absent, never null (contract §3.4). */
+function identityValue(snapshot: Record<string, unknown>, key: string): string {
+  return Object.hasOwn(snapshot, key) ? renderValue(snapshot[key]) : 'not configured';
+}
+
+/**
+ * A snapshot value in the key list. A scalar reads as one line; an object or an
+ * array — `runtime`, `SPEECHMATICS_SOUNDS_LIKE`, the four term lists (§3.4) —
+ * reads as indented JSON, because the whole point of the row is that the
+ * operator can see which leaf changed.
+ */
+function ConfigCell({ value }: { value: unknown }) {
+  const scalar = typeof value !== 'object' || value === null;
+  return (
+    <dd
+      className={`font-num text-[length:var(--size-eyebrow)] ${
+        scalar ? 'break-all' : 'whitespace-pre-wrap break-all'
+      }`}
+    >
+      {scalar ? renderValue(value) : JSON.stringify(value, null, 2)}
+    </dd>
+  );
+}
+
 /** The snapshot card's body: identity keys, then every other key it carries. */
 function ConfigSnapshot({ value }: { value: unknown }) {
-  const snapshot = configEntries(value);
-  const buildSha = snapshot === null ? null : configValue(snapshot, 'FONNUS_BUILD_SHA');
-  if (snapshot === null || buildSha === null) {
+  // `parseSnapshot` is the column's one trust boundary (`src/dashboard.ts`), so
+  // the dashboard and this card agree on what counts as a snapshot at all.
+  const snapshot = parseSnapshot(value);
+  if (snapshot === null) {
     return <EmptyState title="Not recorded.">The call predates config provenance.</EmptyState>;
   }
+  // Each identity key stands on its own: a snapshot that carries no
+  // FONNUS_BUILD_SHA still says which providers and environment ran the call,
+  // and the missing key reads as "not configured" like any other, never as a
+  // reason to hide the rest (docs/upstream.md: a snapshot is never dropped).
+  const buildSha = identityValue(snapshot, 'FONNUS_BUILD_SHA');
   const identityKeys = ['FONNUS_BUILD_SHA', 'PROVIDERS', 'FONNUS_ENV'];
   const otherKeys = Object.keys(snapshot)
     .filter((key) => !identityKeys.includes(key))
@@ -568,8 +578,8 @@ function ConfigSnapshot({ value }: { value: unknown }) {
             {shortSha(buildSha)}
           </span>
         </Field>
-        <Field label="PROVIDERS">{configValue(snapshot, 'PROVIDERS')}</Field>
-        <Field label="FONNUS_ENV">{configValue(snapshot, 'FONNUS_ENV')}</Field>
+        <Field label="PROVIDERS">{identityValue(snapshot, 'PROVIDERS')}</Field>
+        <Field label="FONNUS_ENV">{identityValue(snapshot, 'FONNUS_ENV')}</Field>
       </dl>
       <details className="text-[length:var(--size-ui)]">
         <summary className="cursor-pointer text-text-link">
@@ -581,9 +591,7 @@ function ConfigSnapshot({ value }: { value: unknown }) {
               <dt className="font-num text-[length:var(--size-eyebrow)] text-text-muted">
                 {key}
               </dt>
-              <dd className="font-num text-[length:var(--size-eyebrow)] break-all">
-                {snapshot[key]}
-              </dd>
+              <ConfigCell value={snapshot[key]} />
             </div>
           ))}
         </dl>

@@ -3,6 +3,7 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  CALL_STATE_CAVEAT,
   CALL_STATE_LABEL,
   CALL_STATE_TONE,
   CONSENT_OUTCOMES,
@@ -43,13 +44,50 @@ describe('callState — read contract trap 2', () => {
   });
 
   it('never says "no consent" for a missing row', () => {
-    for (const label of Object.values(CALL_STATE_LABEL)) {
-      expect(label ?? '').not.toContain('no consent');
+    for (const text of [...Object.values(CALL_STATE_LABEL), ...Object.values(CALL_STATE_CAVEAT)]) {
+      expect(text ?? '').not.toContain('no consent');
     }
     expect(CALL_STATE_LABEL.in_progress).toBe('in progress');
-    expect(CALL_STATE_LABEL.not_finalized).toBe(
-      'not finalized — process died or finish failed',
-    );
+    expect(CALL_STATE_LABEL.not_finalized).toBe('not finalized');
+  });
+
+  it('gives every unfinalized state both a label and the caveat that explains it', () => {
+    // The pair is what `src/ui/call-state.tsx` draws; a state with one half
+    // would render a badge with no reason or a reason with no badge.
+    for (const state of ['in_progress', 'not_finalized'] as const) {
+      expect(CALL_STATE_LABEL[state]).not.toBe(null);
+      expect(CALL_STATE_CAVEAT[state]).not.toBe(null);
+    }
+    expect(CALL_STATE_LABEL.finalized).toBeNull();
+    expect(CALL_STATE_CAVEAT.finalized).toBeNull();
+    expect(CALL_STATE_CAVEAT.in_progress).toBe('the consent row is written at finalize');
+    expect(CALL_STATE_CAVEAT.not_finalized).toBe('process died or finish failed');
+  });
+});
+
+describe('the call state is written in one place', () => {
+  // The same scan the consent gate gets below: the list and the detail said the
+  // phrase by hand and could drift apart, so no screen may hold the literal —
+  // every one of them reads `CALL_STATE_LABEL` / `CALL_STATE_CAVEAT`.
+  it('spells no call state by hand under src/app', () => {
+    const root = fileURLToPath(new URL('.', import.meta.url));
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
+          if (/'not finalized'|"not finalized"|'in progress'|"in progress"/.test(
+            readFileSync(full, 'utf8'),
+          )) {
+            offenders.push(`src/${relative(root, full).split(sep).join('/')}`);
+          }
+        }
+      }
+    };
+    walk(join(root, 'app'));
+    expect(offenders).toEqual([]);
   });
 });
 

@@ -15,6 +15,7 @@
  * only drift late relative to the audio, never early (`wav-writer.ts`).
  */
 import {
+  CALL_STATE_LABEL,
   failureLine,
   isKnownConsentOutcome,
   isKnownTurnSource,
@@ -195,11 +196,6 @@ export function assistantStartWallMs(
   return marks.first_audio_out ?? marks.playback_start;
 }
 
-/** Trap 2 in one phrase: what a call with no consent row is, in its place. */
-export function withheldStateReason(state: CallState): string {
-  return state === 'in_progress' ? 'in progress' : 'not finalized';
-}
-
 /** One turn's two bubbles, prepared on the server. */
 export interface TurnBubbleView {
   idx: number;
@@ -259,7 +255,9 @@ export function bubbleView(
     idx: turn.idx,
     callerText: showCaller ? turn.caller_text : null,
     callerWithheld: !showCaller,
-    withheldReason: context.outcome ?? withheldStateReason(context.state),
+    // A state with no label is `finalized`, which only a non-null outcome
+    // produces — so the `??` branch is unreachable there and exists for the type.
+    withheldReason: context.outcome ?? CALL_STATE_LABEL[context.state] ?? '',
     withheldReasonKnown: context.outcome === null || isKnownConsentOutcome(context.outcome),
     withheldByState: context.outcome === null,
     assistantText: turn.assistant_text,

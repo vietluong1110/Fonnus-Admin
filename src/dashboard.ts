@@ -9,7 +9,7 @@
  * Vocabulary is the pipeline's, unchanged (CLAUDE.md §Ground rules).
  */
 
-import { isConsentGranted, shortSha } from './calls';
+import { CALL_TIME_ZONE, isConsentGranted, shortSha } from './calls';
 import { LEGS, type LegName, legSpans, parseMarks } from './latency';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
 
@@ -19,10 +19,10 @@ const DAY_MS = 86_400_000;
 export const DEFAULT_SINCE = '7d';
 
 /**
- * The longest window the screen will accept. It is not a product limit: both
- * queries read every turn in the window with no LIMIT, and the pool gives any
- * statement 10 seconds (`statement_timeout` in `src/db.ts`). A year and a day
- * is well past what the retention sweep leaves on record anyway.
+ * The longest window the screen will accept. It is not a product limit: the
+ * window's every call and every turn are read with no LIMIT, and the pool gives
+ * any statement 10 seconds (`statement_timeout` in `src/db.ts`). A year and a
+ * day is well past what the retention sweep leaves on record anyway.
  */
 export const MAX_WINDOW_DAYS = 366;
 
@@ -111,12 +111,9 @@ export function percentiles(values: number[]): Percentiles {
   return { count: sorted.length, p50: at(0.5), p95: at(0.95), max: at(1) };
 }
 
-// The clinic's zone, the one `src/calls.ts` pins for every screen. Repeated
-// here rather than imported because that module does not export it; a call
+// The clinic's zone, the one `src/calls.ts` pins for every screen: a call
 // answered at 23:30 UTC belongs to the next Vietnamese day, and a day bucket
 // read in the process's zone would move calls between days on a UTC box.
-const CALL_TIME_ZONE = 'Asia/Ho_Chi_Minh';
-
 const DAY = new Intl.DateTimeFormat('en-GB', {
   timeZone: CALL_TIME_ZONE,
   year: 'numeric',
@@ -164,12 +161,35 @@ export function parseSnapshot(value: unknown): Record<string, unknown> | null {
 }
 
 /**
- * A snapshot's identity as a string. Keys are sorted so two processes that
- * booted the same configuration land in one group whatever order Postgres
- * handed the object over in.
+ * A JSON value as one canonical string: object keys sorted at every level,
+ * array order kept, because order is meaning in `OPENROUTER_STOP` and in the
+ * other list-valued keys (§3.4). Written by hand rather than with
+ * `JSON.stringify`'s array replacer, which filters keys at every nesting level
+ * and so erases a nested object entirely — `runtime` and
+ * `SPEECHMATICS_SOUNDS_LIKE` would both serialize to `{}`.
+ */
+function canonicalJson(value: unknown): string {
+  // `JSON.stringify` answers `undefined` rather than a string for `undefined`
+  // itself; jsonb never hands one over, and an absent key is a caller's `null`.
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const object = value as Record<string, unknown>;
+  const fields = Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`);
+  return `{${fields.join(',')}}`;
+}
+
+/**
+ * A snapshot's identity as a string — "this exact configuration" (§3.4, where
+ * the grouping is jsonb equality, which is structural). Sorted at every level
+ * so two processes that booted the same configuration land in one group
+ * whatever order Postgres handed the object over in, and so that two calls on
+ * one build SHA with different `runtime.config` land in two.
  */
 function snapshotIdentity(snapshot: Record<string, unknown>): string {
-  return JSON.stringify(snapshot, Object.keys(snapshot).sort());
+  return canonicalJson(snapshot);
 }
 
 export function groupKey(
@@ -199,8 +219,13 @@ export function groupKey(
  * rendered through JSON rather than stringified — and jsonb can hold a shape
  * the contract does not describe, which JSON also renders rather than turning
  * into `[object Object]`.
+ *
+ * Exported because the call detail renders the same column and must render it
+ * the same way: `runtime` and `SPEECHMATICS_SOUNDS_LIKE` are objects and four
+ * more keys are arrays (§3.4), so a second renderer is a second place that can
+ * print `[object Object]`.
  */
-function renderValue(value: unknown): string {
+export function renderValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
@@ -228,8 +253,11 @@ export function differingKeys(snapshots: Array<Record<string, unknown> | null>):
   for (const snapshot of present) for (const key of Object.keys(snapshot)) keys.add(key);
   const differing: string[] = [];
   for (const key of keys) {
+    // An absent key and a null one are two values, as `snapshotValue` and
+    // `snapshotIdentity` already hold — hashing both to `null` would let two
+    // groups differ by a key this column never names.
     const rendered = new Set(
-      present.map((s) => JSON.stringify(Object.hasOwn(s, key) ? (s[key] ?? null) : null)),
+      present.map((s) => (Object.hasOwn(s, key) ? canonicalJson(s[key]) : 'absent')),
     );
     if (rendered.size > 1) differing.push(key);
   }
@@ -405,8 +433,11 @@ export function aggregate(
 
   for (const turn of turns) {
     const call = byId.get(turn.call_id);
-    // Both queries carry the same window predicate, so this cannot happen; a
-    // turn with no call is still not counted into a total it has no day for.
+    // The two result sets are read in one REPEATABLE READ transaction
+    // (`dashboardSince`, `src/queries/dashboard.ts`), so they are the same
+    // snapshot of the database and a turn whose call is missing is a broken
+    // foreign key rather than a call that started between the two statements.
+    // It is skipped rather than counted into a total it has no day for.
     if (call === undefined) continue;
     withTurns.add(call.id);
     collect(overall, turn);

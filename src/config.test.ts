@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getConsentGate, readConfig, readConsentGate } from './config';
+import { readConfig, readConsentGate } from './config';
+import { register } from './instrumentation';
 
 /** The one key every other case still needs set. */
 const DB = { DATABASE_URL: 'postgres://console:pw@127.0.0.1:5432/fonnus' } as const;
@@ -129,9 +130,8 @@ describe('readConfig — the consent gate (ADR 0005)', () => {
 });
 
 describe('readConsentGate — the gate on its own, without the rest of the config', () => {
-  // The root layout needs the gate and nothing else (ADR 0005), so the reader
-  // is exported on its own; these cases are `readConfig`'s above, read through
-  // the smaller door to pin that the two never diverge.
+  // The gate's own reader (ADR 0005); these cases are `readConfig`'s above,
+  // read through the smaller door to pin that the two never diverge.
   it('reads the same values readConfig does, and defaults to on', () => {
     expect(readConsentGate({})).toBe('on');
     expect(readConsentGate({ CONSENT_GATE: 'on' })).toBe('on');
@@ -139,25 +139,43 @@ describe('readConsentGate — the gate on its own, without the rest of the confi
     expect(() => readConsentGate({ CONSENT_GATE: 'yes' })).toThrow(/CONSENT_GATE/);
   });
 
-  it('needs no DATABASE_URL — a build with no .env still renders the shell', () => {
+  it('reads the gate with nothing else set', () => {
     expect(readConsentGate({ CONSENT_GATE: 'off' })).toBe('off');
   });
 });
 
-describe('getConsentGate — the lazy process-wide read', () => {
+describe('register — the server refuses to start on a .env it cannot run under', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('reads the environment without DATABASE_URL set, and caches the answer', () => {
-    // `getConfig()` throws here by design; the gate must not, or `next build`
-    // fails on a machine with no `.env` (the root layout renders for
-    // `/_not-found`).
+  // `getConfig()` caches, so the order matters and is the point: the failing
+  // environment must throw before any successful read can hide it. Next.js
+  // calls this hook once before the first request and fails the server start on
+  // a throw, which is what keeps a bad `.env` out of a page render.
+  it('throws on every environment the config refuses, then reads a complete one', () => {
     vi.stubEnv('DATABASE_URL', '');
-    vi.stubEnv('CONSENT_GATE', 'off');
-    expect(getConsentGate()).toBe('off');
-    // Cached: a later change of the environment does not reopen the gate.
+    expect(() => {
+      register();
+    }).toThrow(/DATABASE_URL/);
+
+    vi.stubEnv('DATABASE_URL', DB.DATABASE_URL);
+    vi.stubEnv('CONSENT_GATE', 'maybe');
+    expect(() => {
+      register();
+    }).toThrow(/CONSENT_GATE/);
+
     vi.stubEnv('CONSENT_GATE', 'on');
-    expect(getConsentGate()).toBe('off');
+    vi.stubEnv('S3_BUCKET', S3.S3_BUCKET);
+    expect(() => {
+      register();
+    }).toThrow(/S3_ENDPOINT/);
+    vi.stubEnv('S3_BUCKET', '');
+
+    vi.stubEnv('DATABASE_URL', DB.DATABASE_URL);
+    vi.stubEnv('CONSENT_GATE', 'off');
+    expect(() => {
+      register();
+    }).not.toThrow();
   });
 });

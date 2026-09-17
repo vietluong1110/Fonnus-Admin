@@ -68,6 +68,10 @@ unless the call's consent outcome is `granted`. During the internal test phase, 
 every caller is a team member, the test deployment's `.env` sets `CONSENT_GATE=off` and
 every screen then carries a muted line saying so. Any other value refuses to start.
 
+Every key is checked once, when the server starts (`src/instrumentation.ts`): a bad
+`.env` stops `pnpm dev`, `pnpm start` and the container at boot with the message naming
+the key, in the terminal or `docker logs` — never as a page error after the first request.
+
 ## Run locally against the pipeline's dev database
 
 `../Fonnus/docker-compose.yml` runs a dev Postgres on `127.0.0.1`; the port is whatever

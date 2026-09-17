@@ -19,7 +19,7 @@ import {
   snapshotValue,
 } from '@/dashboard';
 import { LEGS, TARGETS } from '@/latency';
-import { callsSince, turnsSince } from '@/queries/dashboard';
+import { dashboardSince } from '@/queries/dashboard';
 import Badge from '@/ui/badge';
 import Button from '@/ui/button';
 import Card from '@/ui/card';
@@ -58,10 +58,9 @@ export default async function DashboardPage({
   const window = parseSince(sinceSpec, new Date());
   const grouping = parseGroup(first(params.group));
 
-  const [calls, turns] = await Promise.all([
-    callsSince(window.since),
-    turnsSince(window.since),
-  ]);
+  // One client, one REPEATABLE READ transaction: the calls and the turns are
+  // the same snapshot of the database (`src/queries/dashboard.ts`).
+  const { calls, turns } = await dashboardSince(window.since);
   const data = aggregate(calls, turns, grouping);
   const callsById = new Map(calls.map((call) => [call.id, call]));
 

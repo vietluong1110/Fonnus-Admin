@@ -36,9 +36,10 @@
   muted caveat line under the header — "consent gate off: caller text and recordings are
   shown for every call (internal test phase)" — from the config, so no page can forget
   it. A default is said, not drawn (Web-UI principles §7); a *non-default* is said louder.
-  One exception, accepted: the 404 page (`/_not-found`) is prerendered at build time with
-  the build machine's environment, so it carries the line only when the build had the key
-  set — it shows no call data, so nothing is withheld or revealed there.
+  No screen is exempt: the shell awaits `connection()` before reading the gate, which
+  keeps every route inside it — the 404 page (`src/app/not-found.tsx`) included — off
+  the build-time static path, so the line follows the running box's environment rather
+  than the build machine's (an exception this ADR first accepted, closed 2026-09-18).
 - **`CONTEXT.md` gains one sentence in trap 4 and in §Security posture** (the pm's edit,
   outside this ADR): "During the internal test phase the gate is a deployment switch
   (ADR 0005); it is on by default and off only in the test `.env`."

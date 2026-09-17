@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { isFetchable } from '@/artifacts';
 import {
-  CALL_STATE_TONE,
   callState,
   consentOutcomeTone,
   endReasonTone,
@@ -16,7 +15,7 @@ import {
   parseCostVnd,
 } from '@/calls';
 import { CALL_LIST_LIMIT, type CallListRow, listCalls } from '@/queries/calls';
-import Badge from '@/ui/badge';
+import CallStateBlock from '@/ui/call-state';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
@@ -46,24 +45,12 @@ function Ending({ call }: { call: CallListRow }) {
   }
 
   const state = callState(call.ended_at, outcome);
-  const stateTone = CALL_STATE_TONE[state];
 
   return (
     <div className="flex flex-col items-start gap-1">
       {outcome === null ? (
         // Trap 2: no consent row is a state of the call, never "no consent".
-        <>
-          {stateTone === null ? null : (
-            <Badge tone={stateTone}>
-              {state === 'in_progress' ? 'in progress' : 'not finalized'}
-            </Badge>
-          )}
-          <Caveat>
-            {state === 'in_progress'
-              ? 'the consent row is written at finalize'
-              : 'process died or finish failed'}
-          </Caveat>
-        </>
+        <CallStateBlock state={state} />
       ) : isConsentGranted(outcome) ? null : (
         <Vocabulary
           value={outcome}

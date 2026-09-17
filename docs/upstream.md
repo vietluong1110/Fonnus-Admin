@@ -120,13 +120,15 @@ grouping (`none`, `llm_model`, `stt_model`, `tts_model`, `config`, or `key:<snap
 Two hand-written queries in `src/queries/dashboard.ts`, both bounded by the window only —
 **no `LIMIT` on turn rows**, the trap the pipeline's own `turnMetricRows`
 (`../Fonnus/app/src/persistence/call-queries.ts`) falls into by capping turns after the
-join. A window longer than 366 days is refused on screen, because the pool gives a
-statement 10 seconds (`src/db.ts`) and the screen reads every turn in the window.
+join. The two run on one connection inside one `REPEATABLE READ READ ONLY` transaction, so
+they read the same snapshot and a call that starts between them cannot leave turn rows
+without a call row. A window longer than 366 days is refused on screen, because the pool
+gives a statement 10 seconds (`src/db.ts`) and the screen reads every turn in the window.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` LEFT JOIN `consent_record` on `call_id`, `started_at >= since`, ordered by `started_at` (`callsSince`) | `call_log.id`, `started_at`, `stt_model`, `tts_model`, `config_snapshot`; `consent_record.outcome` | Every call in the window, consented or not — the denominator of "N of M calls" (trap 1); a null snapshot is a call written before F1, grouped as "unknown", never dropped (§3.4) |
-| `turn` JOIN `call_log` on `call_id`, `call_log.started_at >= since`, ordered by `started_at, idx` (`turnsSince`) | `turn.call_id`, `idx`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `interrupted`, `source`, `failed_leg`, `failed_stage`, `failed_after_ms` | Only consented calls have rows (trap 1); a reversed span is excluded from its leg's sample, a failed or interrupted turn is included — the rule of `../Fonnus/tools/lib/cross-call-report.ts`; per-leg `count` is turns with both marks, not the turn count. `marks` is nullable: the turn count means what the pipeline's `turnCount` means (rows with a non-null `marks`, the filter `turnMetricRows` applies in SQL) so the A2 acceptance against `report-calls` holds, but a null-marks row is not filtered out — it is listed under "Turns outside the percentile" and counted in the caveat as "U more without marks, excluded from every number" |
+| `call_log` LEFT JOIN `consent_record` on `call_id`, `started_at >= since`, ordered by `started_at` (`dashboardSince`, first statement) | `call_log.id`, `started_at`, `stt_model`, `tts_model`, `config_snapshot`; `consent_record.outcome` | Every call in the window, consented or not — the denominator of "N of M calls" (trap 1); a null snapshot is a call written before F1, grouped as "unknown", never dropped (§3.4) |
+| `turn` JOIN `call_log` on `call_id`, `call_log.started_at >= since`, ordered by `started_at, idx` (`dashboardSince`, second statement) | `turn.call_id`, `idx`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `interrupted`, `source`, `failed_leg`, `failed_stage`, `failed_after_ms` | Only consented calls have rows (trap 1); a reversed span is excluded from its leg's sample, a failed or interrupted turn is included — the rule of `../Fonnus/tools/lib/cross-call-report.ts`; per-leg `count` is turns with both marks, not the turn count. `marks` is nullable: the turn count means what the pipeline's `turnCount` means (rows with a non-null `marks`, the filter `turnMetricRows` applies in SQL) so the A2 acceptance against `report-calls` holds, but a null-marks row is not filtered out — it is listed under "Turns outside the percentile" and counted in the caveat as "U more without marks, excluded from every number" |
 
 Computation is in TypeScript (`src/dashboard.ts`), never in SQL, so the copied pipeline
 rule is the one that runs and the one the tests pin: per-leg spans from `legSpans` over the
