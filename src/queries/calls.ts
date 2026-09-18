@@ -234,3 +234,53 @@ export async function getTurns(callId: string): Promise<TurnRow[]> {
   );
   return rows;
 }
+
+/**
+ * One `call_event` row of a call's trail — the nine columns
+ * `../Fonnus/docs/read-contract.md` §3 names, and no other. The order is `seq`
+ * and never `ts`: two records the pipeline wrote in order can carry the same
+ * `ts`, or one that steps back a few milliseconds (trap 9).
+ */
+export interface CallEventRow {
+  seq: number;
+  ts: Date;
+  kind: string;
+  type: string;
+  gen: number | null;
+  turn_idx: number | null;
+  phase: string | null;
+  sensitive: boolean;
+  /** jsonb; `parseEventRow` in `src/intervals.ts` is its trust boundary. */
+  data: unknown;
+}
+
+/**
+ * The whole trail of one call, in `seq` order, with no `LIMIT`: the
+ * completeness verdict is `count(*)` against `max(seq)` (trap 8) and both are
+ * taken from this array, so a bounded read would make the verdict lie. One
+ * statement on the `console` pool, outside any transaction — ADR 0010
+ * decision 2: the only race a third statement adds is the call finalizing
+ * mid-read, which is exactly what the `open` verdict models.
+ *
+ * No row at all is not "nothing happened": it is `RECORD_CALLS` off, a call
+ * that died before its first record, a row set the retention sweep removed, or
+ * a call older than pipeline migration 0009 (trap 8, `trailVerdict`).
+ */
+export async function getCallEvents(callId: string): Promise<CallEventRow[]> {
+  const { rows } = await getPool().query<CallEventRow>(
+    `select seq,
+            ts,
+            kind,
+            type,
+            gen,
+            turn_idx,
+            phase,
+            sensitive,
+            data
+       from call_event
+      where call_id = $1
+      order by seq`,
+    [callId],
+  );
+  return rows;
+}

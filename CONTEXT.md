@@ -59,11 +59,12 @@ caveats; the decisions stay with the person reading it.
    under them; the per-turn research detail (the turn table, marks, the config snapshot
    grouped by leg and vendor, `PROVIDERS` read as `real` / `fake`, the consent record, the full
    number and the identity fields, cost) sits below in a collapsed "Pipeline detail"
-   section. The turn axis grows into the **interval lane** (row A1b): the sequence of
-   contiguous intervals contract §8 derives from `call_event` — who held the line, what the
-   caller's line carried, what the recogniser returned — with the trail's completeness
-   verdict above it, so a non-turn line, an utterance that returned nothing and an
-   overtaken partial become visible; the turn table stays under it as the per-turn latency
+   section. The upper lane of that axis, and the **Intervals** card under it (row A1b, ADR
+   0010), are drawn from the sequence of contiguous intervals contract §8 derives from
+   `call_event` — who held the line, what the caller's line carried, what the recogniser
+   returned — with the trail's completeness verdict above the card, so a non-turn line, an
+   utterance that returned nothing and an overtaken partial become visible; the turn table
+   stays under it as the per-turn latency
    view, and the bucket (W2-L1) serves the verbatim files behind a step.
 3. **Overview** (`/`) — over the same window: P50 / P95 / max per leg against the ADR 0007
    targets, calls per day, the reply's composition, how calls ended (end reason and consent
@@ -128,9 +129,9 @@ Two more that are the console's own:
 8. The first TTS sentence after an idle period pays the Cartesia socket handshake: the
    `tts/sentence` record is written before the socket is (re)opened, so on the timeline that
    sentence reads slower than the provider was. `../Fonnus` W2-L3 F6 (2026-09-07) records
-   the instant the generation request left as `tts/generation_sent`; until the call
-   timeline (`PLAN.md` row A1b) draws it, label the first sentence of a call — or of a reply
-   after a five-minute gap — as "includes connection". The trap retires with A1b.
+   the instant the generation request left as `tts/generation_sent`; until the per-sentence
+   view (`PLAN.md` row A4) draws it, label the first sentence of a call — or of a reply
+   after a five-minute gap — as "includes connection". The trap retires with A4.
 
 ### Security posture
 

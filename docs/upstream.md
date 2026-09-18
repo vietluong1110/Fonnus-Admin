@@ -132,38 +132,121 @@ the fallback's (contract §3.2), a fact the two marks alone cannot show — the 
 the row says the span can contain a failover; the record that proves one is in
 `call_event` (row A4).
 
-### The call timeline (row A1b — not built yet; its data landed with `../Fonnus` W2-L3 F5–F6, 2026-09-07)
+### The call timeline (row A1b — the interval lane and the interval card; ADR 0010)
 
-F5 writes every record the pipeline's recorder puts in `events.jsonl` into the Postgres
-table `call_event` (pipeline ADR 0018, migration 0009; contract §3 "`call_event`") — shape
-`call_id, seq, ts, kind, type, gen, turn_idx, phase, data jsonb`, read ordered by
-`(call_id, seq)`. Nothing here reads it until A1b first consumes it; the traps of the
-contract's §5 (8–11) are folded into this section then. F6 added the sub-stage instants
-named below, including `tts/generation_sent` (the instant behind `CONTEXT.md` trap 8). The record set
-is `PIPELINE_ARCHITECTURE.md` §7's; the ones the timeline draws, and how the pipeline's own
-reader pairs them (`../Fonnus/tools/lib/call-report.ts` — copy the rules, do not import):
+The upper lane of the axis and the interval card under "The call" are one list of
+**intervals** — contiguous stretches of the recording clock, each held by the bot, the
+caller, silence, or a deaf recogniser — derived from the call's `call_event` trail by
+contract §8, in `src/intervals.ts`, as a copy of the pipeline's own reader
+`../Fonnus/tools/call-evidence.ts` (cited by line below; copied, never imported — pipeline
+ADR 0013). `docs/console-call-view.md` in the pipeline repo is the requirement the card
+answers; `intervals.txt` in an evidence bundle is the reference rendering of the same rules,
+so a call's card and its `intervals.txt` must agree.
 
-| Records (`kind` / `type`) | Draws | Pairing rule (from `call-report.ts`) |
+| Reads | Column(s) | Trap |
 |---|---|---|
-| STT partial and final transcripts (`sensitive`, `data.text`) | each partial as a tick with its text, the final as the STT mark | text only when `outcome = 'granted'` (trap 4) — the pipeline's sink already dropped the payload otherwise, so an empty `data` is a consent fact, not a bug |
-| `turn_end` | the end of the caller's turn | — |
-| the LLM request record (F6: the real "request sent"; before F6 the `effect` / `start_reply` proxy), `llm` / `settled` | request → first token (`turn.marks.llm_first_token`) → last token | one per `gen` |
-| `tts` / `sentence`, `tts` / `first_byte` (F4), `tts` / `settled`, the frame-sent record (F6) | one bar per sentence: sent → frame sent → first byte → settled | nth `sentence` of a `gen` pairs with the nth `settled` of the same `gen` in `seq` order (`ttsSentences`); an unpaired sentence is one cut by a barge-in or a failed leg — render "not settled", never zero bytes; `turn_idx` null = greeting or canned line |
-| `barge_in` / `detected` and its followers (`kill_playback_done`, `llm_cancelled`, `reply_closed`) | the interruption and the three latencies behind it | `bargeIns`: each follower is the first matching record after `detected` for the same `gen` (`kill_playback_done` has no gen) |
-| `reply_failed` (`data.stage`, `data.ms`) | a marker at the failing stage | one per `gen` |
-| `playback_completed` (carries `gen` after F2) | playback end | first one per `gen` |
-| `answered` (F6) | the origin of the greeting axis | `call_log.started_at` is the media-socket open, not the pick-up — the greeting axis starts at `answered`, not at `started_at` |
+| `call_event` where `call_id = $1`, ordered by `seq`, no `LIMIT` (`getCallEvents`, one statement on the `console` pool, after `getCall` and beside `getTurns`; `count(*)` and `max(seq)` are taken from the array) | `seq`, `ts`, `kind`, `type`, `gen`, `turn_idx`, `phase`, `sensitive`, `data` | Read and place by `seq`, never by `ts`: `ts` can tie and step back a few ms between records the pipeline wrote in order (trap 9). No row at all is `RECORD_CALLS` off, a call that died before its first record, a row set the sweep removed, or a call older than migration 0009 — never "nothing happened" (trap 8). A `sensitive` row with null `data` is refused consent or the transcript TTL, told apart by `consent_record.outcome` (trap 10). `chunk_played.data.seq` is the playback module's own counter, not `call_event.seq` (trap 11) — not read here. An unknown `{kind, type}` is a record the pipeline added since (§3.1): ignored by the derivation, counted for completeness. |
+| `call_log` (already read by `getCall`) | `recording_started_at`, `ended_at`, `config_snapshot->>'RECORD_CALLS'` | The clock origin: offset = `ts − recording_started_at`, exact in ms, right to about 100 ms and late-only (§8 rule 1; ADR 0012); a null origin places nothing: the card says the trail cannot be placed on the recording clock and the lane falls back to turn blocks. `ended_at` null is a running call — verdict `open`, not `truncated`. The snapshot key is named in the `absent` verdict only; §3.4 rules for the snapshot apply. |
+| `consent_record` (already read by `getCall`) | `outcome` | Gates every recogniser text on the card through `showCallerData` once (ADR 0005, trap 4); tells withheld from expired on a null `data` (trap 10). |
+| `turn` (already read by `getTurns`) | `idx`, `assistant_text` | The reply interval's bot text, joined by `turn_idx`; `effect/start_reply.data` is `sensitive` and is not read for text. Absent for a canned line and the greeting (§8 rule 2 — they own no turn). |
 
-The seven `turn.marks` stay the summary the waterfall is drawn from; the table is the
-detail under it. `ts` is wall-clock ms since epoch, the same clock as `turn.marks`, so a
-record and a mark sit on one axis. Records are ordered by `seq`, not by `ts`. The consent
-and TTL rules of `turn.caller_text` apply to any text payload in `data` — F5 gives the
-table the same sweep.
+**`data` keys read**, per `{kind, type}` — the contract names the payload "verbatim, as
+`PIPELINE_ARCHITECTURE.md` §7 describes it" and §3.1 fixes the vocabularies; the key names
+below are verified against the recorder (`../Fonnus/app/src/recording/artifact-recorder.ts`
+:905-975) and **ASSUMED against the contract until §3 names them** (PLAN §Waiting on
+`../Fonnus`). A key of the wrong shape is treated as absent, never thrown on.
 
-`turns/NNN/llm.stream.jsonl` in the bucket carries every token with its own `ts`; after
-W2-L3 F7 it also carries `{ts, reasoning}` lines and `turn.reasoning_text` holds the
-reasoning as text, under the same consent and TTL rules as `assistant_text`. Render it
-collapsed under the reply; it is what the model was doing before its first content token.
+| Record | Key | Used for |
+|---|---|---|
+| `recorder/finalized` | `failed` (boolean), `mirror.dropped` (number), `mirror.fromSeq` (number) | the verdict — named by §3.1 and trap 8 (not assumed) |
+| `effect/speak_text` | `text` (string, not sensitive) | the greeting's text on the card — ASSUMED (`artifact-recorder.ts:963`) |
+| `effect/speak_canned` | `line` (`reprompt` / `degraded` / `farewell`) | the holder label `bot: <line>` — named by §8 rule 2 (not assumed) |
+| `event/stt_partial`, `event/stt_final` | `text` (string, sensitive) | the recogniser cell — ASSUMED (`artifact-recorder.ts:918`); null `data` under a granted outcome is trap 10 (`[expired]`), and a payload that is present without the key reads `[no text in payload]` — the assumption failing would show as that marker, never as the TTL |
+| `event/turn_end` | `source` (string) | printed verbatim in the "segmented, returned nothing (<source>)" signature — named by §8 rule 4 (not assumed); never switched on |
+| `event/timer_fired` | `id` (`no_input`) | the no-input watchdog — named by §8 rule 5 (not assumed) |
+| `event/caller_energy` | none | the instant alone; `suppressed` is not read |
+
+**The verdict** (`trailVerdict`, copied from `call-evidence.ts:389-476`; contract trap 8),
+rendered above the card before any interval, in the pipeline's five words: `absent` when
+the call has no row (the text names `config_snapshot->>'RECORD_CALLS'` and the four causes;
+the lane falls back to the turn blocks of §Audio ↔ marks under a caveat); `open` when there
+is no `recorder/finalized` and `ended_at` is null; `truncated` when there is none and the
+call ended; `gap` when `recorder/finalized` carries `failed = true` (hole from the record
+before it, `max(seq) − 1`; `:486-489`), or `mirror.dropped > 0` (hole from `mirror.fromSeq`;
+`:497-505`), or `count(*) ≠ max(seq)` — both holes listed when both apply, and every interval
+after the earliest hole is marked unsupported (§8 rule 7); `complete` otherwise. The
+verdict is a state of the trail, never an error: a running call is `open` by design.
+
+**The intervals** (`callIntervals`, copied from `call-evidence.ts:610-665`), each `[from,
+to)` in ms on the recording clock, contiguous from the first record to `recorder/finalized`
+(or the last record when the trail is not finalized), with the first record's offset kept
+even when negative (`:622-624` — the recorder can open after the first record; ADR 0010
+Decision 4). The rules, each cited:
+
+- **Bot intervals** (§8 rule 3; `botSpans` `:710-757`): one per intent record —
+  `effect/speak_text` → `bot: greeting`; `effect/speak_canned` → `bot: <data.line>`
+  (`cannedHolder` `:760-763`, `bot: canned line` when the key is missing);
+  `effect/start_reply` → `bot: waiting on reply N` from the intent to the first
+  `event/first_audible` of the same `gen`, then `bot: reply N` to the end, with
+  `N = turn_idx ?? gen` and no N at all when both are null. The window is the intent to the
+  next intent (any `gen`) or the clock end. The end is the first that applies of: the first
+  `barge_in/detected` strictly after the intent inside the window (it carries no `gen`);
+  the **last** `event/playback_completed` of the `gen` in the window (`playback_completed`
+  of another `gen` is a dead generation's drain and holds nothing); with no `first_audible`,
+  `event/reply_failed` of the `gen`; with no `first_audible` and only for `start_reply`,
+  `event/synthesis_complete` of the `gen`; else the window end. An empty span (`to ≤ from`)
+  is dropped. **Known reference bug carried as written** (`../Fonnus/ISSUES.md`
+  L10-260917-1): the `synthesis_complete` cut applies to `start_reply` only, so a canned
+  line whose synthesis returned no bytes holds the line until the next intent and the
+  caller's energy and `turn_end` under it are swallowed; the card says so in a caveat, the
+  fix is the pipeline's (PLAN backlog).
+- **Caller or silence** (§8 rule 5; `callerSpans` `:771-785`, `holderOf` `:787-790`): every
+  gap between bot intervals, and the stretch after the last one, cut at each `event/turn_end`
+  strictly inside it and at the deaf point; a segment holding any `event/caller_energy`,
+  `event/stt_partial`, `event/stt_final` or `event/turn_end` (`HEARD` `:558-563`) is
+  `caller`, one holding none is `silence`. A trail with no bot interval is one span over
+  the whole clock. Records fall into a span by `recordsOf` `:798-805`: a `turn_end` at the
+  span's start belongs to the span before it (it cut there), except on the first span.
+- **Deaf** (§8 rule 6): from `stt/reconnect_exhausted` (clamped at 0) to the end of the
+  clock, every non-bot segment is `deaf`, not `silence` — the contract's label is `deaf`
+  (`console-call-view.md` holder vocabulary); the reference prints `deaf (stt exhausted)`
+  (`:788`), which this console renders as the explanation beside the label, not as the
+  label.
+- **The caller line** (§8 rule 4; `callerLineCell` `:836-846`, `mutedStretches` `:683-698`):
+  the `caller_energy` instants in the interval — `sound at 31.40, 31.70`, collapsed to
+  `sound ×N (first…last)` above six (`ENERGY_SHOWN` `:569`) — with ` (unheard — feed
+  muted)` appended when any instant lies in a muted stretch. Muted stretches are read from
+  the trail only: from the first record to the first `effect/unmute_stt`, and from each
+  `effect/mute_stt` to the next `effect/unmute_stt`, an unclosed one running to the end —
+  never re-derived from `STT_MUTE_ON_FIRST_AUDIO` or from the bot's intervals.
+- **The recogniser** (§8 rule 4; `recogniserCell` `:854-870`, `overtakenPartials`
+  `:813-826`, `signalRuns` `:878-888`): every `stt_final` in the interval as quoted text;
+  a `stt_partial` with no `stt_final` after it before the next intent or the trail's end
+  as `partial overtaken: "…"`; when the interval has neither, each run of `turn_end`
+  records as `segmented, returned nothing (<data.source>)`, with ` ×N` for a run of N
+  (`turn_end` without a source prints `segmented, returned nothing`); `timer_fired` with
+  `id = 'no_input'` as `no-input watchdog fired`; items joined with ` · `, `—` when none.
+  Text (`sttText` `:897-901`) is `[withheld]` on a `sensitive` record when consent is not
+  granted, `[withheld]` when it is granted and `data` has no text (the copy's rule); this
+  console tells the second case apart as `[expired]` by trap 10 when the outcome is
+  `granted` (a console-own rendering, see the "withheld vs expired" fork of the A1b
+  design). The signatures themselves are never withheld: they carry no words.
+- **Bot text on the card**: the greeting from `effect/speak_text.data.text` (ASSUMED key,
+  above); a reply from `turn.assistant_text` via `turn_idx`, shown on every call exactly as
+  the Transcript card shows it — trap 4 gates `caller_text` only, and the bot's own words
+  are not the caller's; a canned line shows its holder label only.
+
+The interval offsets are what the player seeks to (`seek(from)`), and a `reply` or
+`waiting` interval with a `turn_idx` selects that turn (`select(turn_idx)`) — the same
+`?turn=` contract as the turn blocks (ADR 0006). The lower `pipeline_ms` lane, the
+Transcript card and the selected turn's waterfall keep reading `turn` as before.
+
+Every record the trail carries beyond the ones above — the per-sentence `tts/*` pairs,
+`llm/request_sent` and the token stream, the `barge_in/detected` followers, `reply_failed`
+stages, `playback/chunk_played`, and `turns/NNN/llm.stream.jsonl` with `turn.reasoning_text`
+in the bucket — is row A4's, the per-record detail; the pairing rules the old A1b table
+carried (`ttsSentences`, `bargeIns` in `../Fonnus/tools/lib/call-report.ts`) are copied
+there when A4 is designed, not here.
 
 ## Overview
 

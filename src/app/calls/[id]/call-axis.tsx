@@ -2,20 +2,32 @@
 
 /*
  * "The call": one axis, two lanes. The upper lane is the recording's time axis
- * with one block per placed turn (and the greeting before them) and the seek
- * control the player has instead of a waveform — the browser cannot read the
- * file's bytes (ADR 0004), so the lane is drawn from the row's own offsets,
- * never from an amplitude trace. The lower lane is one `pipeline_ms` bar per
- * turn on the same axis, against the target of ADR 0007, so a slow reply is
- * read under the moment it was spoken.
+ * and the seek control the player has instead of a waveform — the browser cannot
+ * read the file's bytes (ADR 0004), so the lane is drawn from offsets the server
+ * computed, never from an amplitude trace. It draws the call's **intervals**:
+ * contiguous stretches of the recording clock, each held by the bot, the caller,
+ * silence or a deaf recogniser (`src/intervals.ts`, ADR 0010). A call whose
+ * trail is `absent` has no intervals, and the lane falls back to one block per
+ * placed turn — today's drawing — under the caveat that says so. The lower lane
+ * is one `pipeline_ms` bar per turn on the same axis, against the target of ADR
+ * 0007, so a slow reply is read under the moment it was spoken.
  *
- * The placement rules are `src/playback.ts`'s (`docs/upstream.md` §Artifacts,
- * "Audio ↔ marks", and §Call detail for the greeting block and the bars); this
- * file only draws what that module decided.
+ * The placement rules are `src/playback.ts`'s and `src/intervals.ts`'s
+ * (`docs/upstream.md` §Artifacts, "Audio ↔ marks", §The call timeline); this
+ * file only draws what those modules decided, in the colours
+ * `src/interval-lane.ts` assigns.
  */
 
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 import { formatClock, formatNumber } from '@/calls';
+import {
+  NO_TRAIL_LANE_CAVEAT,
+  UNSUPPORTED_OPACITY,
+  segmentLabel,
+  segmentStyle,
+  segmentTitle,
+  type LaneSegment,
+} from '@/interval-lane';
 import { TARGETS } from '@/latency';
 import { barScaleMs, type GreetingSpan, type TurnBar, type TurnSpan } from '@/playback';
 import Caveat from '@/ui/caveat';
@@ -48,6 +60,7 @@ function blockColour(span: TurnSpan): string {
 export default function CallAxis({
   spans,
   greeting,
+  intervals,
   bars,
   unplaced,
   fallbackEndMs,
@@ -55,6 +68,12 @@ export default function CallAxis({
   spans: TurnSpan[];
   /** The greeting's block, or null — no `greeting_marks`, or no recorder clock. */
   greeting: GreetingSpan | null;
+  /**
+   * The call's intervals, or null when there is no trail to draw one from: the
+   * verdict is `absent`, or the call has no `recording_started_at` to place the
+   * trail on. Null falls the lane back to one block per placed turn.
+   */
+  intervals: LaneSegment[] | null;
   bars: TurnBar[];
   /** `idx` of every turn with no place on the axis — named, never drawn at 0. */
   unplaced: number[];
@@ -141,8 +160,10 @@ export default function CallAxis({
         }}
       >
         <div className="flex flex-col">
-          <span className="text-[length:var(--size-ui)] font-semibold">Turns</span>
-          <Caveat as="span">one block each</Caveat>
+          <span className="text-[length:var(--size-ui)] font-semibold">
+            {intervals === null ? 'Turns' : 'Intervals'}
+          </span>
+          <Caveat as="span">{intervals === null ? 'one block each' : 'who held the line'}</Caveat>
         </div>
 
         <div
@@ -164,51 +185,61 @@ export default function CallAxis({
           style={{ height: `${String(BLOCK_LANE_HEIGHT)}px` }}
           className="relative w-full cursor-pointer touch-none overflow-hidden rounded-xs border border-border-hairline bg-surface-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
         >
-          {/* What has been heard, behind the blocks. */}
-          <div
-            aria-hidden="true"
-            className="absolute inset-y-0 left-0 bg-[var(--action-ghost-hover)]"
-            style={{ width: `${String(pct(playheadMs))}%` }}
-          />
-          {greeting === null ? null : (
-            // The greeting has no `turn` row and no `pipeline_ms`: a quieter
-            // block, and no bar under it.
-            <div
-              aria-hidden="true"
-              className="absolute inset-y-0 min-w-px"
-              style={{
-                left: `${String(pct(greeting.startMs))}%`,
-                width: `${String(Math.max(0.4, pct(greeting.endMs) - pct(greeting.startMs)))}%`,
-                background: 'var(--action-ghost-hover)',
-                borderRight: '1px solid var(--border-strong)',
-              }}
-              title={`Greeting · ${formatClock(greeting.startMs)} → ${formatClock(greeting.endMs)}`}
+          {intervals === null ? (
+            <TurnBlocks
+              spans={spans}
+              greeting={greeting}
+              playheadMs={playheadMs}
+              pct={pct}
+              seek={seek}
+              select={select}
             />
+          ) : (
+            intervals.map((segment, index) => {
+              const { background, border } = segmentStyle(segment.kind, segment.failed);
+              const left = pct(segment.fromMs);
+              return (
+                <button
+                  // The trail can hold two intervals with the same offsets (an
+                  // empty wait before a reply), so the key is the position.
+                  key={`${String(segment.fromMs)}-${String(index)}`}
+                  type="button"
+                  // Seek first: a seek clears the selection
+                  // (`playback-provider.tsx`), and the click's own turn must be
+                  // the one left standing. A negative offset is clamped here,
+                  // for the axis has no negative side (ADR 0006) — the table
+                  // still prints it.
+                  onClick={() => {
+                    seek(Math.max(0, segment.fromMs));
+                    if (segment.turnIdx !== null) select(segment.turnIdx);
+                  }}
+                  aria-label={segmentLabel(segment)}
+                  title={segmentTitle(segment)}
+                  // A one-pixel minimum: an interval of a few milliseconds — the
+                  // sliver between a `turn_end` and the reply it started — is
+                  // still a stretch of the call that happened.
+                  className="absolute top-1.5 bottom-1.5 grid min-w-px place-items-center rounded-[1px] font-num text-[length:var(--size-eyebrow)] font-semibold text-text-on-accent"
+                  style={{
+                    left: `${String(left)}%`,
+                    width: `${String(Math.max(0.4, pct(segment.toMs) - left))}%`,
+                    background,
+                    ...(border === null ? {} : { border }),
+                    // Past the trail's hole nothing is supported (§8 rule 7) —
+                    // muted, never hidden.
+                    ...(segment.unsupported ? { opacity: UNSUPPORTED_OPACITY } : {}),
+                  }}
+                >
+                  {/* The turn number stays on the reply it belongs to; no other
+                      holder owns a turn row to number. */}
+                  <span className="overflow-hidden">
+                    {segment.kind === 'reply' && segment.turnIdx !== null
+                      ? formatNumber(segment.turnIdx)
+                      : ''}
+                  </span>
+                </button>
+              );
+            })
           )}
-          {spans.map((span) => (
-            <button
-              key={span.idx}
-              type="button"
-              // Seek first: a seek clears the selection (`playback-provider.tsx`),
-              // and the click's own turn must be the one left standing.
-              onClick={() => {
-                seek(span.startMs);
-                select(span.idx);
-              }}
-              aria-label={`Play turn ${formatNumber(span.idx)}`}
-              // A one-pixel minimum: a turn whose block collapsed (a reversed
-              // clock, `src/playback.ts`) is still a turn that happened.
-              className="absolute top-1.5 bottom-1.5 grid min-w-px place-items-center rounded-[1px] font-num text-[length:var(--size-eyebrow)] font-semibold text-text-on-accent"
-              style={{
-                left: `${String(pct(span.startMs))}%`,
-                width: `${String(Math.max(0.4, pct(span.endMs) - pct(span.startMs)))}%`,
-                background: blockColour(span),
-              }}
-              title={`Turn ${formatNumber(span.idx)} · ${formatClock(span.startMs)} → ${formatClock(span.endMs)}`}
-            >
-              <span className="overflow-hidden">{formatNumber(span.idx)}</span>
-            </button>
-          ))}
         </div>
 
         <div className="flex flex-col">
@@ -327,14 +358,32 @@ export default function CallAxis({
       </div>
 
       <Caveat>
-        The upper lane is one block per turn, from <code>speech_start_ms</code> to the place of{' '}
-        <code>playback_end</code>; blocks are placed to within ~100 ms of the audio and can only
-        drift late. The lower lane is one bar per turn: taller is slower, and anything above the
-        dashed line missed the {formatNumber(TARGETS.pipelineP95Ms)} ms target — a P95 target over
-        a call set, so on one turn it is a hint, not a verdict. A dashed outline is a turn with no{' '}
+        {intervals === null ? (
+          <>
+            The upper lane is one block per turn, from <code>speech_start_ms</code> to the place
+            of <code>playback_end</code>; blocks are placed to within ~100 ms of the audio and can
+            only drift late.{' '}
+          </>
+        ) : (
+          <>
+            The upper lane is one segment per interval of the call&rsquo;s event trail, from the
+            first record to <code>recorder/finalized</code>; segments are placed to within ~100 ms
+            of the audio and can only drift late. The Intervals card below lists the same
+            intervals.{' '}
+          </>
+        )}
+        The lower lane is one bar per turn: taller is slower, and anything above the dashed line
+        missed the {formatNumber(TARGETS.pipelineP95Ms)} ms target — a P95 target over a call set,
+        so on one turn it is a hint, not a verdict. A dashed outline is a turn with no{' '}
         <code>pipeline_ms</code>: a reply that never became audible, never a zero.
       </Caveat>
-      {greeting === null ? (
+      {/* The trail drives the lane, so the call has no event trail to draw one
+          from: the verdict is `absent`, or there is no `recording_started_at`
+          to place the records on (ADR 0010 decision 3). */}
+      {intervals === null ? <Caveat>{NO_TRAIL_LANE_CAVEAT}</Caveat> : null}
+      {/* The greeting and the unplaced turns explain the turn blocks; with
+          intervals on the lane there are no turn blocks to explain. */}
+      {intervals !== null ? null : greeting === null ? (
         <Caveat>
           no greeting block: the call carries no readable <code>greeting_marks</code> (written
           before the pipeline&rsquo;s migration 0008, never finalized, or ended before the greeting
@@ -346,7 +395,7 @@ export default function CallAxis({
           <code>turn</code> row and no <code>pipeline_ms</code> of its own, so it has no bar
         </Caveat>
       )}
-      {unplaced.length === 0 ? null : (
+      {intervals !== null || unplaced.length === 0 ? null : (
         <Caveat>
           not placed on the recording: turn{unplaced.length === 1 ? '' : 's'}{' '}
           {unplaced.map((idx) => formatNumber(idx)).join(', ')} — no{' '}
@@ -354,5 +403,79 @@ export default function CallAxis({
         </Caveat>
       )}
     </div>
+  );
+}
+
+/**
+ * The lane as it was drawn before the trail: one block per placed turn, the
+ * greeting quieter in front of them, and what has been heard behind both. It is
+ * what a call with no event trail still has to show — `RECORD_CALLS` off, a call
+ * older than the pipeline's migration 0009, a swept row set, or a call that died
+ * before its first record (trap 8) — and a screen with no lane at all would read
+ * as "nothing happened".
+ */
+function TurnBlocks({
+  spans,
+  greeting,
+  playheadMs,
+  pct,
+  seek,
+  select,
+}: {
+  spans: TurnSpan[];
+  greeting: GreetingSpan | null;
+  playheadMs: number;
+  pct: (ms: number) => number;
+  seek: (ms: number) => void;
+  select: (idx: number) => void;
+}) {
+  return (
+    <>
+      {/* What has been heard, behind the blocks. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-y-0 left-0 bg-[var(--action-ghost-hover)]"
+        style={{ width: `${String(pct(playheadMs))}%` }}
+      />
+      {greeting === null ? null : (
+        // The greeting has no `turn` row and no `pipeline_ms`: a quieter
+        // block, and no bar under it.
+        <div
+          aria-hidden="true"
+          className="absolute inset-y-0 min-w-px"
+          style={{
+            left: `${String(pct(greeting.startMs))}%`,
+            width: `${String(Math.max(0.4, pct(greeting.endMs) - pct(greeting.startMs)))}%`,
+            background: 'var(--action-ghost-hover)',
+            borderRight: '1px solid var(--border-strong)',
+          }}
+          title={`Greeting · ${formatClock(greeting.startMs)} → ${formatClock(greeting.endMs)}`}
+        />
+      )}
+      {spans.map((span) => (
+        <button
+          key={span.idx}
+          type="button"
+          // Seek first: a seek clears the selection (`playback-provider.tsx`),
+          // and the click's own turn must be the one left standing.
+          onClick={() => {
+            seek(span.startMs);
+            select(span.idx);
+          }}
+          aria-label={`Play turn ${formatNumber(span.idx)}`}
+          // A one-pixel minimum: a turn whose block collapsed (a reversed
+          // clock, `src/playback.ts`) is still a turn that happened.
+          className="absolute top-1.5 bottom-1.5 grid min-w-px place-items-center rounded-[1px] font-num text-[length:var(--size-eyebrow)] font-semibold text-text-on-accent"
+          style={{
+            left: `${String(pct(span.startMs))}%`,
+            width: `${String(Math.max(0.4, pct(span.endMs) - pct(span.startMs)))}%`,
+            background: blockColour(span),
+          }}
+          title={`Turn ${formatNumber(span.idx)} · ${formatClock(span.startMs)} → ${formatClock(span.endMs)}`}
+        >
+          <span className="overflow-hidden">{formatNumber(span.idx)}</span>
+        </button>
+      ))}
+    </>
   );
 }

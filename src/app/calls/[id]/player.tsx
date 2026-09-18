@@ -21,6 +21,7 @@
 
 import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { formatClock } from '@/calls';
+import type { LaneSegment } from '@/interval-lane';
 import type { GreetingSpan, TurnBar, TurnSpan } from '@/playback';
 import Icon from '@/ui/icon';
 import CallAxis from './call-axis';
@@ -78,6 +79,7 @@ export default function Player({
   callId,
   spans,
   greeting,
+  intervals,
   bars,
   unplaced,
   fallbackEndMs,
@@ -85,6 +87,8 @@ export default function Player({
   callId: string;
   spans: TurnSpan[];
   greeting: GreetingSpan | null;
+  /** The call's intervals, or null when there is no trail to draw one from. */
+  intervals: LaneSegment[] | null;
   bars: TurnBar[];
   unplaced: number[];
   fallbackEndMs: number;
@@ -215,6 +219,7 @@ export default function Player({
           <CallAxis
             spans={spans}
             greeting={greeting}
+            intervals={intervals}
             bars={bars}
             unplaced={unplaced}
             fallbackEndMs={fallbackEndMs}

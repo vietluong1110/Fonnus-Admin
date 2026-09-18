@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 const query = vi.fn();
 vi.mock('@/db', () => ({ getPool: () => ({ query }) }));
 
-const { callsInScope } = await import('./calls');
+const { callsInScope, getCallEvents } = await import('./calls');
 const { parseScope } = await import('@/calls-scope');
 
 const NOW = new Date('2026-09-07T10:00:00Z');
@@ -87,5 +87,36 @@ describe('callsInScope', () => {
 
     expect(rows).toEqual([]);
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('getCallEvents', () => {
+  it('reads the nine columns of the trail the contract names, and no other', async () => {
+    query.mockResolvedValue({ rows: [] });
+    await getCallEvents('330052e1-0000-4000-8000-000000000000');
+
+    const { sql, values } = lastCall();
+    for (const column of [
+      'seq',
+      'ts',
+      'kind',
+      'type',
+      'gen',
+      'turn_idx',
+      'phase',
+      'sensitive',
+      'data',
+    ]) {
+      expect(sql).toContain(column);
+    }
+    expect(sql).toContain('from call_event');
+    expect(sql).toContain('where call_id = $1');
+    // Place by `seq`, never by `ts`: two records written in order can tie or
+    // step back a few milliseconds (trap 9).
+    expect(sql).toContain('order by seq');
+    // The completeness verdict is count(*) against max(seq) over this array, so
+    // a bounded read would make it lie (trap 8, ADR 0010).
+    expect(sql).not.toMatch(/limit/i);
+    expect(values).toEqual(['330052e1-0000-4000-8000-000000000000']);
   });
 });

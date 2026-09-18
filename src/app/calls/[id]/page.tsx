@@ -24,6 +24,14 @@ import {
 } from '@/calls';
 import { getConfig } from '@/config';
 import { parseSnapshot, renderValue } from '@/dashboard';
+import type { LaneSegment } from '@/interval-lane';
+import {
+  callIntervals,
+  intervalCells,
+  parseEventRow,
+  trailVerdict,
+  type EventRow,
+} from '@/intervals';
 import { endOfTurnRows, headPairRows, parseMarks, waterfallRows } from '@/latency';
 import {
   bubbleView,
@@ -37,7 +45,7 @@ import {
   type TurnBubbleView,
   type TurnSpan,
 } from '@/playback';
-import { getCall, getTurns, type CallDetailRow, type TurnRow } from '@/queries/calls';
+import { getCall, getCallEvents, getTurns, type CallDetailRow, type TurnRow } from '@/queries/calls';
 import Badge from '@/ui/badge';
 import Card from '@/ui/card';
 import EmptyState from '@/ui/empty-state';
@@ -48,6 +56,8 @@ import CallCard from './_detail/call-card';
 import ConfigSnapshot from './_detail/config-snapshot';
 import ConsentCard from './_detail/consent-card';
 import TurnTable, { type TurnTableRow } from './_detail/turn-table';
+import type { IntervalRow } from './interval-rows';
+import IntervalsCard from './intervals-card';
 import PlaybackProvider from './playback-provider';
 import Player from './player';
 import Transcript from './transcript';
@@ -91,7 +101,10 @@ export default async function CallPage({
   const call = await callOnce(id);
   if (call === null) notFound();
 
-  const turns = await getTurns(id);
+  // Two independent statements on the one `console` pool, side by side: the
+  // trail needs `recording_started_at` and `outcome` from `getCall`, which has
+  // already returned, and nothing else (ADR 0010, "No shared transaction").
+  const [turns, events] = await Promise.all([getTurns(id), getCallEvents(id)]);
   const state = callState(call.ended_at, call.outcome);
   // Read once per render and passed down: the gate is deployment state, not
   // per-turn state (ADR 0005).
@@ -101,6 +114,65 @@ export default async function CallPage({
   const access = recordingAccess(call, config);
   const snapshot = parseSnapshot(call.config_snapshot);
   const selectedIdx = parseTurnParam((await searchParams).turn, turns);
+
+  // The call's event trail, verdict first (ADR 0010 decision 3): a row the
+  // contract's shape does not fit is dropped here, at the one trust boundary,
+  // and never reaches the derivation.
+  const rows = events
+    .map(parseEventRow)
+    .filter((row): row is EventRow => row !== null);
+  // The `absent` verdict names this key, and only it (trap 8). An absent key is
+  // not a null one (§3.4), which is why it is read the way the lede reads its
+  // own facts rather than through a renderer that flattens the two.
+  const recordCalls =
+    snapshot !== null && Object.hasOwn(snapshot, 'RECORD_CALLS')
+      ? renderValue(snapshot['RECORD_CALLS'])
+      : null;
+  const verdict = trailVerdict(rows, { recordCalls, ended: call.ended_at !== null });
+  const intervals =
+    verdict.kind === 'absent'
+      ? null
+      : callIntervals(rows, {
+          recordingStartedAt: call.recording_started_at,
+          holeFromSeq: verdict.holeFromSeq,
+        });
+  // The one place a recogniser text is resolved, through the one gate (ADR
+  // 0005): the cells below carry strings, and the lane carries no text at all.
+  const intervalRows: IntervalRow[] = intervalCells(intervals ?? [], rows, {
+    outcome: call.outcome,
+    gate,
+    assistantText: new Map(turns.map((turn) => [turn.idx, turn.assistant_text])),
+  }).map((cell, index) => ({
+    ...cell,
+    fromMs: intervals?.[index]?.fromMs ?? 0,
+    toMs: intervals?.[index]?.toMs ?? 0,
+  }));
+  // A turn that failed mid-reply is the one being looked for (trap 7), so its
+  // segment wears the error tone the turn block already wears.
+  const failedTurns = new Set(
+    turns.filter((turn) => turn.failed_leg !== null).map((turn) => turn.idx),
+  );
+  // No trail, or a trail with no clock to sit on: the lane falls back to the
+  // turn blocks under the caveat that says why.
+  const laneSegments: LaneSegment[] | null =
+    intervals === null || intervals.length === 0
+      ? null
+      : intervals.map((interval) => ({
+          fromMs: interval.fromMs,
+          toMs: interval.toMs,
+          kind: interval.holder.kind,
+          label: interval.holder.label,
+          turnIdx: interval.holder.turnIdx,
+          unsupported: interval.unsupported,
+          failed: interval.holder.turnIdx !== null && failedTurns.has(interval.holder.turnIdx),
+        }));
+  // The two caveats that are shown only where they apply: a canned line whose
+  // synthesis produced no audio (pipeline ISSUES L10-260917-1) and a caller
+  // whose sound reached nobody.
+  const cannedSilent = (intervals ?? []).some(
+    (interval) => interval.holder.kind === 'canned' && interval.holder.audible === false,
+  );
+  const anyUnheard = (intervals ?? []).some((interval) => interval.unheard);
 
   // The placement rules of `docs/upstream.md` §Artifacts, run once on the
   // server; the islands draw what this returns and re-derive nothing.
@@ -246,6 +318,7 @@ export default async function CallPage({
             access={access}
             placed={placed}
             greeting={greeting}
+            intervals={laneSegments}
             bars={bars}
             unplaced={unplaced}
             fallbackEndMs={fallbackEndMs}
@@ -276,6 +349,16 @@ export default async function CallPage({
             />
           </div>
         </Card>
+
+        {/* A sibling of the recording block, never inside it (ADR 0010 decision
+            6): a call whose recording is withheld, not archived or gone still
+            has a trail, and this table is where it reads. */}
+        <IntervalsCard
+          verdict={verdict}
+          rows={intervalRows}
+          cannedSilent={cannedSilent}
+          anyUnheard={anyUnheard}
+        />
 
         <div className="grid gap-[18px] min-[1180px]:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
           <Card title="Transcript" sub="follows the playhead · a bubble seeks">
@@ -426,6 +509,7 @@ function RecordingBlock({
   access,
   placed,
   greeting,
+  intervals,
   bars,
   unplaced,
   fallbackEndMs,
@@ -435,6 +519,7 @@ function RecordingBlock({
   access: ReturnType<typeof recordingAccess>;
   placed: TurnSpan[];
   greeting: GreetingSpan | null;
+  intervals: LaneSegment[] | null;
   bars: TurnBar[];
   unplaced: number[];
   fallbackEndMs: number;
@@ -494,6 +579,7 @@ function RecordingBlock({
           callId={call.id}
           spans={placed}
           greeting={greeting}
+          intervals={intervals}
           bars={bars}
           unplaced={unplaced}
           fallbackEndMs={fallbackEndMs}
