@@ -7,6 +7,10 @@
 # a `caddy validate` run must never be committed either.
 caddy/users
 
+# The product owner's design artboards (docs/redesign.md): handed over outside git,
+# kept locally only — the documents about them are tracked, the mockups are not.
+docs/design/
+
 # Call artifacts must never land on a tracked path, whatever tool wrote them
 # (same backstop as the pipeline repo).
 *.wav

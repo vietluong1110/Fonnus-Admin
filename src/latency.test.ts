@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  HEAD_PAIRS,
   LEGS,
   PARTITION_LEGS,
   STAGES,
   TARGETS,
   endOfTurnRows,
+  headPairRows,
   legSpans,
   parseMarks,
   spanOf,
@@ -97,8 +99,10 @@ describe('legSpans', () => {
 });
 
 describe('parseMarks — the jsonb trust boundary', () => {
-  it('keeps the ten keys of contract §3.2 and drops everything else', () => {
-    const kept = { ...FULL, ...TAIL };
+  it('keeps the eleven keys of contract §3.2 and drops everything else', () => {
+    // `llm_first_reasoning` is the eleventh, on record since the pipeline's
+    // migration 0014 and present only on a turn whose model streamed reasoning.
+    const kept = { ...FULL, ...TAIL, llm_first_reasoning: T0 + 700 };
     expect(Object.keys(kept)).toHaveLength(STAGES.length);
     // `answered` is a real mark, but of `call_log.greeting_marks` (§3.5), not
     // of `turn.marks`; `foo` stands for a key a later pipeline may add.
@@ -204,5 +208,57 @@ describe('endOfTurnRows — the end-of-turn marks of contract §3.2', () => {
       { from: 'tts_first_byte', to: 'tts_last_byte', offsetMs: null, spanMs: null },
       { from: 'playback_start', to: 'playback_end', offsetMs: null, spanMs: null },
     ]);
+  });
+});
+
+describe('headPairRows — the thinking span of contract §3.2', () => {
+  it('measures llm_first_reasoning → llm_first_token, placed from speech_end', () => {
+    expect(HEAD_PAIRS).toHaveLength(1);
+    expect(headPairRows({ ...FULL, llm_first_reasoning: T0 + 700 })).toEqual([
+      {
+        from: 'llm_first_reasoning',
+        to: 'llm_first_token',
+        label: 'thinking',
+        offsetMs: 700,
+        spanMs: 200,
+      },
+    ]);
+  });
+
+  it('is absent when the model streamed no reasoning', () => {
+    // Not a row reading "not measured": no measurement was ever due.
+    expect(headPairRows(FULL)).toEqual([]);
+    expect(headPairRows({ llm_first_reasoning: T0 + 700 })).toEqual([]);
+    expect(headPairRows({})).toEqual([]);
+  });
+
+  it('reports a reversed pair as not measured rather than a negative span', () => {
+    const rows = headPairRows({ ...FULL, llm_first_reasoning: T0 + 1_000 });
+    expect(rows[0]?.spanMs).toBeNull();
+    expect(rows[0]?.offsetMs).toBe(1_000);
+  });
+
+  it('measures a span it cannot place when there is no speech_end', () => {
+    const noOrigin = { ...FULL, llm_first_reasoning: T0 + 700 };
+    delete noOrigin.speech_end;
+    expect(headPairRows(noOrigin)).toEqual([
+      {
+        from: 'llm_first_reasoning',
+        to: 'llm_first_token',
+        label: 'thinking',
+        offsetMs: null,
+        spanMs: 200,
+      },
+    ]);
+  });
+
+  it('adds no leg — the pipeline names none for it', () => {
+    // `llm_first_reasoning` sits inside `llm_ttft`, which the six-leg row
+    // already draws whole (`docs/upstream.md` §The waterfall).
+    expect(LEGS).toHaveLength(6);
+    const legStages: Stage[] = LEGS.flatMap((leg) => [leg.from, leg.to]);
+    expect(legStages).not.toContain('llm_first_reasoning');
+    expect(STAGES).toHaveLength(11);
+    expect(STAGES.indexOf('llm_first_reasoning')).toBe(STAGES.indexOf('llm_first_token') - 1);
   });
 });

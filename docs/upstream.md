@@ -12,13 +12,18 @@ the ADRs → this file. This file is a map, not a source.
 
 ## Connection
 
-Role `console`, database `fonnus`, schema `public`, read-only. Two paths, both on the box
-(contract §2): `postgres:5432` from a container on `fonnus_default`, `127.0.0.1:5432` from
-host networking; from a laptop, an SSH tunnel to the latter (`README.md`).
+Role `console`, database `fonnus`, schema `public`, read-only, for every screen. Two
+paths, both on the box (contract §2): `postgres:5432` from a container on
+`fonnus_default`, `127.0.0.1:5432` from host networking; from a laptop, an SSH tunnel to
+the latter (`README.md`). A second pool, role `console_editor` (`EDITOR_DATABASE_URL`,
+optional), exists only for the two inserts of contract §7 and is opened only under
+`src/writes/` (ADR 0007); `created_by` is `console:<account>` from the `X-Console-Account`
+header the reverse proxy sets.
 
 The probe `/api/healthz` is the one exception to everything below: it issues
 `select current_user` and reads no table, so it depends on no column of the contract — it
-answers only whether the connection stands and which role it was made as.
+answers only whether the connection stands and which role it was made as — for both
+pools, the editor's under an `editor` object that never changes the HTTP status.
 
 ## Call list
 
@@ -26,6 +31,32 @@ answers only whether the connection stands and which role it was made as.
 |---|---|---|
 | `call_log` | `id`, `started_at`, `ended_at`, `end_reason`, `turn_count`, `total_cost_vnd`, `caller_phone_e164`, `artifact_state`, `artifact_key_prefix` | `turn_count` = rows written (trap 1); `total_cost_vnd` is a floor (trap 3); `numeric` arrives as a string — parse, and treat an unparseable one as missing, not 0; `caller_phone_e164` null is age or a call that never reached the row — "not on record", never blank (trap 5); `artifact_state` + `artifact_key_prefix` feed only the archived predicate of §Artifacts (trap 12) — the list shows a signal that a recording can be fetched, and presigns nothing. `did`, `stt_model`, `tts_model` left the list row (identical on every row) and are read by the detail only |
 | `consent_record` (LEFT JOIN on `call_id`) | `outcome` | A missing row = not finalized (trap 2): in progress when `ended_at IS NULL`, else died or the finish transaction failed. The row's "how it ended" cell renders `outcome` and `end_reason` together: quiet text when ordinary (`granted` + `caller_hangup`), the existing `Vocabulary`/`Badge` tones for every other value and for not-finalized |
+| `turn` (one correlated aggregate per call: `json_agg(idx order by idx) filter (where failed_leg is not null)`, served by the primary key `(call_id, idx)`) | `idx`, `failed_leg` | Failed = `failed_leg IS NOT NULL`, the one test (trap 7). The row's tick strip draws `turn_count` ticks and paints the listed `idx` values red; an unconsented call has no `turn` rows (trap 1), so its strip reads "none — not consented", never zero ticks. The chip "Failed turn" is calls whose list is non-empty — a count of calls, not of turns (`docs/redesign.md` §2) |
+
+**Scope, search, chips, page** — the URL contract is ADR 0006. One query
+(`callsInScope`) reads every call of the scope: the window (`started_at >= since`, and
+`< until` for a custom range — `call_log_started_idx` serves both) or, while a keyword is
+present, all history by two ORed predicates: `caller_phone_e164 LIKE '%' || $digits` and
+`id::text LIKE $hex || '%'`. Neither search predicate is served by an index (the uuid is
+cast to text; the suffix has no leading anchor) — ASSUMED a sequential scan of `call_log`,
+acceptable at the pilot's row count and settled by `EXPLAIN` on the box. A number that has
+aged out of the column (trap 5) cannot be found by search; the empty result says so.
+Everything else is computed in TypeScript over the scope's rows, so the copied rule is
+the one that runs: the chip predicates (`failed_turn` = non-empty failed list;
+`not_finalized` = no consent row; `unconsented` = `hung_up_before_disclosure` or
+`hung_up_before_consent`; `hit_cap` = `end_reason` in `max_duration` / `max_turns` /
+`max_reprompts`; `has_recording` = `isFetchable`, §Artifacts), the four cards — calls;
+median duration = nearest-rank P50 of `ended_at − started_at` over calls with an
+`ended_at`, the `percentiles` copied from `../Fonnus/tools/lib/call-report.ts` (a call
+still open has no duration and is left out, said on the card); turns per consented call
+= mean `turn_count` over calls with `isConsentGranted(outcome)` (trap 1: rows written,
+so a granted call with zero rows counts as zero); recordings in the bucket = calls with
+`isFetchable` and their share of the scope — and the hour-of-day histogram, which buckets
+`started_at` by hour in `Asia/Ho_Chi_Minh`. The page is a slice of 100.
+
+The caller's number renders masked, `+84 90 ••• 4417`, through `maskPhone` (ADR 0008);
+the duration track in each row is relative to the longest call of its day band, a
+rendering choice with no data behind it.
 
 Order: `started_at DESC`; index `call_log_started_idx` serves it. Vocabularies:
 `end_reason` and `outcome` are fixed sets (contract §3.1) — render unknown values as-is
@@ -37,17 +68,29 @@ own zone, so the box and a laptop show the same clock.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` | everything above plus `did`, `stt_model`, `tts_model`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5) — the head says "Call" without a number, never a blank; `recording_started_at` is the origin of the audio ↔ marks mapping (§Artifacts) and null means no turn of the call can be placed on the recording's axis; `artifact_state` + `artifact_key_prefix` decide, through the one `recordingAccess` of ADR 0004, whether a player renders and whether `/calls/[id]/recording` presigns; `artifact_dir` may be swept (trap 5) — it is a path, not a promise, and since the pipeline's migration 0010 the row says so itself in `artifact_state` (§Artifacts); `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `greeting_marks` itself is not read until row A1b draws the greeting axis |
+| `call_log` | everything above plus `did`, `stt_model`, `tts_model`, `recording_started_at`, `disclosure_completed_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `artifact_dir`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5) — the head says "Call" without a number, never a blank; `recording_started_at` is the origin of the audio ↔ marks mapping (§Artifacts) and null means no turn of the call can be placed on the recording's axis; `artifact_state` + `artifact_key_prefix` decide, through the one `recordingAccess` of ADR 0004, whether a player renders and whether `/calls/[id]/recording` presigns; `artifact_dir` may be swept (trap 5) — it is a path, not a promise, and since the pipeline's migration 0010 the row says so itself in `artifact_state` (§Artifacts); `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `caller_phone_e164` renders masked in the head and in full only inside the collapsed "Pipeline detail" Call card (ADR 0008). The head's model and build are `config_snapshot.OPENROUTER_MODEL` (the configured model — a turn's `llm_model` can differ on a fallback) and `FONNUS_BUILD_SHA`, each omitted when the snapshot lacks it |
+| `call_log` | `greeting_marks` (since row A6) | Contract §3.5: `answered` plus the reply-side keys of the greeting (`tts_first_byte`, `tts_last_byte`, `first_audio_out`, `playback_start`, `playback_end`), written at finalize; null on a call written before migration 0008, a call that never finalized, or one terminated before the greeting was dispatched — then the axis has no greeting block, said in the caption. The block runs from `answered` to `playback_end`, else the latest key present, else `answered` itself (a hairline), placed on the recording clock through `recordingOffsetMs` like a turn (§Audio ↔ marks); it has no `pipeline_ms` of its own, so the lower lane draws no bar under it. `greeting_first_audio_ms` stays the head's number — the same two keys, computed by the pipeline |
 | `consent_record` | `consent_mode`, `disclosure_completed_at`, `granted_at`, `outcome`, `disclosure_text` | — |
-| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | **`caller_text` only when `outcome = 'granted'`** (trap 4) — through `showCallerData(outcome, gate)`, the one gate, which the test-phase switch of ADR 0005 can open; the same function withholds the recording; null text may be age (trap 5); `speech_start_ms` / `speech_end_ms` are offsets into `call.wav` already (§Artifacts, the mapping), so a bubble's voice length is `speech_end_ms − speech_start_ms` and a null pair is a bubble with text but no place on the strip; null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7) |
+| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | **`caller_text` only when `outcome = 'granted'`** (trap 4) — through `showCallerData(outcome, gate)`, the one gate, which the test-phase switch of ADR 0005 can open; the same function withholds the recording; null text may be age (trap 5); `speech_start_ms` / `speech_end_ms` are offsets into `call.wav` already (§Artifacts, the mapping), so a bubble's voice length is `speech_end_ms − speech_start_ms` and a null pair is a bubble with text but no place on the strip; null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7). "The call" block draws one bar per turn from `pipeline_ms`, on the same axis as the turn blocks: a turn without `first_audio_out` has a null `pipeline_ms` and is drawn as a dashed outline labelled "—" (a reply that never became audible, never a zero); a negative value is the fault of contract §3.2 and is drawn the same way, labelled "not measured" |
+
+The config snapshot on the detail is grouped by key prefix for reading (Speech to text ·
+Language model · Text to speech · Turn taking · Call limits · Consent & recording · Texts
+· Runtime config row · Other) — a rendering choice only; a key with an unknown prefix
+falls to Other and no key is ever dropped (a test pins that every key of a snapshot lands
+in one group). Each vendor group is headed by `STT_PROVIDER` / `TTS_PROVIDER`, read
+before any vendor key; a vendor's keys are present only on a call that ran that vendor,
+so an absent `DEEPGRAM_*` key means "that vendor did not run", never "the default
+applied" (contract §3.4). `PROVIDERS` is `real` / `fake` and says only whether real
+vendors answered.
 
 ### The waterfall
 
 `turn.marks` is a JSON object of absolute wall-clock instants (ms since epoch), one key
-per stage the turn reached; every key optional (contract §3.2). Ten keys since migration
-0008: `speech_end`, `endpoint_decision`, `stt_final`, `llm_first_token`, `llm_last_token`,
-`tts_first_byte`, `tts_last_byte`, `playback_start`, `first_audio_out`, `playback_end`;
-`src/latency.ts` keeps exactly these and drops any other key. The six legs and their end
+per stage the turn reached; every key optional (contract §3.2). Eleven keys since
+migration 0014: `speech_end`, `endpoint_decision`, `stt_final`, `llm_first_reasoning`,
+`llm_first_token`, `llm_last_token`, `tts_first_byte`, `tts_last_byte`, `playback_start`,
+`first_audio_out`, `playback_end`; `src/latency.ts` keeps exactly these and drops any
+other key. The six legs and their end
 points, copied from `../Fonnus/app/src/domain/latency.ts` and
 `PIPELINE_ARCHITECTURE.md` §6:
 
@@ -78,6 +121,16 @@ and not-placed rules above apply unchanged. Two facts the turn card states only 
 apply (contract §3.2): on an `interrupted` turn `playback_end` is the last lull before the
 barge-in, not the end of the reply; on `source = 'reopen'` the head marks are the first
 generation's and the end-of-turn marks the last's.
+
+Beside them, since row A6, the one **head pair** of W2-L3 F7: `llm_first_reasoning →
+llm_first_token`, the thinking span of a reasoning model. `llm_first_reasoning` is a head
+mark (first-write-wins) and part of no leg — it sits inside `llm_ttft`, which the six-leg
+row already shows whole, so the pair is a second reading of that leg, not a seventh leg,
+and the pipeline names none for it. Absent on a model that emits no reasoning, and then
+absent from the chart. On an LLM failover the mark is the primary's and `llm_first_token`
+the fallback's (contract §3.2), a fact the two marks alone cannot show — the caveat under
+the row says the span can contain a failover; the record that proves one is in
+`call_event` (row A4).
 
 ### The call timeline (row A1b — not built yet; its data landed with `../Fonnus` W2-L3 F5–F6, 2026-09-07)
 
@@ -112,12 +165,15 @@ W2-L3 F7 it also carries `{ts, reasoning}` lines and `turn.reasoning_text` holds
 reasoning as text, under the same consent and TTL rules as `assistant_text`. Render it
 collapsed under the reply; it is what the model was doing before its first content token.
 
-## Dashboard
+## Overview
 
-`/dashboard` (PLAN row A2), a server-rendered screen over a window `since` (the pipeline's
-`report-calls --since` forms: `7d`, `36h`, `15m`, or an ISO instant; default `7d`) and a
-grouping (`none`, `llm_model`, `stt_model`, `tts_model`, `config`, or `key:<snapshot key>`).
-Two hand-written queries in `src/queries/dashboard.ts`, both bounded by the window only —
+`/` (PLAN rows A2 and A6; `/dashboard` redirects here), a server-rendered screen over the
+window of ADR 0006 — `since` in the pipeline's `report-calls --since` forms (`7d`, `36h`,
+`15m`, or an ISO instant; default `7d`; a preset is open-ended so the leg numbers equal
+`report-calls --since <same>`), plus `until` for a custom range — and a grouping (`none`,
+`llm_model`, `stt_model`, `tts_model`, `config`, `key:<snapshot key>`, or
+`key:runtime.version`; default `key:OPENROUTER_MODEL`, ADR 0009). Two hand-written
+queries in `src/queries/dashboard.ts`, both bounded by the window only —
 **no `LIMIT` on turn rows**, the trap the pipeline's own `turnMetricRows`
 (`../Fonnus/app/src/persistence/call-queries.ts`) falls into by capping turns after the
 join. The two run on one connection inside one `REPEATABLE READ READ ONLY` transaction, so
@@ -127,8 +183,8 @@ gives a statement 10 seconds (`src/db.ts`) and the screen reads every turn in th
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` LEFT JOIN `consent_record` on `call_id`, `started_at >= since`, ordered by `started_at` (`dashboardSince`, first statement) | `call_log.id`, `started_at`, `stt_model`, `tts_model`, `config_snapshot`; `consent_record.outcome` | Every call in the window, consented or not — the denominator of "N of M calls" (trap 1); a null snapshot is a call written before F1, grouped as "unknown", never dropped (§3.4) |
-| `turn` JOIN `call_log` on `call_id`, `call_log.started_at >= since`, ordered by `started_at, idx` (`dashboardSince`, second statement) | `turn.call_id`, `idx`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `interrupted`, `source`, `failed_leg`, `failed_stage`, `failed_after_ms` | Only consented calls have rows (trap 1); a reversed span is excluded from its leg's sample, a failed or interrupted turn is included — the rule of `../Fonnus/tools/lib/cross-call-report.ts`; per-leg `count` is turns with both marks, not the turn count. `marks` is nullable: the turn count means what the pipeline's `turnCount` means (rows with a non-null `marks`, the filter `turnMetricRows` applies in SQL) so the A2 acceptance against `report-calls` holds, but a null-marks row is not filtered out — it is listed under "Turns outside the percentile" and counted in the caveat as "U more without marks, excluded from every number" |
+| `call_log` LEFT JOIN `consent_record` on `call_id`, `started_at >= since` (and `< until` on a custom range), ordered by `started_at` (`dashboardWindow`, first statement) | `call_log.id`, `started_at`, `ended_at`, `end_reason`, `total_cost_vnd`, `stt_model`, `tts_model`, `config_snapshot`; `consent_record.outcome` | Every call in the window, consented or not — the denominator of "N of M calls" (trap 1); a null snapshot is a call written before F1, grouped as "unknown", never dropped (§3.4). Since row A6 the same rows feed: calls per day, split consented / not by `isConsentGranted(outcome)`; the window's cost floor = the sum of parsed `total_cost_vnd` (`numeric` → string → number, unparseable = missing, not 0), a **floor** while any model is unpriced (trap 3) — said beside the number; "How calls ended" = the distribution of `end_reason` with **not finalized** (no consent row, trap 2) counted as a state of the call beside the values, and the distribution of `outcome` with "no consent row yet" beside the three values — a missing row is never a refusal |
+| `turn` JOIN `call_log` on `call_id`, `call_log.started_at >= since` (and `< until`), ordered by `started_at, idx` (`dashboardWindow`, second statement) | `turn.call_id`, `idx`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `interrupted`, `source`, `failed_leg`, `failed_stage`, `failed_after_ms` | Only consented calls have rows (trap 1); a reversed span is excluded from its leg's sample, a failed or interrupted turn is included — the rule of `../Fonnus/tools/lib/cross-call-report.ts`; per-leg `count` is turns with both marks, not the turn count. `marks` is nullable: the turn count means what the pipeline's `turnCount` means (rows with a non-null `marks`, the filter `turnMetricRows` applies in SQL) so the A2 acceptance against `report-calls` holds, but a null-marks row is not filtered out — it is listed under "Turns outside the percentile" and counted in the caveat as "U more without marks, excluded from every number" |
 
 Computation is in TypeScript (`src/dashboard.ts`), never in SQL, so the copied pipeline
 rule is the one that runs and the one the tests pin: per-leg spans from `legSpans` over the
@@ -137,19 +193,31 @@ six legs, nearest-rank P50 / P95 / max copied from `../Fonnus/tools/lib/call-rep
 `caller_perceived_ms` and `pipeline_ms` — which the pipeline's baseline JSON does not carry —
 against the ADR 0007 targets. Day buckets take the **call's** `started_at` (a turn has no
 timestamp of its own) in `Asia/Ho_Chi_Minh`, the zone every screen pins; a day with no turn
-between the first and the last bucket is a null point, so the trend line breaks there
-instead of drawing through it.
+between the first and the last bucket is a null point, so the per-day P95 bars leave a
+gap there instead of drawing a zero.
 
 Grouping by `config` keys on the whole `config_snapshot` object ("this exact
 configuration", labelled by its `FONNUS_BUILD_SHA`) and shows only the keys whose values
-differ across the groups, side by side — never the whole object twice; `key:<K>` groups on
-one setting (`config_snapshot->>K`, evaluated in TypeScript). Two calls on the same build
-with one changed key are the comparison the hypothesis loop is made of (`CONTEXT.md` §Why
-now). Group rows are built from turn rows, so a group's call count is "calls with turns on
-record" — said in the column header. "Turns outside the percentile" lists the window's turns
-whose marks lack `first_audio_out` (the reply never became audible) with `source`,
-`interrupted`, `failed_leg`, `failed_stage` (null under a set leg = "provider error", §3.1)
-and `failed_after_ms` (elapsed since `endpoint_decision`, not the bound — trap 7).
+differ across the groups, side by side — never the whole object twice: the top-level flat
+keys plus the one derived column `runtime.version`, never the `runtime.config` leaves
+(ADR 0009). `key:<K>` groups on one setting (`config_snapshot->>K`, evaluated in
+TypeScript); `key:runtime.version` on `config_snapshot->'runtime'->>'version'`, the
+`runtime_config.id` the call ran under (absent = boot config, grouped "unknown"); the
+three `DEEPGRAM_*` keys read their pre-2026-09-17 `STT_*` spelling as a fallback (contract
+§3.4's COALESCE), so a deploy that straddles the rename is one group per value, not two.
+Two calls on the same build with one changed key are the comparison the hypothesis loop
+is made of (`CONTEXT.md` §Why now). Group rows are built from turn rows, so a group's
+call count is "calls with turns on record" — said in the column header; the two gauges of
+each group share the headline's scale. "Turn failures" counts the window's turns by
+`failed_leg · failed_stage` over the turns with marks, a null stage under a set leg
+rendered "provider error" (§3.1). "Where the reply's time goes" is the P50 of each of the
+four partition legs laid end to end — P50s of legs do not sum to the P50 of
+`caller_perceived_ms`, said under the bar. "Turns outside the percentile" lists the
+window's turns whose marks lack `first_audio_out` (the reply never became audible) with
+`source`, `interrupted`, `failed_leg`, `failed_stage` (null under a set leg = "provider
+error", §3.1) and `failed_after_ms` (elapsed since `endpoint_decision`, not the bound —
+trap 7); the first six by default, all of them under `outside=all`, each row linking to
+`/calls/<id>?turn=<idx>`.
 
 Caveats that travel with the numbers, on the screen: "consented calls only — N of M calls,
 T turns" beside the headline stats; "turns with both marks, not turns" on the count column;
@@ -197,9 +265,10 @@ last. The predicate the pipeline itself uses, copied rather than re-derived
 (`app/src/persistence/call-queries.ts:180-203`, `fetchableCallsSince`) into
 `src/artifacts.ts` as `isFetchable` and pinned by its test:
 `artifact_state = 'archived' OR (artifact_state = 'expired' AND artifact_key_prefix IS NOT NULL)`.
-It is the gate for every recording surface — the list's signal, the detail's player, the
-`/calls/[id]/recording` route — and nothing else in `src/` compares `artifact_state` to a
-literal. A value outside the contract's vocabulary is not fetchable and is shown with the
+It is the gate for every recording surface — the list's `Rec` column and its "Has
+recording" chip, the "Recording in the bucket" card and its share, the detail's player,
+the `/calls/[id]/recording` route — and nothing else in `src/` compares `artifact_state`
+to a literal. A value outside the contract's vocabulary is not fetchable and is shown with the
 `Vocabulary` warning. `artifact_dir` remains the disk copy only — a path on the box that
 nobody outside it can open; it is not a bucket key.
 
@@ -243,7 +312,7 @@ and pinned by its tests:
   and never rewinds a track (a frame that arrives early is appended, not overlapped), so a
   mark's place is right to within ~100 ms and can only drift *late* relative to the
   audio, never early. The playhead line on the waterfall is read at that precision.
-- **A turn's block on the call strip** runs from `speech_start_ms` to the place of
+- **A turn's block on the call strip** — since row A6 the upper lane of "The call" block, with the `pipeline_ms` bars under it on the same axis — runs from `speech_start_ms` to the place of
   `marks.playback_end`; when `playback_end` is absent (a failed leg, a turn cut before the
   reply played) the block ends at the latest mark present by value, and when no mark is
   present at all, at `speech_end_ms`. When no turn of the call can be placed (null

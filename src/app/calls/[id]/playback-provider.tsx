@@ -64,9 +64,21 @@ export function usePlayback(): Playback {
  * rendered on the server and passed down as props, so no query and no
  * date object crosses this boundary — only numbers, strings and booleans.
  */
-export default function PlaybackProvider({ children }: { children: ReactNode }) {
+export default function PlaybackProvider({
+  children,
+  initialSelectedIdx = null,
+}: {
+  children: ReactNode;
+  /**
+   * The turn selected on arrival, from `?turn=<idx>` (ADR 0006) — how the
+   * Overview's outside-the-percentile rows and the Calls tick strip link to one
+   * turn of one call. It behaves like a click: the first playhead move clears
+   * it, so a link does not pin the screen to a turn the audio has left.
+   */
+  initialSelectedIdx?: number | null;
+}) {
   const [playheadMs, setPlayhead] = useState(0);
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(initialSelectedIdx);
   const [durationMs, setDurationMs] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 

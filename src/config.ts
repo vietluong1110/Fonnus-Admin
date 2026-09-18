@@ -32,6 +32,8 @@ export interface Config {
   databaseUrl: string;
   /** All five S3_* keys or none (ADR 0004); undefined = recording access not configured. */
   artifactStore?: ArtifactStore;
+  /** ADR 0007 — the `console_editor` role; undefined = editing not configured. */
+  editorDatabaseUrl?: string;
   /** ADR 0005; unset = 'on'. */
   consentGate: ConsentGate;
 }
@@ -81,6 +83,36 @@ function readArtifactStore(env: Partial<NodeJS.ProcessEnv>): ArtifactStore | und
   return store;
 }
 
+/** The role the second connection string must name (`../Fonnus/docs/read-contract.md` §2). */
+const EDITOR_ROLE = 'console_editor';
+
+/**
+ * Optional, and strict when set (ADR 0007): unset, every screen reads as before
+ * and every write surface says "editing not configured"; set, the value must
+ * parse as a URL whose username is the editor role. A wrong credential would
+ * otherwise first surface as a Postgres `42501` on the first save, weeks later
+ * — the same reasoning as the half-configured S3_* group above.
+ */
+function readEditorDatabaseUrl(env: Partial<NodeJS.ProcessEnv>): string | undefined {
+  const value = read(env, 'EDITOR_DATABASE_URL');
+  if (value === undefined) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      'EDITOR_DATABASE_URL is not a URL — it is the `console_editor` role\'s connection ' +
+        'string, in the same form as DATABASE_URL (see .env.example).',
+    );
+  }
+  if (url.username !== EDITOR_ROLE) {
+    throw new Error(
+      `EDITOR_DATABASE_URL must connect as role ${EDITOR_ROLE} — it names "${url.username}" (read contract §2)`,
+    );
+  }
+  return value;
+}
+
 const CONSENT_GATES: readonly ConsentGate[] = ['on', 'off'];
 
 /**
@@ -112,10 +144,14 @@ export function readConfig(env: Partial<NodeJS.ProcessEnv>): Config {
     throw new Error('DATABASE_URL is not set — copy .env.example to .env (README.md)');
   }
   const artifactStore = readArtifactStore(env);
-  const config: Config = { databaseUrl, consentGate: readConsentGate(env) };
-  // Left off the object entirely when unconfigured, so `'artifactStore' in
-  // config` and a `toEqual({…})` in a test read the same as its absence.
-  return artifactStore === undefined ? config : { ...config, artifactStore };
+  const editorDatabaseUrl = readEditorDatabaseUrl(env);
+  let config: Config = { databaseUrl, consentGate: readConsentGate(env) };
+  // Each optional group is left off the object entirely when unconfigured, so
+  // `'artifactStore' in config` and a `toEqual({…})` in a test read the same as
+  // its absence.
+  if (artifactStore !== undefined) config = { ...config, artifactStore };
+  if (editorDatabaseUrl !== undefined) config = { ...config, editorDatabaseUrl };
+  return config;
 }
 
 let cached: Config | undefined;

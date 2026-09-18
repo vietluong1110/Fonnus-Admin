@@ -1,11 +1,11 @@
 import Card from '@/ui/card';
 import PageHead from '@/ui/page-head';
 
-/** The skeleton the dashboard is replaced by while the two queries run. */
+/** The skeleton the overview is replaced by while the two queries run. */
 export default function Loading() {
   return (
     <>
-      <PageHead title="Latency dashboard" />
+      <PageHead title="Overview" />
       <Card>
         {Array.from({ length: 6 }, (_, row) => (
           <div

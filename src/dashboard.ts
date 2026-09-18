@@ -9,81 +9,26 @@
  * Vocabulary is the pipeline's, unchanged (CLAUDE.md §Ground rules).
  */
 
-import { CALL_TIME_ZONE, isConsentGranted, shortSha } from './calls';
-import { LEGS, type LegName, legSpans, parseMarks } from './latency';
+import { CALL_TIME_ZONE, isConsentGranted, parseCostVnd, shortSha } from './calls';
+import { LEGS, PARTITION_LEGS, type LegName, legSpans, parseMarks } from './latency';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
 
 const DAY_MS = 86_400_000;
 
-/** What `since` means when the operator asks for nothing — the pipeline's own default. */
-export const DEFAULT_SINCE = '7d';
-
-/**
- * The longest window the screen will accept. It is not a product limit: the
- * window's every call and every turn are read with no LIMIT, and the pool gives
- * any statement 10 seconds (`statement_timeout` in `src/db.ts`). A year and a
- * day is well past what the retention sweep leaves on record anyway.
+/*
+ * The window moved to `src/window.ts` when Calls started reading the same one
+ * (ADR 0006); it is re-exported here so the dashboard's own callers and tests
+ * keep one import. New code takes it from `src/window.ts`.
  */
-export const MAX_WINDOW_DAYS = 366;
-
-export interface Window {
-  since: Date;
-  /** Present only when the requested window was rejected; the default is shown instead. */
-  error?: string;
-}
-
-function defaultSince(now: Date): Date {
-  return new Date(now.getTime() - 7 * DAY_MS);
-}
-
-/**
- * `7d` / `36h` / `90m`, or any instant `Date` can parse — copied from
- * `../Fonnus/tools/report-calls.ts` `parseSince`, so the console's window means
- * exactly what the pipeline's `report-calls --since` flag means. Two changes:
- * `now` is a parameter rather than a call to the clock, and a rejection is a
- * returned message rather than a thrown `UsageError`, because a screen answers
- * a bad query string by rendering the default window and saying so.
- */
-export function parseSince(spec: string | undefined, now: Date): Window {
-  if (spec === undefined || spec.trim() === '') return { since: defaultSince(now) };
-  const trimmed = spec.trim();
-
-  let since: Date;
-  const relative = /^(\d+)([dhm])$/.exec(trimmed);
-  if (relative !== null) {
-    const amount = Number(relative[1]);
-    const unitMs = { d: DAY_MS, h: 3_600_000, m: 60_000 }[relative[2] as 'd' | 'h' | 'm'];
-    since = new Date(now.getTime() - amount * unitMs);
-  } else {
-    const parsed = new Date(trimmed);
-    if (Number.isNaN(parsed.getTime())) {
-      return {
-        since: defaultSince(now),
-        error: `since expects 7d, 36h, 90m or an ISO instant, got '${trimmed}' — showing the default ${DEFAULT_SINCE} window.`,
-      };
-    }
-    since = parsed;
-  }
-
-  // `9999999999d` is a number the regex accepts and the Date range does not:
-  // the subtraction lands outside ±8.64e15 ms and `since` is an invalid Date,
-  // which Postgres would refuse rather than the screen. Same answer as garbage.
-  if (Number.isNaN(since.getTime())) {
-    return {
-      since: defaultSince(now),
-      error: `since expects 7d, 36h, 90m or an ISO instant, got '${trimmed}' — showing the default ${DEFAULT_SINCE} window.`,
-    };
-  }
-
-  if (now.getTime() - since.getTime() > MAX_WINDOW_DAYS * DAY_MS) {
-    return {
-      since: defaultSince(now),
-      error: `a window longer than ${String(MAX_WINDOW_DAYS)} days is refused: the screen reads every turn in it and the pool gives a statement 10 seconds (statement_timeout, src/db.ts) — showing the default ${DEFAULT_SINCE} window.`,
-    };
-  }
-
-  return { since };
-}
+export {
+  DEFAULT_SINCE,
+  MAX_WINDOW_DAYS,
+  WINDOW_PRESETS,
+  parseSince,
+  parseWindow,
+  windowHref,
+} from './window';
+export type { Preset, Since, Window } from './window';
 
 export interface Percentiles {
   count: number;
@@ -129,6 +74,16 @@ export function dayKey(date: Date): string {
 }
 
 /**
+ * A day bucket as the charts write it — `5/9` for the 5th of September. The
+ * key is already a day in the clinic's zone, so this is string work and no zone
+ * is involved a second time.
+ */
+export function dayLabel(day: string): string {
+  const [, month, date] = day.split('-');
+  return `${String(Number(date))}/${String(Number(month))}`;
+}
+
+/**
  * The ways the numbers can be split. `config` is the contract's "group on the
  * whole object" (§3.4, jsonb equality is structural); `key:<K>` is its "group on
  * one key". The model groupings read the columns, which are the ids the call
@@ -139,12 +94,46 @@ export const GROUPINGS = ['none', 'llm_model', 'stt_model', 'tts_model', 'config
 
 export type Grouping = (typeof GROUPINGS)[number] | `key:${string}`;
 
-/** The query string is untrusted; anything the list does not name is no grouping. */
+/**
+ * The grouping the screen opens on (ADR 0009): `llm_ttft` is the only leg a
+ * model change moves, and the model is the change the hypothesis loop makes
+ * most often.
+ */
+export const DEFAULT_GROUPING: Grouping = 'key:OPENROUTER_MODEL';
+
+/**
+ * The one dotted `key:` the vocabulary allows — `config_snapshot->'runtime'->>'version'`,
+ * the `runtime_config.id` the call ran under (ADR 0009 decision 2). Every other
+ * `key:` names a top-level key, and a dot in one of those is a key with a dot,
+ * never a path.
+ */
+export const RUNTIME_VERSION_KEY = 'runtime.version';
+
+/**
+ * The 2026-09-17 rename (contract §3.4, ADR 0024): three Deepgram frame timings
+ * lost their `STT_` spelling. Rows written before that deploy carry the old
+ * name, so both spellings resolve to one value and one column — the contract's
+ * own COALESCE instruction. Deleted when the old rows have aged out (ADR 0009).
+ */
+export const KEY_ALIASES: Record<string, string> = {
+  DEEPGRAM_ENDPOINTING_MS: 'STT_ENDPOINTING_MS',
+  DEEPGRAM_UTTERANCE_END_MS: 'STT_UTTERANCE_END_MS',
+  DEEPGRAM_TURN_TRIGGER: 'STT_TURN_TRIGGER',
+};
+
+/** The new spelling of a key, whichever of the two was asked for. */
+export function canonicalKey(key: string): string {
+  if (Object.hasOwn(KEY_ALIASES, key)) return key;
+  const renamed = Object.entries(KEY_ALIASES).find(([, old]) => old === key);
+  return renamed === undefined ? key : renamed[0];
+}
+
+/** The query string is untrusted; anything the list does not name is the default. */
 export function parseGroup(raw: string | undefined): Grouping {
-  if (raw === undefined) return 'none';
+  if (raw === undefined) return DEFAULT_GROUPING;
   if ((GROUPINGS as readonly string[]).includes(raw)) return raw as Grouping;
   if (raw.startsWith('key:') && raw.length > 'key:'.length) return raw as Grouping;
-  return 'none';
+  return DEFAULT_GROUPING;
 }
 
 /** The group a value with no answer falls in — never dropped (contract §3.4). */
@@ -192,6 +181,33 @@ function snapshotIdentity(snapshot: Record<string, unknown>): string {
   return canonicalJson(snapshot);
 }
 
+/**
+ * One snapshot key's value, under either spelling of a renamed key. Own keys
+ * only, for the reason `groupKey` gives: a key from the query string can name a
+ * prototype property, and a prototype property is not a snapshot value.
+ * `undefined` is "the snapshot does not carry this key", which is a different
+ * fact from a stored `null` (§3.4).
+ */
+function lookup(snapshot: Record<string, unknown>, key: string): unknown {
+  const canonical = canonicalKey(key);
+  if (Object.hasOwn(snapshot, canonical)) return snapshot[canonical];
+  const old = KEY_ALIASES[canonical];
+  if (old !== undefined && Object.hasOwn(snapshot, old)) return snapshot[old];
+  return undefined;
+}
+
+/**
+ * The `runtime_config` row the call ran under — `runtime.version`, the only
+ * nested value this console reads (ADR 0009). Absent on a call that ran on boot
+ * configuration, and on one whose row was refused.
+ */
+function runtimeVersion(snapshot: Record<string, unknown>): unknown {
+  const runtime = snapshot['runtime'];
+  if (typeof runtime !== 'object' || runtime === null || Array.isArray(runtime)) return undefined;
+  const object = runtime as Record<string, unknown>;
+  return Object.hasOwn(object, 'version') ? object['version'] : undefined;
+}
+
 export function groupKey(
   call: DashboardCall,
   turn: DashboardTurn,
@@ -207,9 +223,9 @@ export function groupKey(
   const key = grouping.slice('key:'.length);
   // The key comes from the query string, so it can name a prototype property:
   // `key:__proto__` would otherwise fold every call into one group and
-  // `key:constructor` into a group named after a function. Only own keys are
-  // snapshot values; anything else is no answer, which is the unknown group.
-  const value = Object.hasOwn(snapshot, key) ? snapshot[key] : undefined;
+  // `key:constructor` into a group named after a function. `lookup` reads own
+  // keys only; anything else is no answer, which is the unknown group.
+  const value = key === RUNTIME_VERSION_KEY ? runtimeVersion(snapshot) : lookup(snapshot, key);
   return value === undefined || value === null ? UNKNOWN_GROUP : renderValue(value);
 }
 
@@ -229,12 +245,20 @@ export function renderValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
-/** Every key any snapshot in the window carries, sorted — the `key:` options. */
+/**
+ * Every key any snapshot in the window carries, sorted — the `key:` options.
+ * `runtime` is not one of them: it is an object, and the only value under it
+ * this console reads is offered as the derived `runtime.version` instead
+ * (ADR 0009). A renamed key is offered under its new spelling only.
+ */
 export function snapshotKeys(calls: DashboardCall[]): string[] {
   const keys = new Set<string>();
   for (const call of calls) {
     const snapshot = parseSnapshot(call.config_snapshot);
-    if (snapshot !== null) for (const key of Object.keys(snapshot)) keys.add(key);
+    if (snapshot === null) continue;
+    for (const key of Object.keys(snapshot)) {
+      if (key !== 'runtime') keys.add(canonicalKey(key));
+    }
   }
   return [...keys].sort();
 }
@@ -250,18 +274,39 @@ export function differingKeys(snapshots: Array<Record<string, unknown> | null>):
   const present = snapshots.filter((s): s is Record<string, unknown> => s !== null);
   if (present.length < 2) return [];
   const keys = new Set<string>();
-  for (const snapshot of present) for (const key of Object.keys(snapshot)) keys.add(key);
+  for (const snapshot of present) {
+    // `runtime` is never a column of its own (ADR 0009 decision 1): a cell
+    // holding the whole document is unreadable, and it always differs when the
+    // version does — which the derived column below says in one number. The
+    // renamed keys fold onto their new spelling, so a deploy that straddles the
+    // rename shows one column, not two.
+    for (const key of Object.keys(snapshot)) if (key !== 'runtime') keys.add(canonicalKey(key));
+  }
   const differing: string[] = [];
   for (const key of keys) {
     // An absent key and a null one are two values, as `snapshotValue` and
     // `snapshotIdentity` already hold — hashing both to `null` would let two
     // groups differ by a key this column never names.
     const rendered = new Set(
-      present.map((s) => (Object.hasOwn(s, key) ? canonicalJson(s[key]) : 'absent')),
+      present.map((s) => {
+        const value = lookup(s, key);
+        return value === undefined ? 'absent' : canonicalJson(value);
+      }),
     );
     if (rendered.size > 1) differing.push(key);
   }
-  return differing.sort();
+  differing.sort();
+
+  // The one derived column, last: what the flat keys cannot show is "a new
+  // runtime_config row that changed nothing effective" (ADR 0009 §Why).
+  const versions = new Set(
+    present.map((s) => {
+      const version = runtimeVersion(s);
+      return version === undefined ? 'absent' : canonicalJson(version);
+    }),
+  );
+  if (versions.size > 1) differing.push(RUNTIME_VERSION_KEY);
+  return differing;
 }
 
 /** How a snapshot value reads in a cell; an absent key is not a null one (§3.4). */
@@ -269,7 +314,7 @@ export function snapshotValue(snapshot: Record<string, unknown> | null, key: str
   if (snapshot === null) return UNKNOWN_GROUP;
   // Own keys only, for the reason `groupKey` gives: a prototype property is not
   // a snapshot value, it is an absent key.
-  const value = Object.hasOwn(snapshot, key) ? snapshot[key] : undefined;
+  const value = key === RUNTIME_VERSION_KEY ? runtimeVersion(snapshot) : lookup(snapshot, key);
   if (value === undefined) return 'absent';
   if (value === null) return 'null';
   return renderValue(value);
@@ -293,6 +338,33 @@ export interface DashboardDay {
   pipelineP95: number | null;
 }
 
+/** Calls answered on one day of the window, split by trap 1's dividing line. */
+export interface DashboardCallDay {
+  day: string;
+  consented: number;
+  notConsented: number;
+}
+
+/** One value of a fixed vocabulary (§3.1) and the calls that carry it. */
+export interface VocabularyCount {
+  value: string;
+  calls: number;
+}
+
+/** Turns that failed, by the pair the contract identifies a failure with. */
+export interface TurnFailure {
+  leg: string;
+  /** Null under a set leg is a provider error, not a missing measurement (§3.1). */
+  stage: string | null;
+  turns: number;
+}
+
+/** One partition leg's P50 — the composition of a median reply. */
+export interface LegMedian {
+  leg: string;
+  p50: number | null;
+}
+
 export interface Dashboard {
   calls: number;
   consentedCalls: number;
@@ -304,6 +376,29 @@ export interface Dashboard {
   perceived: Percentiles;
   pipeline: Percentiles;
   byDay: DashboardDay[];
+  /** Every call of the window by day, consented or not — not only the measured ones. */
+  callsByDay: DashboardCallDay[];
+  /**
+   * The window's cost, a FLOOR while any model the calls ran on has no price
+   * row (trap 3). Null when not one call carried a parseable figure.
+   */
+  costFloorVnd: number | null;
+  /** Calls whose `total_cost_vnd` was null or unparseable — missing, never 0. */
+  unpricedCalls: number;
+  /** `end_reason` over the calls that reached finalize, biggest first. */
+  endReasons: VocabularyCount[];
+  /** Calls with no `consent_record` row — a state of the call, never a refusal (trap 2). */
+  notFinalized: number;
+  /** `consent_record.outcome` over the calls that have a row, biggest first. */
+  outcomes: VocabularyCount[];
+  /** The same calls as `notFinalized`, said beside the outcomes: no row yet. */
+  noRow: number;
+  /** Turns with marks that failed, by `failed_leg · failed_stage`, biggest first. */
+  turnFailures: TurnFailure[];
+  /** How many turns with marks carry a `failed_leg` at all (trap 7's one test). */
+  failedTurns: number;
+  /** The four partition legs' P50s, in the order a turn passes through them. */
+  medianReply: LegMedian[];
   groups: DashboardGroup[];
   /** Only ever filled when grouping on the whole snapshot. */
   differingKeys: string[];
@@ -399,17 +494,39 @@ function groupLabel(key: string, snapshot: Record<string, unknown> | null): stri
  * involved a second time.
  */
 function fillDayGaps(days: DashboardDay[]): DashboardDay[] {
+  return fillDays(days, (day) => ({ day, turns: 0, perceivedP95: null, pipelineP95: null }));
+}
+
+/**
+ * The same calendar walk for the call counts. A day with no call is a zero
+ * rather than a gap, and that is the difference between the two charts: a
+ * calls-per-day zero is a measurement ("nobody rang"), while a P95 of a day
+ * with no turn is not a fast day — it is no day at all.
+ */
+function fillCallDayGaps(days: DashboardCallDay[]): DashboardCallDay[] {
+  return fillDays(days, (day) => ({ day, consented: 0, notConsented: 0 }));
+}
+
+/** The buckets from the first day to the last, the missing ones from `blank`. */
+function fillDays<T extends { day: string }>(days: T[], blank: (day: string) => T): T[] {
   const first = days[0];
   const last = days[days.length - 1];
   if (first === undefined || last === undefined) return days;
 
   const byDay = new Map(days.map((day) => [day.day, day]));
-  const filled: DashboardDay[] = [];
+  const filled: T[] = [];
   for (let at = dayMillis(first.day); at <= dayMillis(last.day); at += DAY_MS) {
     const day = new Date(at).toISOString().slice(0, 10);
-    filled.push(byDay.get(day) ?? { day, turns: 0, perceivedP95: null, pipelineP95: null });
+    filled.push(byDay.get(day) ?? blank(day));
   }
   return filled;
+}
+
+/** A distribution as rows, biggest first, ties by value so the order is stable. */
+function counted(counts: Map<string, number>): VocabularyCount[] {
+  return [...counts.entries()]
+    .map(([value, calls]) => ({ value, calls }))
+    .sort((a, b) => b.calls - a.calls || a.value.localeCompare(b.value));
 }
 
 /** A `YYYY-MM-DD` key as UTC midnight — a position on the calendar, not an instant. */
@@ -430,11 +547,13 @@ export function aggregate(
   const groups = new Map<string, { samples: Samples; snapshot: Record<string, unknown> | null }>();
   const withTurns = new Set<string>();
   const outside: DashboardTurn[] = [];
+  const failures = new Map<string, TurnFailure>();
+  let failedTurns = 0;
 
   for (const turn of turns) {
     const call = byId.get(turn.call_id);
     // The two result sets are read in one REPEATABLE READ transaction
-    // (`dashboardSince`, `src/queries/dashboard.ts`), so they are the same
+    // (`dashboardWindow`, `src/queries/dashboard.ts`), so they are the same
     // snapshot of the database and a turn whose call is missing is a broken
     // foreign key rather than a call that started between the two statements.
     // It is skipped rather than counted into a total it has no day for.
@@ -466,9 +585,65 @@ export function aggregate(
       collect(group.samples, turn);
     }
 
+    // `failed_leg IS NOT NULL` is the one test for a failed turn (trap 7);
+    // `interrupted` alone does not separate a barge-in from a mid-reply
+    // failure. Counted over turns with marks, the same population every other
+    // number on the screen stands on, so the share reads against `turns`.
+    if (turn.marks !== null && turn.failed_leg !== null) {
+      failedTurns += 1;
+      // A null stage under a set leg is a provider error (§3.1) — kept null
+      // here and named on screen, so the two are never one bucket.
+      const key = `${turn.failed_leg}\u0000${turn.failed_stage ?? ''}`;
+      const failure = failures.get(key);
+      if (failure === undefined) {
+        failures.set(key, { leg: turn.failed_leg, stage: turn.failed_stage, turns: 1 });
+      } else {
+        failure.turns += 1;
+      }
+    }
+
     // The reply never became audible: no `first_audio_out`, so neither headline
     // span exists and the turn is in no percentile at all.
     if (parseMarks(turn.marks).first_audio_out === undefined) outside.push(turn);
+  }
+
+  // The window's calls, read once for everything that is a fact about calls
+  // rather than about turns: the day split, the cost floor, and the two
+  // distributions. An unconsented call has no turn row and is in all of them.
+  const callDays = new Map<string, DashboardCallDay>();
+  const endReasons = new Map<string, number>();
+  const outcomes = new Map<string, number>();
+  let costFloorVnd: number | null = null;
+  let unpricedCalls = 0;
+  let notFinalized = 0;
+
+  for (const call of calls) {
+    const day = dayKey(call.started_at);
+    let bucket = callDays.get(day);
+    if (bucket === undefined) {
+      bucket = { day, consented: 0, notConsented: 0 };
+      callDays.set(day, bucket);
+    }
+    if (isConsentGranted(call.outcome)) bucket.consented += 1;
+    else bucket.notConsented += 1;
+
+    // Trap 3: `numeric` arrives as a string, an unparseable one is missing
+    // rather than 0 — a real 0 already means "nothing on this call could be
+    // priced", and adding a missing figure as 0 would hide that it is missing.
+    const cost = parseCostVnd(call.total_cost_vnd);
+    if (cost === null) unpricedCalls += 1;
+    else costFloorVnd = (costFloorVnd ?? 0) + cost;
+
+    // Trap 2: no `consent_record` row is a state of the call — in progress, or
+    // the process died — and never a refusal, so it sits beside both
+    // distributions rather than inside either.
+    if (call.outcome === null) notFinalized += 1;
+    else {
+      outcomes.set(call.outcome, (outcomes.get(call.outcome) ?? 0) + 1);
+      if (call.end_reason !== null) {
+        endReasons.set(call.end_reason, (endReasons.get(call.end_reason) ?? 0) + 1);
+      }
+    }
   }
 
   // Trap 1: an unconsented call has no `turn` rows, so every percentile above
@@ -491,12 +666,14 @@ export function aggregate(
   // Biggest sample first — the group a reading can actually be made from.
   rows.sort((a, b) => b.turns - a.turns || a.label.localeCompare(b.label));
 
+  const legs = legPercentiles(overall.legs);
+
   return {
     calls: calls.length,
     consentedCalls: consented,
     turns: overall.turns,
     turnsWithoutMarks: overall.turnsWithoutMarks,
-    legs: legPercentiles(overall.legs),
+    legs,
     perceived: percentiles(overall.perceived),
     pipeline: percentiles(overall.pipeline),
     byDay: fillDayGaps(
@@ -509,6 +686,23 @@ export function aggregate(
         }))
         .sort((a, b) => a.day.localeCompare(b.day)),
     ),
+    callsByDay: fillCallDayGaps(
+      [...callDays.values()].sort((a, b) => a.day.localeCompare(b.day)),
+    ),
+    costFloorVnd,
+    unpricedCalls,
+    endReasons: counted(endReasons),
+    notFinalized,
+    outcomes: counted(outcomes),
+    noRow: notFinalized,
+    turnFailures: [...failures.values()].sort(
+      (a, b) => b.turns - a.turns || a.leg.localeCompare(b.leg),
+    ),
+    failedTurns,
+    // The composition of a median reply: the four legs that tile
+    // `caller_perceived_ms` exactly (`src/latency.ts` PARTITION_LEGS), laid end
+    // to end. P50s do not add up to the P50 of the whole — said on the card.
+    medianReply: PARTITION_LEGS.map((leg) => ({ leg, p50: legs[leg].p50 })),
     groups: rows,
     differingKeys:
       grouping === 'config' ? differingKeys(rows.map((row) => row.snapshot)) : [],

@@ -1,8 +1,8 @@
+import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import type { ReactNode } from 'react';
-import { isKnownArtifactState, recordingAccess } from '@/artifacts';
+import { cache } from 'react';
+import { RECORDING_REASON, isKnownArtifactState, recordingAccess } from '@/artifacts';
 import {
-  CALL_STATE_CAVEAT,
   CALL_STATE_LABEL,
   CALL_STATE_TONE,
   callState,
@@ -11,58 +11,84 @@ import {
   failureLine,
   formatCount,
   formatDuration,
-  formatMs,
   formatNumber,
   formatWhen,
   isKnownConsentOutcome,
   isKnownEndReason,
-  isKnownFailedLeg,
-  isKnownFailedStage,
   isKnownTurnSource,
-  isOrdinaryEnding,
   isUuid,
+  maskPhone,
   parseCostVnd,
   shortSha,
   showCallerData,
 } from '@/calls';
 import { getConfig } from '@/config';
 import { parseSnapshot, renderValue } from '@/dashboard';
-import { TARGETS, endOfTurnRows, parseMarks, waterfallRows } from '@/latency';
+import { endOfTurnRows, headPairRows, parseMarks, waterfallRows } from '@/latency';
 import {
   bubbleView,
+  greetingSpan,
   recordingOffsetMs,
+  parseTurnParam,
+  turnBars,
   turnSpans,
+  type GreetingSpan,
+  type TurnBar,
   type TurnBubbleView,
   type TurnSpan,
 } from '@/playback';
 import { getCall, getTurns, type CallDetailRow, type TurnRow } from '@/queries/calls';
 import Badge from '@/ui/badge';
-import CallStateBlock from '@/ui/call-state';
 import Card from '@/ui/card';
-import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
-import Field from '@/ui/field';
 import PageHead from '@/ui/page-head';
 import Stat from '@/ui/stat';
 import Vocabulary from '@/ui/vocabulary';
+import CallCard from './_detail/call-card';
+import ConfigSnapshot from './_detail/config-snapshot';
+import ConsentCard from './_detail/consent-card';
+import TurnTable, { type TurnTableRow } from './_detail/turn-table';
 import PlaybackProvider from './playback-provider';
 import Player from './player';
 import Transcript from './transcript';
 import TurnWaterfall, { type TurnChartView } from './turn-waterfall';
-import Waterfall from './waterfall';
 
 // One call, as the database holds it right now.
 export const dynamic = 'force-dynamic';
 
-/** The grid every definition list on this screen uses. */
-const FIELDS = 'm-0 grid grid-cols-2 gap-4 md:grid-cols-4';
+/**
+ * One read per request, shared by the page and its `<title>`: Next renders
+ * `generateMetadata` and the page in the same request, and a second `getCall`
+ * would be a second round trip for the same row.
+ */
+const callOnce = cache(getCall);
 
-export default async function CallPage({ params }: { params: Promise<{ id: string }> }) {
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  if (!isUuid(id)) return { title: 'Call · Fonnus Admin' };
+  const call = await callOnce(id);
+  // The title is masked like the head (ADR 0008): it is read in a browser tab
+  // over someone's shoulder and pasted into chat with the screenshot.
+  const masked = call === null ? null : maskPhone(call.caller_phone_e164);
+  return { title: `${masked === null ? 'Call' : `Call from ${masked}`} · Fonnus Admin` };
+}
+
+export default async function CallPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
   // Checked before any query: a malformed id names no call, so no SQL runs.
   if (!isUuid(id)) notFound();
 
-  const call = await getCall(id);
+  const call = await callOnce(id);
   if (call === null) notFound();
 
   const turns = await getTurns(id);
@@ -73,14 +99,15 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
   const gate = config.consentGate;
   const showCaller = showCallerData(call.outcome, gate);
   const access = recordingAccess(call, config);
-  const stateLabel = CALL_STATE_LABEL[state];
-  const stateCaveat = CALL_STATE_CAVEAT[state];
-  const stateTone = CALL_STATE_TONE[state];
+  const snapshot = parseSnapshot(call.config_snapshot);
+  const selectedIdx = parseTurnParam((await searchParams).turn, turns);
 
   // The placement rules of `docs/upstream.md` §Artifacts, run once on the
   // server; the islands draw what this returns and re-derive nothing.
   const { placed, unplaced } = turnSpans(turns, call.recording_started_at);
-  const fallbackEndMs = axisFallbackMs(call, placed);
+  const greeting = greetingSpan(call.greeting_marks, call.recording_started_at);
+  const bars = turnBars(turns);
+  const fallbackEndMs = axisFallbackMs(call, placed, greeting);
 
   const chartTurns: TurnChartView[] = turns.map((turn) => {
     const marks = parseMarks(turn.marks);
@@ -88,10 +115,20 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
       idx: turn.idx,
       rows: waterfallRows(marks),
       tail: endOfTurnRows(marks),
+      head: headPairRows(marks),
       perceivedMs: turn.caller_perceived_ms,
       pipelineMs: turn.pipeline_ms,
       interrupted: turn.interrupted,
       reopened: turn.source === 'reopen',
+      failure: failureLine(turn.failed_leg, turn.failed_stage, turn.failed_after_ms),
+      llmModel: turn.llm_model,
+      tokensIn: turn.tokens_in,
+      tokensOut: turn.tokens_out,
+      tokensCached: turn.tokens_cached,
+      ttsChars: turn.tts_chars,
+      ttsBytes: turn.tts_bytes,
+      speechStartMs: turn.speech_start_ms,
+      speechEndMs: turn.speech_end_ms,
       // Decided on the stored value, not the parsed one: a `marks` object whose
       // every entry the parser refused is a pipeline write fault to surface,
       // not a turn that stamped nothing.
@@ -113,18 +150,54 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
     }),
   );
 
+  // The table's rows take the gate's decision from the same bubble views, so
+  // the transcript and the table can never disagree about what is withheld.
+  const tableRows: TurnTableRow[] = turns.map((turn, index) => {
+    const bubble = bubbleTurns[index];
+    return {
+      idx: turn.idx,
+      source: turn.source,
+      sourceKnown: turn.source === null || isKnownTurnSource(turn.source),
+      interrupted: turn.interrupted,
+      failure: failureLine(turn.failed_leg, turn.failed_stage, turn.failed_after_ms),
+      preview: preview(bubble?.callerText ?? null, turn.assistant_text),
+      callerWithheld: bubble?.callerWithheld ?? !showCaller,
+      withheldReason: bubble?.withheldReason ?? '',
+      withheldReasonKnown: bubble?.withheldReasonKnown ?? true,
+      withheldByState: bubble?.withheldByState ?? false,
+      tokensIn: turn.tokens_in,
+      tokensOut: turn.tokens_out,
+      ttsChars: turn.tts_chars,
+      ttsBytes: turn.tts_bytes,
+      perceivedMs: turn.caller_perceived_ms,
+      pipelineMs: turn.pipeline_ms,
+    };
+  });
+
+  const cost = parseCostVnd(call.total_cost_vnd);
+  const stateLabel = CALL_STATE_LABEL[state];
+  const stateTone = CALL_STATE_TONE[state];
+  const maskedPhone = maskPhone(call.caller_phone_e164);
+
   return (
     <>
       <PageHead
-        title={
-          call.caller_phone_e164 === null ? 'Call' : `Call from ${call.caller_phone_e164}`
-        }
+        // Trap 5 and ADR 0008: a null number is age or a call that never
+        // reached the column — "Call", never a blank — and a number that is on
+        // record is masked here and raw only in the Call card below.
+        title={maskedPhone === null ? 'Call' : `Call from ${maskedPhone}`}
         back={{ href: '/calls', label: 'Calls' }}
       >
-        {stateLabel === null || stateCaveat === null || stateTone === null ? null : (
-          // The long form, because the head has room for the reason and is the
-          // one place a reader meets the state before anything explains it.
-          <Badge tone={stateTone}>{`${stateLabel} — ${stateCaveat}`}</Badge>
+        {call.end_reason === null ? (
+          stateLabel === null || stateTone === null ? null : (
+            <Badge tone={stateTone}>{stateLabel}</Badge>
+          )
+        ) : (
+          <Vocabulary
+            value={call.end_reason}
+            known={isKnownEndReason(call.end_reason)}
+            tone={endReasonTone(call.end_reason)}
+          />
         )}
       </PageHead>
 
@@ -133,80 +206,79 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
         <span aria-hidden="true">·</span>
         <span>{formatDuration(call.started_at, call.ended_at)}</span>
         <span aria-hidden="true">·</span>
-        <Ending call={call} state={state} />
-        {call.caller_phone_e164 === null ? (
+        <span className="inline-flex items-center gap-2">
+          consent{' '}
+          {call.outcome === null ? (
+            // Trap 2: no consent row is a state of the call, never "no consent"
+            // — and the state's wording lives in `CALL_STATE_LABEL` alone.
+            <OutcomeText call={call} state={state} />
+          ) : (
+            <Vocabulary
+              value={call.outcome}
+              known={isKnownConsentOutcome(call.outcome)}
+              tone={consentOutcomeTone(call.outcome)}
+            />
+          )}
+        </span>
+        {/* The configured model and the image that answered, each omitted when
+            the snapshot lacks it. A turn's own `llm_model` can differ on a
+            fallback, which is why this is the snapshot's key and not a turn's. */}
+        <SnapshotFact snapshot={snapshot} name="OPENROUTER_MODEL" />
+        <SnapshotFact snapshot={snapshot} name="FONNUS_BUILD_SHA" label="build" short />
+        {/* `maskPhone` returns null only for a null column, so this is the
+            caller number the row never carried or the sweep took (trap 5). */}
+        {maskedPhone === null ? (
           <>
             <span aria-hidden="true">·</span>
-            {/* Trap 5: a null number may be the retention sweep's work, and the
-                head must not read as a call from nobody. */}
             <span>caller number not on record</span>
           </>
         ) : null}
       </div>
 
-      <Card>
-        <div className="grid grid-cols-2 gap-5 md:grid-cols-5">
-          <Stat label="Duration" value={formatDuration(call.started_at, call.ended_at)} />
-          <Stat
-            label="Turns on record"
-            value={formatCount(call.turn_count)}
-            caveat="turns written; an unconsented call has none"
+      {/* One playhead for the player, the axis, the waterfall, the transcript
+          and the turn table; everything inside is rendered here and handed down
+          as props, so no query result crosses the client boundary. */}
+      <PlaybackProvider initialSelectedIdx={selectedIdx}>
+        <Card title="The call" sub="One axis, two lanes: what was said, and how long each reply took">
+          <RecordingBlock
+            call={call}
+            state={state}
+            access={access}
+            placed={placed}
+            greeting={greeting}
+            bars={bars}
+            unplaced={unplaced}
+            fallbackEndMs={fallbackEndMs}
           />
-          <Stat
-            label="Answered → first audio"
-            value={
-              call.greeting_first_audio_ms === null
-                ? 'not measured'
-                : formatNumber(call.greeting_first_audio_ms)
-            }
-            {...(call.greeting_first_audio_ms === null ? {} : { unit: 'ms' })}
-            caveat="from the channel answer, not started_at — the media stream can open after the answer"
-          />
-          <Tile label="Consent outcome">
-            {call.outcome === null ? (
-              // Trap 2: no consent row is a state of the call, never "no consent".
-              <CallStateBlock state={state} />
-            ) : (
-              <Vocabulary
-                value={call.outcome}
-                known={isKnownConsentOutcome(call.outcome)}
-                tone={consentOutcomeTone(call.outcome)}
-              />
-            )}
-          </Tile>
-          <Tile label="End reason">
-            <Vocabulary
-              value={call.end_reason}
-              known={call.end_reason !== null && isKnownEndReason(call.end_reason)}
-              tone={call.end_reason === null ? undefined : endReasonTone(call.end_reason)}
+
+          <div className="grid grid-cols-2 gap-5 border-t border-border-hairline pt-4 md:grid-cols-4">
+            <Stat label="Duration" value={formatDuration(call.started_at, call.ended_at)} />
+            <Stat
+              label="Turns on record"
+              value={formatCount(call.turn_count)}
+              caveat="turns written; an unconsented call has none"
             />
-          </Tile>
-        </div>
-      </Card>
-
-      {/* One playhead for the player, the strip, the waterfall and the
-          transcript; everything inside is rendered here and handed down as
-          props, so no query result crosses the client boundary. */}
-      <PlaybackProvider>
-        <div className="grid gap-[18px] min-[1180px]:grid-cols-2">
-          <div className="flex min-w-0 flex-col gap-[18px]">
-            <Card title="Recording">
-              <RecordingBlock
-                call={call}
-                state={state}
-                access={access}
-                placed={placed}
-                unplaced={unplaced}
-                fallbackEndMs={fallbackEndMs}
-              />
-            </Card>
-
-            <Card title="Latency">
-              <TurnWaterfall turns={chartTurns} spans={placed} />
-            </Card>
+            <Stat
+              label="Answered → first audio"
+              value={
+                call.greeting_first_audio_ms === null
+                  ? 'not measured'
+                  : formatNumber(call.greeting_first_audio_ms)
+              }
+              {...(call.greeting_first_audio_ms === null ? {} : { unit: 'ms' })}
+              caveat="from the channel answer, not started_at"
+            />
+            <Stat
+              label="Cost floor"
+              value={cost === null ? 'unpriced' : formatNumber(cost)}
+              {...(cost === null ? {} : { unit: '₫' })}
+              caveat="a floor — a call on an unpriced model counts 0"
+            />
           </div>
+        </Card>
 
-          <Card title="Transcript">
+        <div className="grid gap-[18px] min-[1180px]:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+          <Card title="Transcript" sub="follows the playhead · a bubble seeks">
             {bubbleTurns.length === 0 ? (
               <EmptyState title="No turns on record.">
                 {showCaller ? (
@@ -226,138 +298,69 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
               <Transcript turns={bubbleTurns} spans={placed} />
             )}
           </Card>
+
+          <Card title="The selected turn">
+            <TurnWaterfall turns={chartTurns} spans={placed} />
+          </Card>
         </div>
-      </PlaybackProvider>
 
-      <details className="flex flex-col gap-[18px]">
-        <summary className="cursor-pointer font-display text-[17px] leading-[1.3] font-semibold text-text-heading">
-          Pipeline detail
-        </summary>
+        <details>
+          <summary className="cursor-pointer border-t border-border-hairline pt-3 font-display text-[17px] leading-[1.3] font-semibold text-text-heading">
+            Pipeline detail
+          </summary>
 
-        <div className="mt-[18px] flex flex-col gap-[18px]">
-          <Card title="Call">
-            <dl className={FIELDS}>
-              <Field label="Call id">
-                {/* The FreeSWITCH channel UUID, in the numeric face so the groups
-                    are countable and it wraps rather than widening the card. */}
-                <span className="font-num break-all">{call.id}</span>
-              </Field>
-              <Field label="DID">{call.did ?? '—'}</Field>
-              <Field label="Started">{formatWhen(call.started_at)}</Field>
-              <Field label="Ended">
-                {call.ended_at === null
-                  ? CALL_STATE_LABEL.in_progress
-                  : formatWhen(call.ended_at)}
-              </Field>
-              <Field label="STT model">{call.stt_model ?? 'not reported'}</Field>
-              <Field label="TTS model">{call.tts_model ?? 'not reported'}</Field>
-              <Field label="Cost">
-                {parseCostVnd(call.total_cost_vnd) === null
-                  ? 'unpriced'
-                  : `≥ ${formatNumber(parseCostVnd(call.total_cost_vnd) ?? 0)} VND`}
-                <Caveat>floor — unpriced models count 0</Caveat>
-              </Field>
-              <Field label="STT audio">{formatMs(call.stt_audio_ms)}</Field>
-              <Field label="TTS output">
-                {formatCount(call.tts_chars)} chars · {formatCount(call.tts_bytes)} bytes
-              </Field>
-              <Field label="Recording started">
-                {call.recording_started_at === null
-                  ? 'not on record'
-                  : formatWhen(call.recording_started_at)}
-                <Caveat>sample 0 of call.wav — the origin every offset is measured from</Caveat>
-              </Field>
-              <Field label="Disclosure completed">
-                {call.disclosure_completed_at === null
-                  ? 'not on record'
-                  : formatWhen(call.disclosure_completed_at)}
-              </Field>
-              <Field label="Artifact state">
-                <Vocabulary
-                  value={call.artifact_state}
-                  known={call.artifact_state !== null && isKnownArtifactState(call.artifact_state)}
-                />
-                {call.artifact_state === null ? (
-                  <Caveat>null — a row written before the pipeline&rsquo;s migration 0010</Caveat>
-                ) : null}
-              </Field>
-              <Field label="Artifact key prefix">
-                <span className="font-num break-all">{call.artifact_key_prefix ?? '—'}</span>
-                <Caveat>where the call&rsquo;s objects sit in the bucket</Caveat>
-              </Field>
-              <Field label="Artifact directory">
-                <span className="font-num break-all">{call.artifact_dir ?? '—'}</span>
-                <Caveat>path only — the directory may have been swept</Caveat>
-              </Field>
-            </dl>
-          </Card>
-
-          <Card
-            title="Config snapshot"
-            sub="the configuration the process booted with, written at call start"
-          >
-            <ConfigSnapshot value={call.config_snapshot} />
-          </Card>
-
-          <Card title="Consent">
-            {call.outcome === null ? (
-              <div className="flex flex-col items-start gap-1">
-                <CallStateBlock state={state} />
-              </div>
-            ) : (
-              <>
-                <dl className={FIELDS}>
-                  <Field label="Outcome">
-                    <Vocabulary
-                      value={call.outcome}
-                      known={isKnownConsentOutcome(call.outcome)}
-                      tone={consentOutcomeTone(call.outcome)}
-                    />
-                  </Field>
-                  <Field label="Mode">{call.consent_mode ?? '—'}</Field>
-                  <Field label="Disclosure completed">
-                    {call.consent_disclosure_completed_at === null
-                      ? 'not on record'
-                      : formatWhen(call.consent_disclosure_completed_at)}
-                  </Field>
-                  <Field label="Granted">
-                    {call.granted_at === null ? 'not on record' : formatWhen(call.granted_at)}
-                  </Field>
-                </dl>
-                {call.disclosure_text === null ? null : (
-                  <details className="text-[length:var(--size-ui)]">
-                    <summary className="cursor-pointer text-text-link">disclosure text</summary>
-                    <p className="mt-2 mb-0 whitespace-pre-wrap">{call.disclosure_text}</p>
-                  </details>
-                )}
-              </>
-            )}
-          </Card>
-
-          <h2 className="mt-2 font-display text-[17px] leading-[1.3] font-semibold text-text-heading">
-            Turns on record ({formatNumber(turns.length)})
-          </h2>
-          {turns.length === 0 ? (
-            <Card>
-              <EmptyState title="No turns on record." />
+          <div className="mt-[18px] flex flex-col gap-[18px]">
+            <Card
+              title={`Turns on record (${formatNumber(turns.length)})`}
+              sub="a row selects the turn above — one table, not one card per turn"
+            >
+              {tableRows.length === 0 ? (
+                <EmptyState title="No turns on record." />
+              ) : (
+                <TurnTable rows={tableRows} spans={placed} />
+              )}
             </Card>
-          ) : (
-            turns.map((turn) => <TurnCard key={turn.idx} turn={turn} />)
-          )}
-        </div>
-      </details>
+
+            <Card title="Call">
+              <CallCard call={call} />
+            </Card>
+
+            <Card
+              title="Config snapshot"
+              sub="the configuration the process booted with, written at call start"
+            >
+              <ConfigSnapshot value={call.config_snapshot} />
+            </Card>
+
+            <Card title="Consent">
+              <ConsentCard call={call} state={state} />
+            </Card>
+          </div>
+        </details>
+      </PlaybackProvider>
     </>
   );
 }
 
+/** The first words of a turn, caller then assistant, for the table's one line. */
+function preview(callerText: string | null, assistantText: string | null): string | null {
+  const parts = [callerText, assistantText].filter((text): text is string => text !== null);
+  return parts.length === 0 ? null : parts.join(' → ');
+}
+
 /**
- * The strip's axis before the audio reports its own length, and when there is
- * no player at all: the last turn's end, or the call's own length measured on
- * the recording clock, whichever is longer. Zero when neither is known — the
- * strip guards against dividing by it.
+ * The axis before the audio reports its own length, and when there is no player
+ * at all: the last turn's end, the greeting's end, or the call's own length
+ * measured on the recording clock, whichever is longest. Zero when none is
+ * known — the axis guards against dividing by it.
  */
-function axisFallbackMs(call: CallDetailRow, placed: TurnSpan[]): number {
+function axisFallbackMs(
+  call: CallDetailRow,
+  placed: TurnSpan[],
+  greeting: GreetingSpan | null,
+): number {
   const ends = placed.map((span) => span.endMs);
+  if (greeting !== null) ends.push(greeting.endMs);
   if (call.recording_started_at !== null && call.ended_at !== null) {
     ends.push(recordingOffsetMs(call.ended_at.getTime(), call.recording_started_at.getTime()));
   }
@@ -372,26 +375,37 @@ function hasNoMarksStored(turn: TurnRow): boolean {
   );
 }
 
-/** A tile of the overview strip whose value is a vocabulary word, not a number. */
-function Tile({ label, children }: { label: string; children: ReactNode }) {
+/**
+ * One fact from the snapshot in the lede, omitted entirely when the snapshot
+ * lacks it — a key the process had no value for is absent, never null (§3.4),
+ * and an absent key is not a fact to state.
+ */
+function SnapshotFact({
+  snapshot,
+  name,
+  label,
+  short = false,
+}: {
+  snapshot: Record<string, unknown> | null;
+  name: string;
+  label?: string;
+  short?: boolean;
+}) {
+  if (snapshot === null || !Object.hasOwn(snapshot, name)) return null;
+  const value = renderValue(snapshot[name]);
   return (
-    <div className="flex flex-col gap-1">
-      <div className="font-ui text-[length:var(--size-ui)] leading-[1.4] text-text-muted">
-        {label}
-      </div>
-      <div className="flex flex-col items-start gap-1">{children}</div>
-    </div>
+    <>
+      <span aria-hidden="true">·</span>
+      <span>
+        {label === undefined ? null : `${label} `}
+        <code title={value}>{short ? shortSha(value) : value}</code>
+      </span>
+    </>
   );
 }
 
 /** The consent outcome inline, with trap 2's state when there is no row. */
-function OutcomeText({
-  call,
-  state,
-}: {
-  call: CallDetailRow;
-  state: ReturnType<typeof callState>;
-}) {
+function OutcomeText({ call, state }: { call: CallDetailRow; state: ReturnType<typeof callState> }) {
   // A state with no label is `finalized`, which this branch cannot reach: a
   // null outcome is exactly what makes the state one of the other two.
   if (call.outcome === null) return <>{CALL_STATE_LABEL[state] ?? ''}</>;
@@ -399,64 +413,20 @@ function OutcomeText({
 }
 
 /**
- * How the call ended, in the lede — the list's rule (`src/app/calls/page.tsx`):
- * the ordinary ending (`granted` + `caller_hangup`) is said quietly, and every
- * exception wears the tone it has elsewhere. A default is said, not drawn.
- */
-function Ending({
-  call,
-  state,
-}: {
-  call: CallDetailRow;
-  state: ReturnType<typeof callState>;
-}) {
-  if (isOrdinaryEnding(call.outcome, call.end_reason)) {
-    return <span>caller_hangup — the caller hung up on a consented call</span>;
-  }
-
-  const stateTone = CALL_STATE_TONE[state];
-  const stateLabel = CALL_STATE_LABEL[state];
-  return (
-    <span className="inline-flex flex-wrap items-center gap-2">
-      {call.outcome === null ? (
-        // The inline lede takes the badge alone: `CallStateBlock` stacks the
-        // caveat under it, which this one-line row has no place for. The caveat
-        // is two tiles below, on the consent tile.
-        stateTone === null || stateLabel === null ? null : (
-          <Badge tone={stateTone}>{stateLabel}</Badge>
-        )
-      ) : (
-        <Vocabulary
-          value={call.outcome}
-          known={isKnownConsentOutcome(call.outcome)}
-          tone={consentOutcomeTone(call.outcome)}
-        />
-      )}
-      {call.end_reason === null ? (
-        state === 'finalized' ? (
-          <span>end reason not on record</span>
-        ) : null
-      ) : (
-        <Vocabulary
-          value={call.end_reason}
-          known={isKnownEndReason(call.end_reason)}
-          tone={endReasonTone(call.end_reason)}
-        />
-      )}
-    </span>
-  );
-}
-
-/**
  * The recording, in one of the five states of `recordingAccess` (ADR 0004).
- * Only `playable` renders an `<audio>`; every other state is said in a dashed
- * box, which means "no content" and never a control (§Look and feel).
+ * Only `playable` renders an `<audio>` and the two lanes — the lanes are the
+ * recording's axis, and without audio there is nothing to scrub. Every other
+ * state is said in a dashed box, which means "no content" and never a control
+ * (§Look and feel); the turn table below still reads, because timings are not
+ * caller speech.
  */
 function RecordingBlock({
   call,
   state,
   access,
   placed,
+  greeting,
+  bars,
   unplaced,
   fallbackEndMs,
 }: {
@@ -464,20 +434,22 @@ function RecordingBlock({
   state: ReturnType<typeof callState>;
   access: ReturnType<typeof recordingAccess>;
   placed: TurnSpan[];
+  greeting: GreetingSpan | null;
+  bars: TurnBar[];
   unplaced: number[];
   fallbackEndMs: number;
 }) {
   switch (access) {
     case 'not_configured':
       return (
-        <EmptyState title="Recording access not configured.">
+        <EmptyState title={`${RECORDING_REASON.not_configured}.`}>
           The <code>S3_*</code> group is unset (<code>.env.example</code>, ADR 0004), so no
-          call&rsquo;s recording can be reached from here.
+          call&rsquo;s recording can be reached from here. The rest of the page still renders.
         </EmptyState>
       );
     case 'not_archived':
       return (
-        <EmptyState title="Not archived yet.">
+        <EmptyState title={`${RECORDING_REASON.not_archived}.`}>
           <code>artifact_state</code>:{' '}
           <Vocabulary
             value={call.artifact_state}
@@ -489,7 +461,7 @@ function RecordingBlock({
       );
     case 'gone':
       return (
-        <EmptyState title="Recording gone (retention).">
+        <EmptyState title={`${RECORDING_REASON.gone}.`}>
           <code>artifact_state</code> is <code>expired</code> and the row carries no{' '}
           <code>artifact_key_prefix</code>: the disk copy was swept and the bucket copy went
           with it.
@@ -497,7 +469,7 @@ function RecordingBlock({
       );
     case 'withheld':
       return (
-        <EmptyState title="Recording withheld.">
+        <EmptyState title={`${RECORDING_REASON.withheld}.`}>
           {call.outcome === null ? (
             // Trap 2: no consent row is a state of the call, not a refusal —
             // the row is written in the finish transaction.
@@ -521,215 +493,11 @@ function RecordingBlock({
         <Player
           callId={call.id}
           spans={placed}
+          greeting={greeting}
+          bars={bars}
           unplaced={unplaced}
           fallbackEndMs={fallbackEndMs}
         />
       );
   }
-}
-
-/** A key the process had no value for is absent, never null (contract §3.4). */
-function identityValue(snapshot: Record<string, unknown>, key: string): string {
-  return Object.hasOwn(snapshot, key) ? renderValue(snapshot[key]) : 'not configured';
-}
-
-/**
- * A snapshot value in the key list. A scalar reads as one line; an object or an
- * array — `runtime`, `SPEECHMATICS_SOUNDS_LIKE`, the four term lists (§3.4) —
- * reads as indented JSON, because the whole point of the row is that the
- * operator can see which leaf changed.
- */
-function ConfigCell({ value }: { value: unknown }) {
-  const scalar = typeof value !== 'object' || value === null;
-  return (
-    <dd
-      className={`font-num text-[length:var(--size-eyebrow)] ${
-        scalar ? 'break-all' : 'whitespace-pre-wrap break-all'
-      }`}
-    >
-      {scalar ? renderValue(value) : JSON.stringify(value, null, 2)}
-    </dd>
-  );
-}
-
-/** The snapshot card's body: identity keys, then every other key it carries. */
-function ConfigSnapshot({ value }: { value: unknown }) {
-  // `parseSnapshot` is the column's one trust boundary (`src/dashboard.ts`), so
-  // the dashboard and this card agree on what counts as a snapshot at all.
-  const snapshot = parseSnapshot(value);
-  if (snapshot === null) {
-    return <EmptyState title="Not recorded.">The call predates config provenance.</EmptyState>;
-  }
-  // Each identity key stands on its own: a snapshot that carries no
-  // FONNUS_BUILD_SHA still says which providers and environment ran the call,
-  // and the missing key reads as "not configured" like any other, never as a
-  // reason to hide the rest (docs/upstream.md: a snapshot is never dropped).
-  const buildSha = identityValue(snapshot, 'FONNUS_BUILD_SHA');
-  const identityKeys = ['FONNUS_BUILD_SHA', 'PROVIDERS', 'FONNUS_ENV'];
-  const otherKeys = Object.keys(snapshot)
-    .filter((key) => !identityKeys.includes(key))
-    .sort();
-
-  return (
-    <>
-      <dl className={`${FIELDS} md:grid-cols-3`}>
-        <Field label="FONNUS_BUILD_SHA">
-          <span className="font-num" title={buildSha}>
-            {shortSha(buildSha)}
-          </span>
-        </Field>
-        <Field label="PROVIDERS">{identityValue(snapshot, 'PROVIDERS')}</Field>
-        <Field label="FONNUS_ENV">{identityValue(snapshot, 'FONNUS_ENV')}</Field>
-      </dl>
-      <details className="text-[length:var(--size-ui)]">
-        <summary className="cursor-pointer text-text-link">
-          {formatNumber(otherKeys.length)} more keys
-        </summary>
-        <dl className="mt-3 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-1">
-          {otherKeys.map((key) => (
-            <div key={key} className="contents">
-              <dt className="font-num text-[length:var(--size-eyebrow)] text-text-muted">
-                {key}
-              </dt>
-              <ConfigCell value={snapshot[key]} />
-            </div>
-          ))}
-        </dl>
-      </details>
-    </>
-  );
-}
-
-/**
- * The research view of one turn: everything the transcript above leaves out.
- * The spoken text itself is not repeated here — it is the transcript's, and a
- * second copy would be a second place the consent gate has to be right.
- */
-function TurnCard({ turn }: { turn: TurnRow }) {
-  const marks = parseMarks(turn.marks);
-  const rows = waterfallRows(marks);
-  const tail = endOfTurnRows(marks);
-  // Trap 7: `failed_leg` is the test for "failed" — `interrupted` alone does
-  // not tell a barge-in from a reply that died while already audible.
-  const failure = failureLine(turn.failed_leg, turn.failed_stage, turn.failed_after_ms);
-  const noMarksStored = hasNoMarksStored(turn);
-  const perceived = turn.caller_perceived_ms;
-  const pipeline = turn.pipeline_ms;
-
-  return (
-    <Card
-      title={`Turn ${formatNumber(turn.idx)}`}
-      level={3}
-      actions={
-        <div className="flex flex-wrap items-center gap-2">
-          {/* `turn.source` is plain text, not a badge: it names how the turn was
-              cut, which is not a state anyone acts on. */}
-          {turn.source === null ? null : (
-            <span className="text-[length:var(--size-ui)] text-text-muted">
-              <Vocabulary value={turn.source} known={isKnownTurnSource(turn.source)} />
-            </span>
-          )}
-          {turn.interrupted ? <Badge tone="terracotta">interrupted</Badge> : null}
-          {failure === null ? null : (
-            <Badge tone="warning" title={failure}>
-              failed
-            </Badge>
-          )}
-        </div>
-      }
-    >
-      {failure === null || turn.failed_leg === null ? null : (
-        <div>
-          {/* The sentence is `failureLine`'s, with the two vocabulary values
-              rendered by `Vocabulary` so one the contract does not name is
-              flagged rather than read as normal (contract §4). */}
-          <p className="mb-0">
-            Failed on{' '}
-            <Vocabulary value={turn.failed_leg} known={isKnownFailedLeg(turn.failed_leg)} />
-            {turn.failed_stage === null ? (
-              ' — provider error, no deadline stage'
-            ) : (
-              <>
-                {' at '}
-                <Vocabulary
-                  value={turn.failed_stage}
-                  known={isKnownFailedStage(turn.failed_stage)}
-                />
-              </>
-            )}
-            {turn.failed_after_ms === null
-              ? '; elapsed not measured (no endpoint_decision mark)'
-              : ` after ${formatMs(turn.failed_after_ms)}`}
-          </p>
-          <Caveat>
-            elapsed since <code>endpoint_decision</code>, not the bound — the bound is{' '}
-            <code>config_snapshot.LLM_TTFB_MS</code> and its siblings
-          </Caveat>
-        </div>
-      )}
-
-      <dl className={FIELDS}>
-        <Field label="LLM model">{turn.llm_model ?? 'not reported'}</Field>
-        <Field label="Tokens">
-          {formatCount(turn.tokens_in)} in · {formatCount(turn.tokens_out)} out
-          <Caveat>of which cached: {formatCount(turn.tokens_cached)}</Caveat>
-        </Field>
-        <Field label="TTS output">
-          {formatCount(turn.tts_chars)} chars · {formatCount(turn.tts_bytes)} bytes
-        </Field>
-        <Field label="Caller audio">
-          {turn.speech_start_ms === null || turn.speech_end_ms === null
-            ? 'not reported'
-            : `${formatMs(turn.speech_start_ms)} → ${formatMs(turn.speech_end_ms)}`}
-          <Caveat>offset into the recording</Caveat>
-        </Field>
-      </dl>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <div>
-          <div className="text-[length:var(--size-eyebrow)] text-text-muted">
-            caller-perceived silence (<code>speech_end</code> → <code>first_audio_out</code>)
-          </div>
-          <div className="mt-0.5 font-num tabular-nums">{formatMs(perceived)}</div>
-          <Caveat>
-            target P95 &lt; {formatNumber(TARGETS.perceivedP95AlarmMs)} ms (aspirational)
-            {perceived !== null && perceived > TARGETS.perceivedP95AlarmMs
-              ? ' · over the P95 target'
-              : ''}
-          </Caveat>
-        </div>
-        <div>
-          <div className="text-[length:var(--size-eyebrow)] text-text-muted">
-            pipeline (<code>endpoint_decision</code> → <code>first_audio_out</code>)
-          </div>
-          <div className="mt-0.5 font-num tabular-nums">{formatMs(pipeline)}</div>
-          <Caveat>
-            target P95 &lt; {formatNumber(TARGETS.pipelineP95Ms)} ms
-            {pipeline !== null && pipeline > TARGETS.pipelineP95Ms ? ' · over the P95 target' : ''}
-          </Caveat>
-        </div>
-      </div>
-
-      {noMarksStored ? (
-        <EmptyState title="No marks recorded." />
-      ) : Object.keys(marks).length === 0 ? (
-        <EmptyState title="Marks recorded but none readable.">
-          No key of contract §3.2 carries a number.
-        </EmptyState>
-      ) : (
-        <>
-          <Waterfall rows={rows} tail={tail} />
-          {turn.interrupted ? (
-            <Caveat>
-              <code>playback_end</code> is the last lull before the barge-in, not the end of the
-              reply
-            </Caveat>
-          ) : null}
-          {turn.source === 'reopen' ? (
-            <Caveat>head marks are the first generation&rsquo;s, end-of-turn marks the last&rsquo;s</Caveat>
-          ) : null}
-        </>
-      )}
-    </Card>
-  );
 }

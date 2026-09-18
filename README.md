@@ -1,14 +1,16 @@
 # Fonnus-Admin
 
-Admin console for the Fonnus voice pipeline (`../Fonnus`). Read-only: it shows calls,
-transcripts, per-leg latency and cost from the pipeline's Postgres. What it is and what
+Admin console for the Fonnus voice pipeline (`../Fonnus`). It shows calls, transcripts,
+per-leg latency and cost from the pipeline's Postgres, and writes back only what the
+pipeline's read contract allows: a configuration edit and an annotation on a call, each
+under the account that logged in (`docs/adr/0007-write-posture-and-account.md`). What it is and what
 it must never do: `CONTEXT.md`. Working here with Claude Code: `CLAUDE.md`.
 
 ## Commands
 
 ```bash
 pnpm install
-pnpm dev          # http://localhost:3000 — `/calls` the call list, `/calls/<id>` one call, `/dashboard` the latency dashboard
+pnpm dev          # http://localhost:3000 — `/` the overview, `/calls` the call list, `/calls/<id>` one call (`/dashboard` redirects to `/`)
 pnpm build        # needs no database; does need egress to fonts.googleapis.com once (next/font downloads the three faces at build time)
 pnpm start        # the built app
 pnpm typecheck
@@ -26,7 +28,7 @@ Three answers, and only three:
 
 | Answer | Means |
 |---|---|
-| `200 {"role":"console","status":"ok"}` | connected, and as the read-only role |
+| `200 {"role":"console","status":"ok"}` | connected, and as the read-only role; the body's `editor` object says the same for `EDITOR_DATABASE_URL` (`{"status":"not configured"}` when unset) and never changes the HTTP status |
 | `503 {"role":"<other>","status":"degraded"}` | connected as some other role — the wrong credential is in `.env` |
 | `503 {"error":"<message>","status":"error"}` | no `DATABASE_URL`, or the database refused / timed out |
 
@@ -48,8 +50,11 @@ pnpm install
 pnpm dev                  # http://localhost:3000
 ```
 
-The `console` password is the one set on the box per `../Fonnus/docs/runbook.md` §9. It
-and the bucket key below are the only credentials this repo holds. As of 2026-09-08 that step has not been run: the role
+The `console` password is the one set on the box per `../Fonnus/docs/runbook.md` §9. It,
+the optional `console_editor` password (`EDITOR_DATABASE_URL`, needed only to edit the
+runtime configuration or annotate a call) and the bucket key below are the only
+credentials this repo holds. Locally there is no reverse proxy, so no request carries an
+account and every write surface refuses; the footer reads "no account". As of 2026-09-08 that step has not been run: the role
 exists but cannot log in, so the tunnel path cannot connect either until the operator runs
 §9 — which is step 1.5 of the box's one-time setup (`docs/deploy.md`).
 

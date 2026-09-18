@@ -23,7 +23,7 @@ import {
   type CallState,
 } from './calls';
 import type { ConsentGate } from './config';
-import { parseMarks, spanOf, type Stage } from './latency';
+import { TARGETS, parseMarks, spanOf, type Stage } from './latency';
 import type { TurnRow } from './queries/calls';
 
 /**
@@ -273,4 +273,125 @@ export function bubbleView(
     source: turn.source,
     sourceKnown: turn.source === null || isKnownTurnSource(turn.source),
   };
+}
+
+/**
+ * The greeting's own marks (`../Fonnus/docs/read-contract.md` §3.5): `answered`
+ * plus the reply-side keys of `turn.marks`. The greeting has no `turn` row —
+ * there is no caller utterance and no LLM call — so none of the caller-side or
+ * `llm_*` keys can appear, and a key never reached is absent.
+ */
+const GREETING_KEYS = [
+  'answered',
+  'tts_first_byte',
+  'tts_last_byte',
+  'first_audio_out',
+  'playback_start',
+  'playback_end',
+] as const;
+
+/** Where the greeting sits on the recording's axis, in ms from sample 0. */
+export interface GreetingSpan {
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * The greeting's block on the upper lane of "The call" (`docs/upstream.md`
+ * §Call detail, the `greeting_marks` row): from `answered` to `playback_end`,
+ * else to the latest key present by value, else `answered` itself — a hairline,
+ * which is what a caller who hung up during the disclosure leaves behind.
+ *
+ * Null when the column carries no readable `answered` (a row written before the
+ * pipeline's migration 0008, a call that never finalized, one terminated before
+ * the greeting was dispatched) or when the call has no `recording_started_at`
+ * to place it against — the same origin rule every turn block obeys. The
+ * greeting has no `pipeline_ms` of its own, so the lower lane draws no bar
+ * under it.
+ */
+export function greetingSpan(
+  marks: Record<string, number> | null,
+  recordingStartedAt: Date | null,
+): GreetingSpan | null {
+  if (marks === null || recordingStartedAt === null) return null;
+  // The column is jsonb: the same trust boundary `parseMarks` is for a turn's,
+  // over the greeting's own key list.
+  const readable: Partial<Record<(typeof GREETING_KEYS)[number], number>> = {};
+  for (const key of GREETING_KEYS) {
+    const at = marks[key];
+    if (typeof at === 'number' && Number.isFinite(at)) readable[key] = at;
+  }
+  const answered = readable.answered;
+  if (answered === undefined) return null;
+
+  let end = readable.playback_end;
+  if (end === undefined) {
+    for (const at of Object.values(readable)) {
+      if (end === undefined || at > end) end = at;
+    }
+  }
+  const origin = recordingStartedAt.getTime();
+  const startMs = recordingOffsetMs(answered, origin);
+  const endMs = recordingOffsetMs(end ?? answered, origin);
+  // A `playback_end` stamped before `answered` is a clock fault, not a block
+  // that runs backwards (`turnSpans` collapses the same way).
+  return { startMs, endMs: endMs < startMs ? startMs : endMs };
+}
+
+/** One turn's bar on the lower lane of "The call". */
+export interface TurnBar {
+  idx: number;
+  /** `turn.pipeline_ms` as stored — read only when `measured` is true. */
+  pipelineMs: number | null;
+  failed: boolean;
+  interrupted: boolean;
+  /**
+   * False when the turn has no `pipeline_ms` to draw: a reply that never became
+   * audible stamps no `first_audio_out` and the column is null, and a negative
+   * value is the clock fault of contract §3.2. Both are "not measured" — a
+   * dashed outline, never a bar of height zero, which would read as an instant
+   * reply (`docs/upstream.md` §Call detail, the `turn` row).
+   */
+  measured: boolean;
+}
+
+/** One bar per turn, in `idx` order — the lower lane's whole input. */
+export function turnBars(turns: TurnRow[]): TurnBar[] {
+  return turns.map((turn) => ({
+    idx: turn.idx,
+    pipelineMs: turn.pipeline_ms,
+    failed: turn.failed_leg !== null,
+    interrupted: turn.interrupted,
+    measured: turn.pipeline_ms !== null && turn.pipeline_ms >= 0,
+  }));
+}
+
+/**
+ * The top of the lower lane's scale: the target always fits, so the dashed
+ * target line is on the plot even on a call whose every turn beat it, and a
+ * turn that missed it is read as a bar above that line rather than as a bar.
+ */
+export function barScaleMs(bars: TurnBar[]): number {
+  let max: number = TARGETS.pipelineP95Ms;
+  for (const bar of bars) {
+    if (bar.measured && bar.pipelineMs !== null && bar.pipelineMs > max) max = bar.pipelineMs;
+  }
+  return max;
+}
+
+/**
+ * `?turn=<idx>` — the turn a link from the Overview or the Calls list opens on
+ * (ADR 0006: the URL carries `turn` and nothing else). Anything that is not the
+ * `idx` of a turn this call has selects nothing, so the screen opens on its own
+ * first turn rather than on an empty selection: a repeated key (Next hands the
+ * value as an array), a word, a sign, and an `idx` the call never wrote — the
+ * link may name a turn of another call, or one the retention sweep has taken.
+ */
+export function parseTurnParam(
+  raw: string | string[] | undefined,
+  turns: Array<{ idx: number }>,
+): number | null {
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  const idx = Number(raw);
+  return turns.some((turn) => turn.idx === idx) ? idx : null;
 }

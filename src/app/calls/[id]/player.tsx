@@ -15,15 +15,15 @@
  * The transport is the Web-UI's "hear a call" pattern
  * (../Fonnus-Web-UI/src/components/sections/CallDemoPlayer.tsx): a 46 px
  * terracotta disc, the clock in the numeric face, and the progress bar — here
- * the call strip, because a waveform cannot be drawn from bytes the browser
- * will not hand over.
+ * the two lanes of "The call", because a waveform cannot be drawn from bytes
+ * the browser will not hand over.
  */
 
 import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { formatClock } from '@/calls';
-import type { TurnSpan } from '@/playback';
+import type { GreetingSpan, TurnBar, TurnSpan } from '@/playback';
 import Icon from '@/ui/icon';
-import CallStrip from './call-strip';
+import CallAxis from './call-axis';
 import { usePlayback } from './playback-provider';
 
 /**
@@ -77,11 +77,15 @@ function mediaErrorLine(error: MediaError | null): string {
 export default function Player({
   callId,
   spans,
+  greeting,
+  bars,
   unplaced,
   fallbackEndMs,
 }: {
   callId: string;
   spans: TurnSpan[];
+  greeting: GreetingSpan | null;
+  bars: TurnBar[];
   unplaced: number[];
   fallbackEndMs: number;
 }) {
@@ -184,7 +188,7 @@ export default function Player({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3.5">
+      <div className="flex items-start gap-3.5">
         <button
           type="button"
           onClick={toggle}
@@ -197,12 +201,26 @@ export default function Player({
         >
           <Icon name={playing ? 'pause' : 'play'} size={18} />
         </button>
-        <span className="font-num text-[length:var(--size-body-sm)] tabular-nums">
-          {formatClock(playheadMs)} / {formatClock(axisMs)}
-        </span>
+        {/* The clock beside the disc, as the artboard sets it: where the
+            recording is, over its whole length. */}
+        <div className="w-[78px] shrink-0">
+          <div className="font-num text-[17px] leading-[1.2] font-semibold tabular-nums">
+            {formatClock(playheadMs)}
+          </div>
+          <div className="font-num text-[length:var(--size-eyebrow)] text-text-muted tabular-nums">
+            of {formatClock(axisMs)}
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <CallAxis
+            spans={spans}
+            greeting={greeting}
+            bars={bars}
+            unplaced={unplaced}
+            fallbackEndMs={fallbackEndMs}
+          />
+        </div>
       </div>
-
-      <CallStrip spans={spans} unplaced={unplaced} fallbackEndMs={fallbackEndMs} />
 
       {error === null ? null : (
         <p className="mb-0 text-[length:var(--size-ui)] text-error">{error}</p>

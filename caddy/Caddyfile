@@ -33,5 +33,13 @@
 		format json
 	}
 
-	reverse_proxy admin:3000
+	# X-Console-Account is the account behind every write the console makes: the
+	# name basic_auth just authenticated, set (not appended) so a client cannot
+	# smuggle one past Caddy (ADR 0007). Authorization is dropped on the way in —
+	# the app has no use for the password, and a process that never sees it
+	# cannot log it.
+	reverse_proxy admin:3000 {
+		header_up X-Console-Account {http.auth.user.id}
+		header_up -Authorization
+	}
 }

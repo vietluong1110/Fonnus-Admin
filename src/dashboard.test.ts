@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_GROUPING,
   DEFAULT_SINCE,
   MAX_WINDOW_DAYS,
   aggregate,
   dayKey,
+  dayLabel,
   differingKeys,
   groupKey,
   parseGroup,
@@ -86,6 +88,13 @@ describe('parseSince — copied from ../Fonnus/tools/report-calls.ts', () => {
   });
 });
 
+describe('dayLabel', () => {
+  it('writes a day key the way the charts label it', () => {
+    expect(dayLabel('2026-09-05')).toBe('5/9');
+    expect(dayLabel('2026-12-31')).toBe('31/12');
+  });
+});
+
 describe('dayKey', () => {
   it('buckets in Asia/Ho_Chi_Minh, never the process zone', () => {
     // 23:30 UTC is 06:30 the next morning in +07.
@@ -102,6 +111,9 @@ function call(over: Partial<DashboardCall> = {}): DashboardCall {
   return {
     id: 'call-1',
     started_at: new Date('2026-09-06T02:00:00Z'),
+    ended_at: new Date('2026-09-06T02:03:00Z'),
+    end_reason: 'caller_hangup',
+    total_cost_vnd: '9240.0000',
     stt_model: 'nova-3',
     tts_model: 'sonic-2',
     config_snapshot: SNAPSHOT_A,
@@ -128,12 +140,18 @@ function turn(over: Partial<DashboardTurn> = {}): DashboardTurn {
 }
 
 describe('grouping', () => {
-  it('falls back to no grouping for anything the list does not name', () => {
-    expect(parseGroup(undefined)).toBe('none');
-    expect(parseGroup('models')).toBe('none');
-    expect(parseGroup('key:')).toBe('none');
+  it('falls back to the default grouping for anything the list does not name', () => {
+    // ADR 0009 decision 4: the screen opens grouped by the model, the change
+    // the hypothesis loop makes most often.
+    expect(DEFAULT_GROUPING).toBe('key:OPENROUTER_MODEL');
+    expect(parseGroup(undefined)).toBe('key:OPENROUTER_MODEL');
+    expect(parseGroup('models')).toBe('key:OPENROUTER_MODEL');
+    expect(parseGroup('key:')).toBe('key:OPENROUTER_MODEL');
+    expect(parseGroup('none')).toBe('none');
     expect(parseGroup('config')).toBe('config');
     expect(parseGroup('key:TTS_FLUSH_MS')).toBe('key:TTS_FLUSH_MS');
+    // The one dotted path the vocabulary allows (ADR 0009 decision 2).
+    expect(parseGroup('key:runtime.version')).toBe('key:runtime.version');
   });
 
   it('groups a null snapshot as unknown rather than dropping it', () => {
@@ -198,8 +216,52 @@ describe('grouping', () => {
     );
   });
 
-  it('names runtime as the key two nested configurations differ on', () => {
-    expect(differingKeys([NESTED_A, NESTED_B])).toEqual(['runtime']);
+  it('never names runtime itself as a column, whatever differs inside it', () => {
+    // ADR 0009 decision 1: the cell would hold a 54-leaf document, and every
+    // leaf a console edit changes already surfaces as a flat-key difference.
+    // Here the two rows carry one version, so there is no column at all.
+    expect(differingKeys([NESTED_A, NESTED_B])).toEqual([]);
+  });
+
+  it('adds the derived runtime.version column only when the version differs', () => {
+    const later = { ...NESTED_A, runtime: { version: 8, config: {} } };
+    expect(differingKeys([NESTED_A, later])).toEqual(['runtime.version']);
+    // A call on boot configuration carries no `runtime` at all, which is a
+    // difference from one that ran under a row (§3.4).
+    const boot = { FONNUS_BUILD_SHA: NESTED_A.FONNUS_BUILD_SHA, TTS_FLUSH_MS: 120 };
+    expect(differingKeys([NESTED_A, boot])).toEqual(['runtime.version']);
+    expect(snapshotValue(NESTED_A, 'runtime.version')).toBe('7');
+    expect(snapshotValue(boot, 'runtime.version')).toBe('absent');
+  });
+
+  it('groups by the runtime_config row the call ran under, unknown on boot config', () => {
+    expect(groupKey(call({ config_snapshot: NESTED_A }), turn(), 'key:runtime.version')).toBe('7');
+    expect(
+      groupKey(call({ config_snapshot: { TTS_FLUSH_MS: 120 } }), turn(), 'key:runtime.version'),
+    ).toBe('unknown');
+    expect(
+      groupKey(call({ config_snapshot: { runtime: { config: {} } } }), turn(), 'key:runtime.version'),
+    ).toBe('unknown');
+  });
+
+  it('reads a renamed key under either spelling, so one deploy is one group', () => {
+    // Contract §3.4's COALESCE: rows written before 2026-09-17 carry `STT_*`,
+    // rows after it `DEEPGRAM_*`, and the two are one setting (ADR 0009).
+    const before = call({ config_snapshot: { STT_ENDPOINTING_MS: 300 } });
+    const after = call({ config_snapshot: { DEEPGRAM_ENDPOINTING_MS: 300 } });
+    for (const grouping of [
+      'key:DEEPGRAM_ENDPOINTING_MS',
+      'key:STT_ENDPOINTING_MS',
+    ] as const) {
+      expect(groupKey(before, turn(), grouping)).toBe('300');
+      expect(groupKey(after, turn(), grouping)).toBe('300');
+    }
+    // And the column carries the new name, once.
+    expect(
+      differingKeys([{ STT_ENDPOINTING_MS: 300 }, { DEEPGRAM_ENDPOINTING_MS: 900 }]),
+    ).toEqual(['DEEPGRAM_ENDPOINTING_MS']);
+    expect(differingKeys([{ STT_TURN_TRIGGER: 'a' }, { DEEPGRAM_TURN_TRIGGER: 'a' }])).toEqual([]);
+    expect(snapshotValue({ STT_UTTERANCE_END_MS: 1000 }, 'DEEPGRAM_UTTERANCE_END_MS')).toBe('1000');
   });
 
   it('does not care what order Postgres handed the snapshot keys over in', () => {
@@ -405,5 +467,105 @@ describe('aggregate', () => {
     expect(d.groups).toHaveLength(1);
     expect(d.groups[0]?.key).toBe('openrouter/some-model');
     expect(d.groups[0]?.calls).toBe(2);
+  });
+
+  it('splits the calls of each day by consent and keeps an empty day at zero', () => {
+    // c1 on the 5th (granted), c3 on the 6th (hung up before consent), c2 at
+    // 23:30 UTC on the 6th, which is the 7th in +07 (granted). Unlike the P95
+    // chart, a day with no call is a zero: nobody rang is a measurement.
+    const d = aggregate(calls, turns, 'none');
+    expect(d.callsByDay).toEqual([
+      { day: '2026-09-05', consented: 1, notConsented: 0 },
+      { day: '2026-09-06', consented: 0, notConsented: 1 },
+      { day: '2026-09-07', consented: 1, notConsented: 0 },
+    ]);
+    const gapped = aggregate(
+      [
+        call({ id: 'a', started_at: new Date('2026-09-05T02:00:00Z') }),
+        call({ id: 'b', started_at: new Date('2026-09-07T02:00:00Z') }),
+      ],
+      [],
+      'none',
+    );
+    expect(gapped.callsByDay[1]).toEqual({ day: '2026-09-06', consented: 0, notConsented: 0 });
+  });
+
+  it('sums the cost as a floor and counts the calls it could not price', () => {
+    // Trap 3: `numeric` arrives as a string; an unparseable one is missing,
+    // never 0, and the count of them travels with the number on screen.
+    const priced = [
+      call({ id: 'a', total_cost_vnd: '9240.0000' }),
+      call({ id: 'b', total_cost_vnd: '760.5000' }),
+      call({ id: 'c', total_cost_vnd: null }),
+      call({ id: 'd', total_cost_vnd: 'n/a' }),
+    ];
+    const d = aggregate(priced, [], 'none');
+    expect(d.costFloorVnd).toBe(10_000.5);
+    expect(d.unpricedCalls).toBe(2);
+    // Not one parseable figure is "no cost on record", not a zero cost.
+    expect(aggregate([call({ total_cost_vnd: null })], [], 'none').costFloorVnd).toBeNull();
+  });
+
+  it('counts the end reasons and the outcomes, with not finalized beside them', () => {
+    // Trap 2: a call with no consent row is a state of the call — in progress,
+    // or the finish transaction failed — and is never a refusal, so it is in
+    // neither distribution and is counted apart.
+    const mixed = [
+      call({ id: 'a', end_reason: 'caller_hangup', outcome: 'granted' }),
+      call({ id: 'b', end_reason: 'caller_hangup', outcome: 'granted' }),
+      call({ id: 'c', end_reason: 'max_duration', outcome: 'hung_up_before_consent' }),
+      call({ id: 'd', end_reason: null, ended_at: null, outcome: null }),
+    ];
+    const d = aggregate(mixed, [], 'none');
+    expect(d.endReasons).toEqual([
+      { value: 'caller_hangup', calls: 2 },
+      { value: 'max_duration', calls: 1 },
+    ]);
+    expect(d.outcomes).toEqual([
+      { value: 'granted', calls: 2 },
+      { value: 'hung_up_before_consent', calls: 1 },
+    ]);
+    expect(d.notFinalized).toBe(1);
+    expect(d.noRow).toBe(1);
+  });
+
+  it('counts turn failures by leg and stage, keeping a provider error apart', () => {
+    // Trap 7: `failed_leg IS NOT NULL` is the one test, and a null stage under
+    // a set leg is a provider error — a bucket of its own, never folded into
+    // the deadline stages.
+    const failing = [
+      turn({ call_id: 'c1', idx: 1, failed_leg: 'llm', failed_stage: 'ttfb' }),
+      turn({ call_id: 'c1', idx: 2, failed_leg: 'llm', failed_stage: 'ttfb' }),
+      turn({ call_id: 'c1', idx: 3, failed_leg: 'llm', failed_stage: null }),
+      turn({ call_id: 'c1', idx: 4, failed_leg: 'tts', failed_stage: 'total' }),
+      turn({ call_id: 'c1', idx: 5 }),
+      // No marks at all: in no number on the screen, this one included.
+      turn({ call_id: 'c1', idx: 6, marks: null, failed_leg: 'tts', failed_stage: 'ttfb' }),
+    ];
+    const d = aggregate([call({ id: 'c1' })], failing, 'none');
+    expect(d.failedTurns).toBe(4);
+    expect(d.turnFailures).toEqual([
+      { leg: 'llm', stage: 'ttfb', turns: 2 },
+      { leg: 'llm', stage: null, turns: 1 },
+      { leg: 'tts', stage: 'total', turns: 1 },
+    ]);
+  });
+
+  it('lays the four partition legs out as the composition of a median reply', () => {
+    const d = aggregate(calls, turns, 'none');
+    expect(d.medianReply.map((leg) => leg.leg)).toEqual([
+      'endpoint_wait',
+      'llm_ttft',
+      'tts_ttfb',
+      'send',
+    ]);
+    expect(d.medianReply).toEqual([
+      { leg: 'endpoint_wait', p50: d.legs.endpoint_wait.p50 },
+      { leg: 'llm_ttft', p50: d.legs.llm_ttft.p50 },
+      { leg: 'tts_ttfb', p50: d.legs.tts_ttfb.p50 },
+      { leg: 'send', p50: d.legs.send.p50 },
+    ]);
+    // A leg no turn stamped both marks of has no P50 — never a zero.
+    expect(aggregate(calls, [], 'none').medianReply.every((leg) => leg.p50 === null)).toBe(true);
   });
 });

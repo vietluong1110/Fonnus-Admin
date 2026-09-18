@@ -1,6 +1,6 @@
 # ADR 0002: A public console on the phone box
 
-**Status:** accepted · **Date:** 2026-09-08 (proposed 2026-09-06; accepted when PLAN row A3 shipped)
+**Status:** accepted · **Date:** 2026-09-08 (proposed 2026-09-06; accepted when PLAN row A3 shipped) · Amended 2026-09-18 by ADR 0007: point 3 now reads "the role every screen reads through is read-only"; a second, insert-only role and the account header Caddy sets are that ADR's
 
 ## Decision
 

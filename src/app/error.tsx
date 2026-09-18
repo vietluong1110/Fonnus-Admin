@@ -14,9 +14,9 @@ import PageHead from '@/ui/page-head';
 export default function Error({ reset }: { error: Error; reset: () => void }) {
   return (
     <>
-      <PageHead title="Latency dashboard" />
+      <PageHead title="Overview" />
       <Card>
-        <p className="mb-0">The dashboard could not be read.</p>
+        <p className="mb-0">The overview could not be read.</p>
         <p className="mb-0 text-[length:var(--size-ui)] text-text-muted">
           The console reads the pipeline&apos;s Postgres as the role <code>console</code>. Check
           that the connection is up; if it is, try a shorter window — every turn in the window

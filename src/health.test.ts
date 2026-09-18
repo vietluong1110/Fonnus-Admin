@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { healthBody } from './health';
+import { EXPECTED_EDITOR_ROLE, healthBody } from './health';
 
 describe('healthBody', () => {
   it('is ok when connected as the console role', () => {
@@ -20,6 +20,23 @@ describe('healthBody', () => {
     expect(healthBody({ error: 'connect ECONNREFUSED 127.0.0.1:1' })).toEqual({
       status: 503,
       body: { error: 'connect ECONNREFUSED 127.0.0.1:1', status: 'error' },
+    });
+  });
+
+  it('takes the expected role as a parameter, for the editor credential (ADR 0007)', () => {
+    expect(healthBody({ role: 'console_editor' }, EXPECTED_EDITOR_ROLE)).toEqual({
+      status: 200,
+      body: { role: 'console_editor', status: 'ok' },
+    });
+    // The reader's credential under the editor's key, or the reverse: both are
+    // the wrong role for the pool they came out of, and both are named.
+    expect(healthBody({ role: 'console' }, EXPECTED_EDITOR_ROLE)).toEqual({
+      status: 503,
+      body: { role: 'console', status: 'degraded' },
+    });
+    expect(healthBody({ role: 'console_editor' })).toEqual({
+      status: 503,
+      body: { role: 'console_editor', status: 'degraded' },
     });
   });
 

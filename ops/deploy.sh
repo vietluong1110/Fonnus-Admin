@@ -109,6 +109,17 @@ ADMIN_IMAGE_TAG="$ADMIN_IMAGE_TAG" docker compose up -d admin
 # ── 3. Health gate ──────────────────────────────────────────────────────────
 if wait_healthy; then
   log "healthy on ${ADMIN_IMAGE_TAG}"
+
+  # The editor credential is optional and never gates the deploy (ADR 0007): the
+  # read screens do not use it, so a bad value must not roll a good image back.
+  # But a key set in .env that the app cannot log in with would otherwise stay
+  # silent until the first save, so say it here, once, where it is being read.
+  if grep -Eq '^EDITOR_DATABASE_URL=.+' ./.env; then
+    case "$HEALTH_BODY" in
+      *'"editor":{"role":"console_editor","status":"ok"}'*) ;;
+      *) log "warning: EDITOR_DATABASE_URL is set but the editor probe is not ok: ${HEALTH_BODY}" ;;
+    esac
+  fi
   # Remember what is being superseded BEFORE last-good is overwritten: after this
   # deploy .admin-last-good is the SHA now running, so a hand rollback reads the
   # previous good SHA from .admin-previous (docs/deploy.md §3).

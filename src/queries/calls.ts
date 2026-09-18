@@ -5,10 +5,8 @@
  * as the `console` role. Every column named below is one the contract names; a
  * column that exists in the database but not in the contract is not read.
  */
+import type { Scope } from '@/calls-scope';
 import { getPool } from '@/db';
-
-/** The call list is a fixed page of the newest calls — no paging in A1. */
-export const CALL_LIST_LIMIT = 100;
 
 export interface CallListRow {
   id: string;
@@ -28,14 +26,25 @@ export interface CallListRow {
   outcome: string | null;
 }
 
-/**
- * Newest first; the index `call_log_started_idx` serves the order (contract
- * §3.3). The consent row is joined, not required: it is written only in the
- * finish transaction, so a running or a died call has none.
+/** The call list's aggregate over `turn`: which turns of this call failed. */
+export interface CallScopeRow extends CallListRow {
+  /**
+   * The `idx` of every turn with a non-null `failed_leg`, ascending — `[]` when
+   * none failed and when the call has no turn rows at all (trap 1: an
+   * unconsented call has none, however much the caller spoke).
+   */
+  failed_turn_idx: number[];
+}
+
+/*
+ * The list select. The failed-turn list is a correlated aggregate rather than a
+ * join, so one call is one row whatever its turn count: the subquery is served
+ * by `turn`'s primary key `(call_id, idx)` (contract §3.3), and `coalesce`
+ * turns "no failed turn" into an empty array rather than a null the screen
+ * would have to test for. The consent row is joined, not required: it is
+ * written only in the finish transaction, so a running or a died call has none.
  */
-export async function listCalls(limit: number): Promise<CallListRow[]> {
-  const { rows } = await getPool().query<CallListRow>(
-    `select call_log.id,
+const SCOPE_SELECT = `select call_log.id,
             call_log.started_at,
             call_log.ended_at,
             call_log.end_reason,
@@ -44,12 +53,64 @@ export async function listCalls(limit: number): Promise<CallListRow[]> {
             call_log.caller_phone_e164,
             call_log.artifact_state,
             call_log.artifact_key_prefix,
-            consent_record.outcome
+            consent_record.outcome,
+            coalesce((select json_agg(t.idx order by t.idx)
+                        from turn t
+                       where t.call_id = call_log.id
+                         and t.failed_leg is not null), '[]'::json) as failed_turn_idx
        from call_log
-       left join consent_record on consent_record.call_id = call_log.id
-      order by call_log.started_at desc
-      limit $1`,
-    [limit],
+       left join consent_record on consent_record.call_id = call_log.id`;
+
+/**
+ * Newest first; the index `call_log_started_idx` serves the order (contract
+ * §3.3). The id breaks a tie so two calls that share a `started_at` keep one
+ * order across requests — a page is one statement, and page N+1 must start
+ * where page N stopped.
+ */
+const SCOPE_ORDER = `order by call_log.started_at desc, call_log.id`;
+
+/**
+ * Every call of the scope, with no LIMIT: the screen pages the rows in memory
+ * so the cards, the histogram and the chip counts stand on the same set as the
+ * list (ADR 0006). The window is the bound — `MAX_WINDOW_DAYS` in
+ * `src/window.ts` keeps it inside the pool's 10 s `statement_timeout` — and a
+ * search has none, which is deliberate: the operator searches all history.
+ *
+ * Both search predicates are built from sanitised input (`parseScope` keeps
+ * digits for the number and `[0-9a-f-]` for the id), so no `%` or `_` of the
+ * operator's can reach the LIKE. Neither is served by an index (the uuid is
+ * cast to text, the suffix has no leading anchor) — a sequential scan of
+ * `call_log`, acceptable at the pilot's row count (`docs/upstream.md`).
+ */
+export async function callsInScope(scope: Scope): Promise<CallScopeRow[]> {
+  if (scope.kind === 'window') {
+    const { since, until } = scope.window;
+    const sql =
+      until === null
+        ? `${SCOPE_SELECT}\n      where call_log.started_at >= $1\n      ${SCOPE_ORDER}`
+        : `${SCOPE_SELECT}\n      where call_log.started_at >= $1\n        and call_log.started_at < $2\n      ${SCOPE_ORDER}`;
+    const values = until === null ? [since] : [since, until];
+    const { rows } = await getPool().query<CallScopeRow>(sql, values);
+    return rows;
+  }
+
+  const predicates: string[] = [];
+  const values: string[] = [];
+  if (scope.phoneDigits !== null) {
+    values.push(scope.phoneDigits);
+    predicates.push(`call_log.caller_phone_e164 like '%' || $${String(values.length)}`);
+  }
+  if (scope.idPrefix !== null) {
+    values.push(scope.idPrefix);
+    predicates.push(`call_log.id::text like $${String(values.length)} || '%'`);
+  }
+  // A keyword too short to be either predicate matches nothing, and asking
+  // Postgres for "nothing" is a sequential scan of the whole table to prove it.
+  if (predicates.length === 0) return [];
+
+  const { rows } = await getPool().query<CallScopeRow>(
+    `${SCOPE_SELECT}\n      where ${predicates.join(' or ')}\n      ${SCOPE_ORDER}`,
+    values,
   );
   return rows;
 }
@@ -73,6 +134,13 @@ export interface CallDetailRow extends CallListRow {
   disclosure_text: string | null;
   /** §3.5 — `first_audio_out − answered` for the greeting; null before 0008. */
   greeting_first_audio_ms: number | null;
+  /**
+   * §3.5 — the greeting's own marks: `answered` plus the reply-side keys, since
+   * the greeting has no `turn` row. Null on a row written before migration
+   * 0008, on a call that never finalized, and on one terminated before the
+   * greeting was dispatched; then the axis has no greeting block.
+   */
+  greeting_marks: Record<string, number> | null;
 }
 
 /** One call, or null when the id names no row. */
@@ -98,6 +166,7 @@ export async function getCall(id: string): Promise<CallDetailRow | null> {
             call_log.artifact_dir,
             call_log.config_snapshot,
             call_log.greeting_first_audio_ms,
+            call_log.greeting_marks,
             consent_record.consent_mode,
             consent_record.disclosure_completed_at as consent_disclosure_completed_at,
             consent_record.granted_at,

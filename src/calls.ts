@@ -25,6 +25,36 @@ export const CONSENT_OUTCOMES = [
   'hung_up_before_consent',
 ] as const;
 
+/**
+ * The three `end_reason` values that are a limit the pipeline applied on
+ * purpose, not an ending the caller chose — the "Hit a cap" chip of the Calls
+ * screen (ADR 0006). Named here, beside the vocabulary, so no screen spells the
+ * three literals itself.
+ */
+export const CAP_END_REASONS = [
+  'max_duration',
+  'max_turns',
+  'max_reprompts',
+] as const satisfies readonly (typeof END_REASONS)[number][];
+
+/**
+ * The two outcomes of a call that reached finalize without a grant — the
+ * "Unconsented" chip. A call with no `consent_record` row at all is NOT here:
+ * that is trap 2, a state of the call, and it has its own chip.
+ */
+export const UNCONSENTED_OUTCOMES = [
+  'hung_up_before_disclosure',
+  'hung_up_before_consent',
+] as const satisfies readonly (typeof CONSENT_OUTCOMES)[number][];
+
+export function isCapEndReason(value: string | null): boolean {
+  return value !== null && (CAP_END_REASONS as readonly string[]).includes(value);
+}
+
+export function isUnconsentedOutcome(value: string | null): boolean {
+  return value !== null && (UNCONSENTED_OUTCOMES as readonly string[]).includes(value);
+}
+
 /** Contract §3.1 — `turn.failed_leg`: the two legs a reply can fail on. */
 export const FAILED_LEGS = ['llm', 'tts'] as const;
 
@@ -212,6 +242,27 @@ export function parseCostVnd(raw: string | null): number | null {
   if (raw === null || raw.trim() === '') return null;
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
+}
+
+/** A number the pipeline rewrote to +E.164 at the media-stream ingress (§3). */
+const E164_VN = /^\+84\d{8,}$/;
+
+/**
+ * The caller's number as every screen but one renders it: `+84 90 ••• 4417`
+ * (ADR 0008). The last four digits are what lets the operator recognise a
+ * repeat caller and search the call up again; the middle is exposure with no
+ * reading, on a console read at a shared desk and screenshotted into chat.
+ *
+ * The bullets are one group whatever they hide, so their count leaks no digit
+ * count. A shape the contract does not promise (the column is `+84…` or null)
+ * keeps only its last four — defensive, not expected. Null stays null: the
+ * caller renders "not on record", because a blank would read as no caller at
+ * all when it may be the retention sweep's work (trap 5).
+ */
+export function maskPhone(value: string | null): string | null {
+  if (value === null) return null;
+  if (E164_VN.test(value)) return `+84 ${value.slice(3, 5)} ••• ${value.slice(-4)}`;
+  return `••• ${value.slice(-4)}`;
 }
 
 /**

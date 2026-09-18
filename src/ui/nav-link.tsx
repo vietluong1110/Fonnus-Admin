@@ -25,8 +25,9 @@ export default function NavLink({
 }) {
   const pathname = usePathname();
   // A call detail (`/calls/<uuid>`) keeps "Calls" lit, so the operator is never
-  // on a page no nav item claims.
-  const active = pathname === href || pathname.startsWith(`${href}/`);
+  // on a page no nav item claims. The root is matched exactly: a prefix test
+  // would light Overview on every route.
+  const active = href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
 
   return (
     <Link

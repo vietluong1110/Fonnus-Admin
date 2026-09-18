@@ -3,6 +3,7 @@ import { connection } from 'next/server';
 import type { ReactNode } from 'react';
 import { Baloo_2, Be_Vietnam_Pro, IBM_Plex_Sans } from 'next/font/google';
 import Image from 'next/image';
+import { currentAccount } from '@/account';
 import { getConfig } from '@/config';
 import Caveat from '@/ui/caveat';
 import NavLink from '@/ui/nav-link';
@@ -45,8 +46,8 @@ export const metadata: Metadata = {
 
 /** The console's destinations. `/dashboard` lands in Piece 2 (PLAN.md row A2). */
 const NAV = [
+  { href: '/', label: 'Overview', icon: 'report' },
   { href: '/calls', label: 'Calls', icon: 'answered' },
-  { href: '/dashboard', label: 'Dashboard', icon: 'report' },
 ] as const;
 
 /*
@@ -68,6 +69,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // shell's and no page can forget it. Read per request, so the line follows
   // the running box's `.env` rather than whatever the image was built with.
   const gate = getConfig().consentGate;
+
+  // The account Caddy authenticated, read once for the whole shell (ADR 0007).
+  // Absent on `pnpm dev` and over the tunnel, where no reverse proxy sits in
+  // front — the trust model's honest consequence, not a failure.
+  const account = await currentAccount();
 
   // No dark mode (CONTEXT.md §Look and feel): the warm cream ground is the page.
   return (
@@ -103,6 +109,22 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                 <NavLink key={entry.href} href={entry.href} label={entry.label} icon={entry.icon} />
               ))}
             </nav>
+
+            {/* What this console is and who it is doing it as. Muted, never the
+                accent: the accent is for what the operator acts on, and this is
+                not an action (ADR 0003). "read-only" stays in the line until the
+                first write module lands (ADR 0007 decision 6). Hidden on the
+                64px rail, like every other piece of sidebar text. */}
+            <footer
+              className="mt-auto px-3 pt-4 text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted max-[900px]:hidden"
+              title={
+                account === undefined
+                  ? 'no account: this request did not come through the reverse proxy (local development or the tunnel)'
+                  : undefined
+              }
+            >
+              console · read-only · {account ?? 'no account'}
+            </footer>
           </aside>
 
           <main className="flex min-w-0 flex-col gap-[18px] px-9 pt-7 pb-10 max-[900px]:px-5 max-[900px]:pt-5 max-[900px]:pb-8">

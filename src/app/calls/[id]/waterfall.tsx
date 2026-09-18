@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import type { TooltipContentProps } from 'recharts';
 import { formatMs, formatNumber } from '@/calls';
-import type { EndOfTurnRow, Stage, WaterfallRow } from '@/latency';
+import type { EndOfTurnRow, HeadPairRow, Stage, WaterfallRow } from '@/latency';
 
 /*
  * Recharts takes colours as values, not as classes or as `var(--x)` on an SVG
@@ -97,10 +97,19 @@ function pairLabel(row: EndOfTurnRow): string {
 export default function Waterfall({
   rows,
   tail,
+  head,
   playheadMs,
 }: {
   rows: WaterfallRow[];
   tail: EndOfTurnRow[];
+  /**
+   * The head pairs this turn has both marks for (`headPairRows`,
+   * `src/latency.ts`) — today only `llm_first_reasoning → llm_first_token`, the
+   * thinking span of a reasoning model. Empty on a model that emits no
+   * reasoning, and then the row is absent rather than "not measured": no
+   * measurement was ever due.
+   */
+  head: HeadPairRow[];
   /**
    * Where the recording's playhead falls on this turn's axis, in ms from
    * `speech_end` (`waterfallPlayheadMs`, `src/playback.ts`). Null or absent —
@@ -127,7 +136,15 @@ export default function Waterfall({
     spanMs: row.spanMs,
     partition: false,
   }));
-  const all = [...legRows, ...tailRows];
+  const headRows: SpanRow[] = head.map((row) => ({
+    label: row.label,
+    from: row.from,
+    to: row.to,
+    offsetMs: row.offsetMs,
+    spanMs: row.spanMs,
+    partition: false,
+  }));
+  const all = [...legRows, ...headRows, ...tailRows];
   const notMeasured = all.filter((row) => row.spanMs === null);
   const notPlaced = all.filter((row) => row.spanMs !== null && row.offsetMs === null);
 
@@ -147,6 +164,25 @@ export default function Waterfall({
         height="h-56"
         playheadMs={playheadMs ?? null}
       />
+      {headRows.length === 0 ? null : (
+        <>
+          {/* Under the six legs, on the same axis: the pair is a second reading
+              of `llm_ttft`, which the row above already draws whole — never a
+              seventh leg (`docs/upstream.md` §The waterfall). */}
+          <SpanChart
+            rows={headRows}
+            colours={colours}
+            domainMax={domainMax}
+            height="h-16"
+            playheadMs={playheadMs ?? null}
+          />
+          <p className="mb-0 text-[length:var(--size-eyebrow)] text-text-muted">
+            {headRows.map((row) => `${row.label}: ${row.from} → ${row.to}`).join(' · ')} — the span
+            may contain an LLM failover: the first mark is the primary model&rsquo;s, the second
+            the fallback&rsquo;s. The record that proves one is in <code>call_event</code>.
+          </p>
+        </>
+      )}
       <div className="mt-2 text-[length:var(--size-eyebrow)] text-text-muted">
         End-of-turn marks
       </div>

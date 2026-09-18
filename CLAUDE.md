@@ -3,7 +3,9 @@
 The internal admin console for Fonnus, the AI voice receptionist. It reads the pipeline
 repo's Postgres and, later, its artifact bucket, and shows calls, transcripts and
 per-stage latency so the pipeline can be tuned against numbers instead of by ear. It
-never writes pipeline data. Product and constraints: `CONTEXT.md`.
+reads as the role `console` and writes only the two rows the read contract's §7 allows
+(a configuration edit, an annotation), as the role `console_editor`, under the account
+the reverse proxy authenticated (ADR 0007). Product and constraints: `CONTEXT.md`.
 
 The pipeline lives in the sibling repository `../Fonnus` (`github.com/VoidKeishi/Fonnus`).
 Every path below of the form `../Fonnus/…` is that checkout; it must exist beside this
@@ -51,9 +53,12 @@ decision down in `docs/adr/` before code.
   artifact directory, retention sweep — defined in `../Fonnus/PIPELINE_ARCHITECTURE.md`
   and used here unchanged (ADR 0013). This repo coins no term for a pipeline concept;
   a screen label is a rendering of a pipeline term, never a new one.
-- **Read-only, enforced twice.** The connection is the Postgres role `console`, which
-  cannot write (pipeline migration 0006); this code contains no `INSERT`/`UPDATE`/
-  `DELETE` either. A need to write is ADR 0013's revisit trigger, not a feature here.
+- **Reads as `console`, writes as `console_editor`, nothing else (ADR 0007).** Every
+  screen reads through the `console` pool, which cannot write (pipeline migration 0006).
+  The only `INSERT`s live under `src/writes/`, run through the `console_editor` pool,
+  and carry `created_by = console:<account>` from the `X-Console-Account` header Caddy
+  sets; no `UPDATE` or `DELETE` anywhere — a correction is a new row. Tree-scan tests
+  hold all of it. No header, no account, no write.
 - **The consent obligation lives in this reader.** `turn.caller_text` is rendered only
   when the call's `consent_record.outcome = 'granted'`; otherwise it is withheld with
   the outcome shown in its place. Storage does not enforce this; we do
@@ -65,8 +70,10 @@ decision down in `docs/adr/` before code.
 - **SQL is hand-written against the read contract.** No ORM schema copy — a copied
   schema drifts from the pipeline's and lies silently. Every column read is one the
   contract names; a column the contract does not name is not read even if it exists.
-- `.env` holds `DATABASE_URL` (the `console` password) and, later, the read-only bucket
-  key. No pipeline secret, ever. `.env*` is gitignored; `.env.example` is the list.
+- `.env` holds `DATABASE_URL` (the `console` password), `EDITOR_DATABASE_URL` (the
+  `console_editor` password — optional; set, it must name that role or the console
+  refuses to start) and the read-only bucket key. No pipeline secret, ever. `.env*` is
+  gitignored; `.env.example` is the list.
 - Do NOT commit unless the user asks. End of task = print a ready-to-run commit block:
   explicit `git add <files>` (never `-A`) + `git commit` per §Commit messages.
 - Converse in the language the user writes in; Vietnamese replies keep English

@@ -100,6 +100,49 @@ describe('readConfig — the artifact store is one group (ADR 0004)', () => {
   });
 });
 
+describe('readConfig — the editor credential (ADR 0007)', () => {
+  const EDITOR = 'postgres://console_editor:pw@postgres:5432/fonnus';
+
+  it('reads the key when it names the console_editor role', () => {
+    expect(readConfig({ ...DB, EDITOR_DATABASE_URL: EDITOR }).editorDatabaseUrl).toBe(EDITOR);
+    expect(readConfig({ ...DB, EDITOR_DATABASE_URL: `  ${EDITOR} ` }).editorDatabaseUrl).toBe(
+      EDITOR,
+    );
+  });
+
+  for (const [label, env] of [
+    ['unset', {}],
+    ['empty', { EDITOR_DATABASE_URL: '' }],
+    ['whitespace only', { EDITOR_DATABASE_URL: '   ' }],
+  ] as const) {
+    it(`is absent from the config when the key is ${label} — editing not configured`, () => {
+      const config = readConfig({ ...DB, ...env });
+      expect(config.editorDatabaseUrl).toBeUndefined();
+      expect('editorDatabaseUrl' in config).toBe(false);
+    });
+  }
+
+  it('refuses to start when the value names another role', () => {
+    // The `console` string pasted under the wrong key: a typo that would
+    // otherwise surface as a Postgres 42501 on the first save, weeks later.
+    for (const url of [DB.DATABASE_URL, 'postgres://fonnus:pw@postgres:5432/fonnus']) {
+      expect(() => readConfig({ ...DB, EDITOR_DATABASE_URL: url })).toThrow(
+        /EDITOR_DATABASE_URL/,
+      );
+      expect(() => readConfig({ ...DB, EDITOR_DATABASE_URL: url })).toThrow(/console_editor/);
+    }
+    expect(() =>
+      readConfig({ ...DB, EDITOR_DATABASE_URL: DB.DATABASE_URL }),
+    ).toThrow(/"console"/);
+  });
+
+  it('refuses to start when the value is not a URL', () => {
+    expect(() => readConfig({ ...DB, EDITOR_DATABASE_URL: 'not a url' })).toThrow(
+      /EDITOR_DATABASE_URL/,
+    );
+  });
+});
+
 describe('readConfig — the consent gate (ADR 0005)', () => {
   for (const [label, value] of [
     ['unset', undefined],
@@ -171,6 +214,12 @@ describe('register — the server refuses to start on a .env it cannot run under
       register();
     }).toThrow(/S3_ENDPOINT/);
     vi.stubEnv('S3_BUCKET', '');
+
+    vi.stubEnv('EDITOR_DATABASE_URL', 'postgres://console:pw@postgres:5432/fonnus');
+    expect(() => {
+      register();
+    }).toThrow(/EDITOR_DATABASE_URL/);
+    vi.stubEnv('EDITOR_DATABASE_URL', '');
 
     vi.stubEnv('DATABASE_URL', DB.DATABASE_URL);
     vi.stubEnv('CONSENT_GATE', 'off');

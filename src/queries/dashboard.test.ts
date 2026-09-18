@@ -9,7 +9,10 @@ import { describe, expect, it, vi } from 'vitest';
 const connect = vi.fn();
 vi.mock('@/db', () => ({ getPool: () => ({ connect }) }));
 
-const { dashboardSince } = await import('./dashboard');
+const { dashboardWindow } = await import('./dashboard');
+const { parseWindow } = await import('@/window');
+
+const NOW = new Date('2026-09-07T10:00:00Z');
 
 /** Records every statement it is given, in order; `select` answers with rows. */
 function fakeClient(over: { failOn?: string } = {}) {
@@ -34,13 +37,13 @@ function fakeClient(over: { failOn?: string } = {}) {
   };
 }
 
-describe('dashboardSince', () => {
+describe('dashboardWindow', () => {
   it('reads both result sets on one client in one repeatable read transaction', async () => {
     const fake = fakeClient();
     connect.mockResolvedValue(fake.client);
 
-    const since = new Date('2026-09-01T00:00:00Z');
-    const { calls, turns } = await dashboardSince(since);
+    const window = parseWindow({ since: '7d' }, NOW);
+    const { calls, turns } = await dashboardWindow(window);
 
     expect(connect).toHaveBeenCalledTimes(1);
     expect(fake.statements[0]).toBe('begin isolation level repeatable read read only');
@@ -52,18 +55,47 @@ describe('dashboardSince', () => {
     // (`docs/upstream.md` §Dashboard), and the window arrives as a parameter.
     expect(fake.statements[1]).not.toMatch(/limit/i);
     expect(fake.statements[2]).not.toMatch(/limit/i);
-    expect(fake.client.query).toHaveBeenNthCalledWith(2, expect.any(String), [since]);
-    expect(fake.client.query).toHaveBeenNthCalledWith(3, expect.any(String), [since]);
+    expect(fake.client.query).toHaveBeenNthCalledWith(2, expect.any(String), [window.since]);
+    expect(fake.client.query).toHaveBeenNthCalledWith(3, expect.any(String), [window.since]);
+    // A preset window is open-ended, exactly as `report-calls --since` is.
+    expect(fake.statements[1]).not.toContain('$2');
+    expect(fake.statements[2]).not.toContain('$2');
     expect(calls).toEqual([{ id: 'call' }]);
     expect(turns).toEqual([{ id: 'turn' }]);
     expect(fake.releases()).toBe(1);
+  });
+
+  it('bounds both statements above on a custom range', async () => {
+    const fake = fakeClient();
+    connect.mockResolvedValue(fake.client);
+
+    const window = parseWindow({ since: '2026-09-01', until: '2026-09-10' }, NOW);
+    await dashboardWindow(window);
+
+    expect(fake.statements[1]).toContain('call_log.started_at < $2');
+    expect(fake.statements[2]).toContain('call_log.started_at < $2');
+    expect(fake.client.query).toHaveBeenNthCalledWith(2, expect.any(String), [
+      window.since,
+      window.until,
+    ]);
+  });
+
+  it('reads the three columns the window\u2019s cards stand on', async () => {
+    const fake = fakeClient();
+    connect.mockResolvedValue(fake.client);
+
+    await dashboardWindow(parseWindow({}, NOW));
+
+    for (const column of ['call_log.ended_at', 'call_log.end_reason', 'call_log.total_cost_vnd']) {
+      expect(fake.statements[1]).toContain(column);
+    }
   });
 
   it('rolls back and releases the client when a statement fails', async () => {
     const fake = fakeClient({ failOn: 'from turn' });
     connect.mockResolvedValue(fake.client);
 
-    await expect(dashboardSince(new Date())).rejects.toThrow('statement timeout');
+    await expect(dashboardWindow(parseWindow({}, NOW))).rejects.toThrow('statement timeout');
     expect(fake.statements.at(-1)).toBe('rollback');
     // A client checked out and never released is a connection the pool never
     // gets back — one failed window would leak one of ten.

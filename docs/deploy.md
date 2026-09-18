@@ -15,7 +15,7 @@ project `fonnus-admin` in `~/fonnus-admin`, beside the pipeline's `fonnus` proje
 | `deploy.sh` | CI, every deploy (the copy of `ops/deploy.sh`, at the top level — `bash deploy.sh`, never `ops/deploy.sh`) |
 | `caddy/Caddyfile` | CI, every deploy |
 | `caddy/users` | **you, by hand.** One `<name> <bcrypt hash>` line per team member. CI never touches it |
-| `.env` | **you, by hand.** `DATABASE_URL`, `ADMIN_DOMAIN`, `ADMIN_IMAGE`; optionally the five `S3_*` keys and `CONSENT_GATE` (§1.6). CI never touches it |
+| `.env` | **you, by hand.** `DATABASE_URL`, `ADMIN_DOMAIN`, `ADMIN_IMAGE`; optionally `EDITOR_DATABASE_URL`, the five `S3_*` keys and `CONSENT_GATE` (§1.6). CI never touches it |
 | `.admin-last-good`, `.admin-previous` | `deploy.sh`, on every successful deploy |
 
 Two containers: `admin` (this app, no published port, on the pipeline's network
@@ -119,11 +119,13 @@ The last line must count one per person; anything less means a hash arrived mang
 Repeat per person. The file is read by the committed `Caddyfile` through
 `import /etc/caddy/users`; it never enters git.
 
-### 1.5 Give the `console` role a login
+### 1.5 Give the `console` and `console_editor` roles a login
 
-The pipeline's migration 0006 creates the role without a password — a committed migration
-cannot carry one. `../Fonnus/docs/runbook.md` §9 is the procedure; generate the value
-without a `$`, because compose interpolates `$` in `.env` values:
+The pipeline's migrations create both roles without a password — a committed migration
+cannot carry one. `console` (migration 0006) reads; `console_editor` (migration 0012) holds
+the two inserts of read contract §7 and is optional here, needed only to edit configuration
+or write annotations (ADR 0007). `../Fonnus/docs/runbook.md` §9 is the procedure; generate
+each value without a `$`, because compose interpolates `$` in `.env` values:
 
 ```bash
 openssl rand -hex 24
@@ -131,6 +133,27 @@ ssh fonnus 'cd ~/fonnus && docker compose exec -T postgres psql -U fonnus -d fon
   -c "alter role console login password '"'"'<value>'"'"';"'
 ssh fonnus 'cd ~/fonnus && docker compose exec -T postgres psql -U fonnus -d fonnus -c "\du console"'
 # Attributes reads "Cannot login" before, and is empty after.
+```
+
+`console_editor` has been able to log in on this box since 2026-09-18
+(`../Fonnus/CONTEXT.md` §Deployment), so this half of the step applies only if `\du
+console_editor` still reads "Cannot login" — on a rebuilt box, or after a
+`alter role console_editor nologin`. The operator who ran it holds the value; ask rather
+than reset, because resetting invalidates an `.env` already in use.
+
+```bash
+openssl rand -hex 24
+ssh fonnus 'cd ~/fonnus && docker compose exec -T postgres psql -U fonnus -d fonnus \
+  -c "alter role console_editor login password '"'"'<value>'"'"';"'
+ssh fonnus 'cd ~/fonnus && docker compose exec -T postgres psql -U fonnus -d fonnus -c "\du console_editor"'
+```
+
+Prove the login from another container, the way the app will reach it — over the bridge
+network as `postgres:5432`, not over the loopback psql above runs on:
+
+```bash
+ssh fonnus 'cd ~/fonnus && docker run --rm --network fonnus_default postgres:16 \
+  psql "postgres://console_editor:<value>@postgres:5432/fonnus" -c "select count(*) from call"'
 ```
 
 ### 1.6 `~/fonnus-admin/.env`
@@ -162,9 +185,22 @@ CONSENT_GATE=off
 ENV
 ```
 
+To edit configuration or write annotations (ADR 0007), append the editor credential from
+§1.5. It is optional: with the key unset every screen reads exactly as before and the edit
+surfaces say "editing not configured". With it set, its username must be `console_editor`
+or the console refuses to start and names the key — a wrong value would otherwise first
+show up as a permission error on someone's first save.
+
+```bash
+cat >> ~/fonnus-admin/.env <<'ENV'
+EDITOR_DATABASE_URL=postgres://console_editor:<value>@postgres:5432/fonnus
+ENV
+```
+
 A later edit takes effect on the next `up -d` of `admin` (§3); `deploy.sh` checks only
 `DATABASE_URL` and `ADMIN_DOMAIN`, so a missing bucket key is a "not configured" page,
-not a failed deploy.
+not a failed deploy. An `EDITOR_DATABASE_URL` that is set but cannot log in is a warning
+line in the deploy output (§2), not a failed deploy either.
 
 `ADMIN_IMAGE_TAG` is deliberately absent: `deploy.sh` passes it per run, and compose falls
 back to `:local` — which does not exist in the registry — so a command that forgets the tag
@@ -229,6 +265,33 @@ deployed SHA:
 
 Until that is done, the pipeline's own docs describe a box that no longer exists.
 
+### 1.10 Verify the account path after the Caddyfile deploy
+
+The Caddyfile that forwards the authenticated account reaches the box with the first deploy
+that carries it (ADR 0007). Two checks, once:
+
+Open `https://admin.fonnus.me`, sign in with your own account, and read the foot of the
+sidebar. It says `console · read-only · <your account name>`. If it says `no account`, the
+request did not pass Caddy's `basic_auth` — the usual cause is an old Caddyfile still in the
+container, which `docker compose kill -s USR1 caddy` reloads.
+
+Then, on the box, probe the editor credential — only meaningful once `EDITOR_DATABASE_URL`
+is in `.env` (§1.6):
+
+```bash
+cd ~/fonnus-admin
+docker compose exec -T admin node -e \
+  'fetch("http://localhost:3000/api/healthz").then(async r=>console.log(r.status, await r.text()))'
+# expect: 200 {"role":"console","editor":{"role":"console_editor","status":"ok"},"status":"ok"}
+```
+
+`"editor":{"status":"not configured"}` means the key is unset, which is a state and not a
+fault: every read screen works and editing refuses. Anything else — `degraded` with another
+role, or `error` with a message — is the wrong value under that key, and `deploy.sh` says so
+on every deploy until it is fixed (§2). `"error":"timed out after 2 s"` is the host in
+`EDITOR_DATABASE_URL` not answering at all: the probe abandons that wait deliberately, so
+an unreachable editor host can never make the read-only console look down.
+
 ## 2. What a deploy does
 
 `ops/deploy.sh`, in order:
@@ -241,6 +304,12 @@ Until that is done, the pipeline's own docs describe a box that no longer exists
 4. **Health gate**, up to 60 s (`HEALTH_SEC`): `node -e fetch(...)` inside the container
    against `/api/healthz`, which must answer `200` **and** `"role":"console"`. A `503`
    `degraded` means the app connected as some other role — the wrong credential in `.env`.
+   The probe also reports the editor credential under `editor`, and that answer never moves
+   the HTTP status (ADR 0007): an optional key the read screens do not use must not take the
+   console out of service. Instead, when `.env` sets `EDITOR_DATABASE_URL` and the body is
+   not `"editor":{"role":"console_editor","status":"ok"}`, the script prints one line —
+   `warning: EDITOR_DATABASE_URL is set but the editor probe is not ok: <body>` — and
+   carries on.
 5. **Record**: the superseded SHA into `.admin-previous`, the new one into
    `.admin-last-good`.
 6. **Caddy**: `up -d`, which starts it on the first deploy and recreates it whenever the
@@ -290,23 +359,32 @@ docker compose logs --tail 5 caddy                         # expect a reload lin
 If the reload does not take, `docker compose restart caddy` — about a second of refused
 connections, and it re-reads everything.
 
-## 5. Rotating the console database password
+## 5. Rotating a console database password
 
-`../Fonnus/docs/runbook.md` §9 with a new `$`-free value, then this side:
+Both roles rotate the same way — `console` for the reads, `console_editor` for the two
+inserts (§1.5). `../Fonnus/docs/runbook.md` §9 with a new `$`-free value, then this side:
 
 ```bash
 openssl rand -hex 24
 ssh fonnus 'cd ~/fonnus && docker compose exec -T postgres psql -U fonnus -d fonnus \
   -c "alter role console password '"'"'<new>'"'"';"'
+# and/or, for the editor role:
+ssh fonnus 'cd ~/fonnus && docker compose exec -T postgres psql -U fonnus -d fonnus \
+  -c "alter role console_editor password '"'"'<new>'"'"';"'
 # then on the box, in ~/fonnus-admin:
-$EDITOR .env                                                  # DATABASE_URL
+$EDITOR .env                                        # DATABASE_URL and/or EDITOR_DATABASE_URL
 ADMIN_IMAGE_TAG=$(cat .admin-last-good) docker compose up -d admin
 docker compose exec -T admin node -e \
   'fetch("http://127.0.0.1:3000/api/healthz").then(async r=>console.log(r.status, await r.text()))'
 ```
 
-Revoking access entirely, without touching grants, is `alter role console nologin` on the
-pipeline side.
+The probe is the check for both: `"role":"console"` at the top level and, when the editor
+key is set, `"editor":{"role":"console_editor","status":"ok"}` beside it. Rotating
+`console_editor` while `EDITOR_DATABASE_URL` still holds the old value does not break a
+single screen — it only makes editing refuse, which the probe names.
+
+Revoking access entirely, without touching grants, is `alter role console nologin` (or
+`alter role console_editor nologin`) on the pipeline side.
 
 ## 6. Changing the Caddyfile
 

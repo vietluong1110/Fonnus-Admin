@@ -11,18 +11,25 @@
  * `turnMetricRows`), and there the LIMIT lands on turn rows *after* the join, so
  * a percentile built on it stands on a slice of the window rather than the
  * window. Here the window is the only bound; `MAX_WINDOW_DAYS` in
- * `src/dashboard.ts` keeps it inside the pool's 10 s `statement_timeout`.
+ * `src/window.ts` keeps it inside the pool's 10 s `statement_timeout`.
  *
- * The two run as one read: `dashboardSince` puts them on one client inside a
+ * The two run as one read: `dashboardWindow` puts them on one client inside a
  * REPEATABLE READ READ ONLY transaction, so both see the same snapshot of the
  * database and a call that starts between them cannot hand the screen turn rows
  * whose call row is missing.
  */
 import { getPool } from '@/db';
+import type { Window } from '@/window';
 
 export interface DashboardCall {
   id: string;
   started_at: Date;
+  /** Null while the call is running or if it never reached finalize (trap 2). */
+  ended_at: Date | null;
+  /** §3.1 vocabulary; the window's "how calls ended" distribution. */
+  end_reason: string | null;
+  /** `numeric(14,4)`: `pg` returns it as a string. A floor, never a total (trap 3). */
+  total_cost_vnd: string | null;
   /** The id the call actually ran on, not the configured one — trap 6. */
   stt_model: string | null;
   tts_model: string | null;
@@ -38,16 +45,17 @@ export interface DashboardCall {
  * it contributes nothing to a percentile and the screen must still say it
  * happened). Ordered oldest first, the order the day buckets are read in.
  */
-const CALLS_SQL = `select call_log.id,
+const CALLS_SELECT = `select call_log.id,
             call_log.started_at,
+            call_log.ended_at,
+            call_log.end_reason,
+            call_log.total_cost_vnd,
             call_log.stt_model,
             call_log.tts_model,
             call_log.config_snapshot,
             consent_record.outcome
        from call_log
-       left join consent_record on consent_record.call_id = call_log.id
-      where call_log.started_at >= $1
-      order by call_log.started_at`;
+       left join consent_record on consent_record.call_id = call_log.id`;
 
 export interface DashboardTurn {
   call_id: string;
@@ -71,7 +79,7 @@ export interface DashboardTurn {
  * scope exactly when its call is, and the two result sets join by `call_id` in
  * TypeScript with nothing left over.
  */
-const TURNS_SQL = `select turn.call_id,
+const TURNS_SELECT = `select turn.call_id,
             turn.idx,
             turn.marks,
             turn.caller_perceived_ms,
@@ -83,9 +91,7 @@ const TURNS_SQL = `select turn.call_id,
             turn.failed_stage,
             turn.failed_after_ms
        from turn
-       join call_log on call_log.id = turn.call_id
-      where call_log.started_at >= $1
-      order by call_log.started_at, turn.idx`;
+       join call_log on call_log.id = turn.call_id`;
 
 /**
  * Both result sets, read as one snapshot of the database.
@@ -101,14 +107,23 @@ const TURNS_SQL = `select turn.call_id,
  * path too — a client checked out and never released is a connection the pool
  * never gets back.
  */
-export async function dashboardSince(
-  since: Date,
+export async function dashboardWindow(
+  window: Window,
 ): Promise<{ calls: DashboardCall[]; turns: DashboardTurn[] }> {
+  const { since, until } = window;
+  // The upper bound is half-open and opt-in (ADR 0006): a preset window has
+  // none, so its numbers equal `report-calls --since <same>` run at the same
+  // minute, and only a custom range adds the second parameter.
+  const bound = until === null ? '' : '\n        and call_log.started_at < $2';
+  const values = until === null ? [since] : [since, until];
+  const callsSql = `${CALLS_SELECT}\n      where call_log.started_at >= $1${bound}\n      order by call_log.started_at`;
+  const turnsSql = `${TURNS_SELECT}\n      where call_log.started_at >= $1${bound}\n      order by call_log.started_at, turn.idx`;
+
   const client = await getPool().connect();
   try {
     await client.query('begin isolation level repeatable read read only');
-    const calls = await client.query<DashboardCall>(CALLS_SQL, [since]);
-    const turns = await client.query<DashboardTurn>(TURNS_SQL, [since]);
+    const calls = await client.query<DashboardCall>(callsSql, values);
+    const turns = await client.query<DashboardTurn>(turnsSql, values);
     await client.query('commit');
     return { calls: calls.rows, turns: turns.rows };
   } catch (error) {

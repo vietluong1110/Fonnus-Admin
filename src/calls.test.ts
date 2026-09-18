@@ -24,7 +24,10 @@ import {
   isKnownFailedStage,
   isKnownTurnSource,
   isOrdinaryEnding,
+  isCapEndReason,
+  isUnconsentedOutcome,
   isUuid,
+  maskPhone,
   parseCostVnd,
   showCallerData,
   shortSha,
@@ -137,6 +140,84 @@ describe('the consent gate has one enforcement point (ADR 0005)', () => {
     };
     walk(root);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('maskPhone — ADR 0008', () => {
+  it('keeps the country code, two national digits and the last four', () => {
+    expect(maskPhone('+84901234417')).toBe('+84 90 ••• 4417');
+  });
+
+  it('hides however many digits sit between, in one group', () => {
+    // A shorter national number reads the same way: the bullet count must not
+    // leak a digit count.
+    expect(maskPhone('+8490124417')).toBe('+84 90 ••• 4417');
+  });
+
+  it('keeps only the last four of a shape the contract does not promise', () => {
+    // The column is `+84…` or null (§3), so this is defensive, not expected —
+    // a hand-restored row must still not print a whole number.
+    expect(maskPhone('0901234417')).toBe('••• 4417');
+    expect(maskPhone('+1 415 555 0199')).toBe('••• 0199');
+  });
+
+  it('leaves null alone, so the caller can say "not on record" (trap 5)', () => {
+    expect(maskPhone(null)).toBeNull();
+  });
+});
+
+describe('the caller\u2019s number is masked everywhere but the Call card (ADR 0008)', () => {
+  /*
+   * The one place the raw number renders on purpose. The file lands with the
+   * call detail's redesign; the scan passes with it absent, so it may be added
+   * without touching this test.
+   */
+  const RAW_SITE = 'src/app/calls/[id]/_detail/call-card.tsx';
+
+
+  it('wraps every mention of caller_phone_e164 under src/app in maskPhone', () => {
+    const root = fileURLToPath(new URL('.', import.meta.url));
+    const allowed = new Set([RAW_SITE]);
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        const rel = `src/${relative(root, full).split(sep).join('/')}`;
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
+          if (allowed.has(rel)) continue;
+          for (const line of readFileSync(full, 'utf8').split('\n')) {
+            if (line.includes('caller_phone_e164') && !line.includes('maskPhone(')) {
+              offenders.push(`${rel}: ${line.trim()}`);
+            }
+          }
+        }
+      }
+    };
+    walk(join(root, 'app'));
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('the chip vocabularies (ADR 0006)', () => {
+  it('reads the three caps the pipeline applied on purpose, and nothing else', () => {
+    for (const reason of ['max_duration', 'max_turns', 'max_reprompts']) {
+      expect(isCapEndReason(reason)).toBe(true);
+    }
+    for (const reason of END_REASONS.filter((value) => !value.startsWith('max_'))) {
+      expect(isCapEndReason(reason)).toBe(false);
+    }
+    expect(isCapEndReason(null)).toBe(false);
+  });
+
+  it('reads the two hang-ups as unconsented, and a missing row as neither', () => {
+    expect(isUnconsentedOutcome('hung_up_before_disclosure')).toBe(true);
+    expect(isUnconsentedOutcome('hung_up_before_consent')).toBe(true);
+    // Trap 2: no consent row is a state of the call, not a refusal.
+    expect(isUnconsentedOutcome(null)).toBe(false);
+    expect(
+      CONSENT_OUTCOMES.filter((outcome) => !isUnconsentedOutcome(outcome)),
+    ).toHaveLength(1);
   });
 });
 

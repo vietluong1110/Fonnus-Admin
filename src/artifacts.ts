@@ -47,6 +47,21 @@ export function callWavKey(prefix: string): string {
 export type RecordingAccess = 'not_configured' | 'not_archived' | 'gone' | 'withheld' | 'playable';
 
 /**
+ * The five states in words — the title of the call detail's recording block
+ * and the `Rec` cell's tooltip on the call list read from this one map, so the
+ * two screens cannot say different things about the same call. The reason
+ * behind a state (which `artifact_state`, which consent outcome) is each
+ * screen's own sentence, because only the detail has room for it.
+ */
+export const RECORDING_REASON = {
+  not_configured: 'Recording access not configured',
+  not_archived: 'Not archived yet',
+  gone: 'Recording gone (retention)',
+  withheld: 'Recording withheld',
+  playable: 'In the bucket',
+} as const satisfies Record<RecordingAccess, string>;
+
+/**
  * Read in this order: no bucket configured at all → not in the bucket → the
  * consent gate → playable. `not_configured` comes first because without the
  * `S3_*` group there is nothing to say about a particular call; the gate comes

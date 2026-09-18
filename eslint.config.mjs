@@ -74,5 +74,7 @@ export default tseslint.config(
     files: ['**/*.mjs'],
     extends: [tseslint.configs.disableTypeChecked],
   },
-  { ignores: ['.next/', 'out/', 'next-env.d.ts', 'node_modules/'] },
+  // `docs/design/` is the product owner's artboard drop (gitignored, docs/redesign.md):
+  // vendored JavaScript that is not this repo's code and has no TypeScript project.
+  { ignores: ['.next/', 'out/', 'next-env.d.ts', 'node_modules/', 'docs/'] },
 );

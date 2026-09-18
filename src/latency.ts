@@ -2,7 +2,7 @@
  * Per-turn latency marks and legs — copied, not imported, from
  * `../Fonnus/app/src/domain/latency.ts` (ADR 0001: the pipeline is a separate
  * repository and this console reads its data, so the rule travels as a copy with
- * a test pinning it to the pipeline's names). The stage list is the ten keys
+ * a test pinning it to the pipeline's names). The stage list is the eleven keys
  * of `../Fonnus/docs/read-contract.md` §3.2; the legs are
  * `../Fonnus/PIPELINE_ARCHITECTURE.md` §6.
  *
@@ -16,6 +16,7 @@ export type Stage =
   | 'speech_end'
   | 'endpoint_decision'
   | 'stt_final'
+  | 'llm_first_reasoning'
   | 'llm_first_token'
   | 'llm_last_token'
   | 'tts_first_byte'
@@ -24,11 +25,12 @@ export type Stage =
   | 'first_audio_out'
   | 'playback_end';
 
-/** The ten keys `turn.marks` may carry today; anything else is dropped. */
+/** The eleven keys `turn.marks` may carry today; anything else is dropped. */
 export const STAGES = [
   'speech_end',
   'endpoint_decision',
   'stt_final',
+  'llm_first_reasoning',
   'llm_first_token',
   'llm_last_token',
   'tts_first_byte',
@@ -144,6 +146,60 @@ export function endOfTurnRows(marks: Partial<Record<Stage, number>>): EndOfTurnR
       offsetMs: offset === null || offset < 0 ? null : offset,
     };
   });
+}
+
+/*
+ * The head pairs — spans between two head marks that belong to no leg. There is
+ * one today: `llm_first_reasoning → llm_first_token`, how long a reasoning model
+ * thought before its first spoken token (`../Fonnus` W2-L3 F7, contract §3.2).
+ * It sits INSIDE `llm_ttft`, which the six-leg row already draws whole, so it is
+ * a second reading of that leg and never a seventh leg — the pipeline names no
+ * leg for it and this console coins none (`docs/upstream.md` §The waterfall).
+ * `label` is the plain-language gloss beside the mark pair, not a name for it.
+ */
+export const HEAD_PAIRS = [
+  { from: 'llm_first_reasoning', to: 'llm_first_token', label: 'thinking' },
+] as const satisfies readonly { from: Stage; to: Stage; label: string }[];
+
+export interface HeadPairRow {
+  from: Stage;
+  to: Stage;
+  label: string;
+  spanMs: number | null;
+  /** Where the span starts on the axis whose origin is `speech_end`. */
+  offsetMs: number | null;
+}
+
+/**
+ * The head pairs this turn has both marks for, in `HEAD_PAIRS` order. Unlike
+ * `endOfTurnRows`, a pair with either mark missing is absent rather than an
+ * empty row: a model that emits no reasoning stamps no `llm_first_reasoning`,
+ * and a row reading "not measured" on every non-reasoning turn would say a
+ * measurement failed where none was ever due. The rest is the same convention:
+ * a reversed pair is "not measured" (null span), and a span with no
+ * `speech_end` to place it from has no offset.
+ *
+ * One reading the caller must carry on screen (contract §3.2): on a turn that
+ * failed over, `llm_first_reasoning` is the primary model's stamp and
+ * `llm_first_token` the fallback's, so the span can contain a failover — the
+ * record that proves one is in `call_event`.
+ */
+export function headPairRows(marks: Partial<Record<Stage, number>>): HeadPairRow[] {
+  const origin = marks.speech_end;
+  const rows: HeadPairRow[] = [];
+  for (const pair of HEAD_PAIRS) {
+    const start = marks[pair.from];
+    if (start === undefined || marks[pair.to] === undefined) continue;
+    const offset = origin === undefined ? null : start - origin;
+    rows.push({
+      from: pair.from,
+      to: pair.to,
+      label: pair.label,
+      spanMs: spanOf(start, marks[pair.to]) ?? null,
+      offsetMs: offset === null || offset < 0 ? null : offset,
+    });
+  }
+  return rows;
 }
 
 export function parseMarks(value: unknown): Partial<Record<Stage, number>> {

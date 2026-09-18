@@ -36,35 +36,43 @@ caveats; the decisions stay with the person reading it.
 
 ## What the console shows (target state; `PLAN.md` says what exists)
 
-1. **Call list** — recent calls, one click target per row, with when, the caller's number,
-   how long, how it ended (consent outcome and end reason together — quiet when ordinary,
-   a pill when not), turns on record, whether a recording can be fetched, cost.
-2. **Call detail** — built for the call review, non-technical reader first: an overview
-   strip, then the recording player beside the transcript as chat bubbles (caller left,
-   assistant right, each with its voice length; a click seeks the audio), and under the
-   player the **call strip** (one block per turn on the recording's axis with the
-   playhead) over the **waterfall of the six latency legs** of the turn being heard (`stt_emit`, `endpoint_wait`, `llm_ttft`,
-   `tts_ttfb`, `send`, `playback` — `../Fonnus/PIPELINE_ARCHITECTURE.md` §6) with the
-   two headline spans against their ADR 0007 targets; the per-turn research detail
-   (tokens, marks, the config snapshot, the consent record, identity fields, cost) sits
-   below in a collapsed "Pipeline detail" section. The waterfall grows into a **call
-   timeline**: one time axis per turn carrying every step and sub-step with its
-   timestamp — each STT partial and the final (text under the consent rule), the turn
-   end, the LLM request sent / first token / last token with the model's reasoning
-   collapsed under the reply, each TTS sentence as sent → generation frame sent → first
-   byte → settled, first audio out, playback start and end, and a failure marker naming
-   the stage and the milliseconds it failed after; the greeting gets the same axis from
-   the moment the call was answered. Data arrives in three steps: `turn.marks` (ten
-   instants per turn since `../Fonnus` W2-L3 F2, plus the failure scalars and the
-   greeting's own marks); the call event table (`call_event`, W2-L3 F5, on record since
-   2026-09-07) with the sub-stage instants of F6 and, once F7 lands, the reasoning; and
-   the bucket (W2-L1) for the verbatim files behind a step (the LLM stream, the sentence
-   audio).
-3. **Latency dashboard** — P50 / P95 / max per leg over a chosen window, the trend by
-   day, and the same numbers **grouped by the pipeline configuration the calls ran
-   under** (`call_log.config_snapshot`, on record since `../Fonnus` W2-L3 F1, 2026-09-06),
-   so a change to an endpointing or flush setting is visible as a step and not guessed at.
-   Every pipeline change from W3 on is one snapshot, and this grouping is how it is judged.
+1. **Call list** (`/calls`) — the calls of one window (`24h` · `7d` · `30d` or a from–to
+   range, shared with the Overview; ADR 0006), headed by four cards over the whole window —
+   calls, median duration, turns per consented call, recordings that reached the bucket —
+   and an hour-of-day histogram; then five chips that narrow only the list (failed turn ·
+   not finalized · unconsented · hit a cap · has recording, intersecting, each counting what
+   adding it would leave); then the rows, banded by day: when, the caller's number masked
+   to its last four digits (ADR 0008), how long, how it ended (consent outcome and end
+   reason together — quiet when ordinary, a pill when not), the turns as a tick strip with
+   the failed ones marked, whether a recording can be fetched, cost with its floor caveat.
+   A search box finds a phone suffix or an id prefix across all history, outside the
+   window. Pages of 100.
+2. **Call detail** (`/calls/<id>`) — built for the call review, non-technical reader first:
+   the head (masked number, when, how it ended), then **the call** — the recording player
+   over two lanes on the recording's axis, the greeting and each turn's voice on one, the
+   turn's `pipeline_ms` as a bar on the other, with the playhead — beside the transcript as
+   chat bubbles (caller left, assistant right, each with its voice length; a click seeks the
+   audio); under it the **waterfall of the six latency legs** of the turn being heard
+   (`stt_emit`, `endpoint_wait`, `llm_ttft`, `tts_ttfb`, `send`, `playback` —
+   `../Fonnus/PIPELINE_ARCHITECTURE.md` §6) with the two headline spans against their
+   ADR 0007 targets and the thinking span (`llm_first_reasoning → llm_first_token`) drawn
+   under them; the per-turn research detail (the turn table, marks, the config snapshot
+   grouped by leg and vendor, `PROVIDERS` read as `real` / `fake`, the consent record, the full
+   number and the identity fields, cost) sits below in a collapsed "Pipeline detail"
+   section. The turn axis grows into the **interval lane** (row A1b): the sequence of
+   contiguous intervals contract §8 derives from `call_event` — who held the line, what the
+   caller's line carried, what the recogniser returned — with the trail's completeness
+   verdict above it, so a non-turn line, an utterance that returned nothing and an
+   overtaken partial become visible; the turn table stays under it as the per-turn latency
+   view, and the bucket (W2-L1) serves the verbatim files behind a step.
+3. **Overview** (`/`) — over the same window: P50 / P95 / max per leg against the ADR 0007
+   targets, calls per day, the reply's composition, how calls ended (end reason and consent
+   outcome), turn failures by leg and stage, the window's cost floor, the turns outside the
+   percentile, and the same latency numbers **compared by configuration** — by one flat key
+   of `call_log.config_snapshot` (default `OPENROUTER_MODEL`) or by `runtime.version`, the
+   console-edited row a call ran under (ADR 0009) — so a change to an endpointing or flush
+   setting, or a console config edit, is visible as a step and not guessed at. Every
+   pipeline change from W3 on is one snapshot, and this comparison is how it is judged.
 4. **Audio and per-sentence views** — the call itself plays on the detail page (row A5,
    ADR 0004: the browser reads `call.wav` straight from the bucket through a short-lived
    presigned URL; the playhead drives the transcript and the waterfall, and no new pipeline
@@ -74,8 +82,10 @@ caveats; the decisions stay with the person reading it.
    says whether a given call's files are in the bucket yet. The bucket holds internal test calls only for as long as this
    repo's account-wide key exists off the VPS (`../Fonnus` ADR 0019).
 
-Not here: any write (bookings, notes, tenant configuration), the onboarding UI, the
-landing page. The first is ADR 0013's revisit trigger; the other two are other repos.
+Not here: any write beyond the two the read contract's §7 allows — a configuration edit
+(row A9) and an annotation on a call (row A10), both appended as rows under the account
+the proxy authenticated (ADR 0007). Bookings, notes, tenant configuration, the onboarding
+UI, the landing page are other repos; a third kind of write is ADR 0007's revisit trigger.
 
 ## Constraints
 
@@ -129,8 +139,12 @@ ADR 0013 kept a web surface out of the pipeline *process*; this puts one on the 
 *machine*. The defence is ADR 0002 of this repo: the reverse proxy is the only thing bound
 to the public interface, the console container sits on the compose bridge network, one
 `basic_auth` account per team member guards it — the bcrypt hashes hand-maintained on the
-box, outside the repo — and the database role it holds cannot write. A clinic-facing
-surface is that ADR's revisit trigger. Caller-derived bytes (text, the recording) are
+box, outside the repo — and the database role every screen reads through cannot write.
+The second role, `console_editor`, can insert exactly two tables and is used only under
+`src/writes/`, with the account the proxy authenticated (`X-Console-Account`, set by
+Caddy after `basic_auth`, trusted within the box — ADR 0007); the first account for
+someone outside the team is the trigger to replace that header with a signed one. A
+clinic-facing surface is ADR 0002's revisit trigger. Caller-derived bytes (text, the recording) are
 withheld unless consent was granted; during the internal test phase that gate is a
 deployment switch, on by default and off only in the test `.env` (ADR 0005) — the first
 account for someone outside the team deletes the switch. The recording is never proxied:

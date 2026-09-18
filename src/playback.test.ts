@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  barScaleMs,
   bubbleLengthMs,
   bubbleView,
   currentTurnIdx,
+  greetingSpan,
   recordingOffsetMs,
+  parseTurnParam,
+  turnBars,
   turnAt,
   turnSpans,
   waterfallPlayheadMs,
   type TurnSpan,
 } from './playback';
-import type { Stage } from './latency';
+import { TARGETS, type Stage } from './latency';
 import type { TurnRow } from './queries/calls';
 
 /** The recorder's clock origin: sample 0 of `call.wav` (../Fonnus ADR 0012). */
@@ -456,5 +460,117 @@ describe('bubbleView — the consent gate on the bubble (trap 4, ADR 0005)', () 
   it('flags an outcome outside the contract vocabulary rather than reading it as normal', () => {
     expect(bubbleView(turn(spoken), context('granted', 'on')).withheldReasonKnown).toBe(true);
     expect(bubbleView(turn(spoken), context('cancelled', 'on')).withheldReasonKnown).toBe(false);
+  });
+});
+
+describe('greetingSpan — docs/upstream.md §Call detail, the greeting_marks row', () => {
+  it('runs from answered to playback_end, on the recording clock', () => {
+    const span = greetingSpan(
+      { answered: ORIGIN + 200, first_audio_out: ORIGIN + 1_200, playback_end: ORIGIN + 6_400 },
+      STARTED_AT,
+    );
+    expect(span).toEqual({ startMs: 200, endMs: 6_400 });
+  });
+
+  it('ends at the latest key present when playback_end was never stamped', () => {
+    // A caller who hung up mid-disclosure leaves `answered` and whatever the
+    // greeting reached; the block ends there, not at the call's end.
+    const span = greetingSpan(
+      { answered: ORIGIN, tts_first_byte: ORIGIN + 900, first_audio_out: ORIGIN + 1_100 },
+      STARTED_AT,
+    );
+    expect(span).toEqual({ startMs: 0, endMs: 1_100 });
+  });
+
+  it('is a hairline when only answered was stamped', () => {
+    expect(greetingSpan({ answered: ORIGIN + 500 }, STARTED_AT)).toEqual({
+      startMs: 500,
+      endMs: 500,
+    });
+  });
+
+  it('is null without answered, without the column, and without an origin', () => {
+    expect(greetingSpan({ playback_end: ORIGIN + 3_000 }, STARTED_AT)).toBeNull();
+    expect(greetingSpan(null, STARTED_AT)).toBeNull();
+    expect(greetingSpan({ answered: ORIGIN }, null)).toBeNull();
+  });
+
+  it('drops a key that carries no finite number, and a key of its own invention', () => {
+    // The column is jsonb: the same trust boundary `parseMarks` is for a turn's.
+    const span = greetingSpan(
+      {
+        answered: ORIGIN,
+        playback_end: Number.NaN,
+        speech_end: ORIGIN + 9_000,
+        first_audio_out: ORIGIN + 800,
+      },
+      STARTED_AT,
+    );
+    expect(span).toEqual({ startMs: 0, endMs: 800 });
+  });
+
+  it('collapses a block whose end pre-dates answered, never draws it backwards', () => {
+    expect(greetingSpan({ answered: ORIGIN + 4_000, playback_end: ORIGIN + 10 }, STARTED_AT)).toEqual({
+      startMs: 4_000,
+      endMs: 4_000,
+    });
+  });
+});
+
+describe('turnBars and barScaleMs — the lower lane of "The call"', () => {
+  it('carries each turn state and marks a null pipeline_ms as not measured', () => {
+    const bars = turnBars([
+      turn({ idx: 0, pipeline_ms: 1_040 }),
+      turn({ idx: 1, pipeline_ms: null, failed_leg: 'llm', failed_stage: 'ttfb' }),
+      turn({ idx: 2, pipeline_ms: 980, interrupted: true }),
+    ]);
+    expect(bars).toEqual([
+      { idx: 0, pipelineMs: 1_040, failed: false, interrupted: false, measured: true },
+      { idx: 1, pipelineMs: null, failed: true, interrupted: false, measured: false },
+      { idx: 2, pipelineMs: 980, failed: false, interrupted: true, measured: true },
+    ]);
+  });
+
+  it('treats a negative pipeline_ms as not measured, never as a bar', () => {
+    // Contract §3.2: a span whose end pre-dates its start is a clock fault.
+    expect(turnBars([turn({ pipeline_ms: -30 })])[0]?.measured).toBe(false);
+  });
+
+  it('never scales below the target, so the target line is always on the plot', () => {
+    expect(barScaleMs([])).toBe(TARGETS.pipelineP95Ms);
+    expect(barScaleMs(turnBars([turn({ pipeline_ms: 400 })]))).toBe(TARGETS.pipelineP95Ms);
+    expect(barScaleMs(turnBars([turn({ pipeline_ms: 2_500 })]))).toBe(2_500);
+    // An unmeasured turn has no height to scale to.
+    expect(barScaleMs(turnBars([turn({ pipeline_ms: -9_000 })]))).toBe(TARGETS.pipelineP95Ms);
+  });
+});
+
+describe('parseTurnParam — the ?turn=<idx> arrival (ADR 0006)', () => {
+  const turns = [{ idx: 0 }, { idx: 1 }, { idx: 3 }];
+
+  it('selects the turn the link names', () => {
+    expect(parseTurnParam('3', turns)).toBe(3);
+    expect(parseTurnParam('0', turns)).toBe(0);
+  });
+
+  it('selects nothing for a turn this call never wrote', () => {
+    expect(parseTurnParam('2', turns)).toBeNull();
+    expect(parseTurnParam('7', turns)).toBeNull();
+  });
+
+  it('selects nothing for a value that is not an index at all', () => {
+    // A repeated key arrives as an array; the rest is what a hand-typed or
+    // truncated URL carries.
+    expect(parseTurnParam(['1', '2'], turns)).toBeNull();
+    expect(parseTurnParam(undefined, turns)).toBeNull();
+    expect(parseTurnParam('', turns)).toBeNull();
+    expect(parseTurnParam('first', turns)).toBeNull();
+    expect(parseTurnParam('-1', turns)).toBeNull();
+    expect(parseTurnParam('1.5', turns)).toBeNull();
+    expect(parseTurnParam(' 1', turns)).toBeNull();
+  });
+
+  it('selects nothing on a call with no turns on record (trap 1)', () => {
+    expect(parseTurnParam('0', [])).toBeNull();
   });
 });

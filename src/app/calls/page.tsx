@@ -1,173 +1,225 @@
+/*
+ * The Calls screen (PLAN.md row A6), after `docs/design/Calls-html`: the window
+ * or a search at the top, four cards and the hour histogram over the scope, the
+ * five chips over the list, and one page of 100 calls in day bands.
+ *
+ * The URL is the whole input (ADR 0006) — no client state, nothing to
+ * rehydrate, and a filtered list is a pasteable address. One query reads the
+ * scope whole; the cards, the histogram and the chip counts stand on the same
+ * rows the list is sliced from, so the header count and the cards can never
+ * disagree.
+ */
+
 import Link from 'next/link';
-import { isFetchable } from '@/artifacts';
-import {
-  callState,
-  consentOutcomeTone,
-  endReasonTone,
-  formatCount,
-  formatDuration,
-  formatNumber,
-  formatWhen,
-  isConsentGranted,
-  isKnownConsentOutcome,
-  isKnownEndReason,
-  isOrdinaryEnding,
-  parseCostVnd,
-} from '@/calls';
-import { CALL_LIST_LIMIT, type CallListRow, listCalls } from '@/queries/calls';
-import CallStateBlock from '@/ui/call-state';
+import { callStats, dayBands, hourHistogram, scopeHeading } from '@/calls-stats';
+import { PAGE_SIZE, applyChips, chipCounts, pageOf, parseChips, parsePage, parseScope } from '@/calls-scope';
+import { getConfig } from '@/config';
+import { callsInScope } from '@/queries/calls';
+import { parseWindow } from '@/window';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
-import Icon from '@/ui/icon';
-import LinkRow from '@/ui/link-row';
 import PageHead from '@/ui/page-head';
-import { Table, TableScroll, Td, Th } from '@/ui/table';
-import Vocabulary from '@/ui/vocabulary';
+import WindowControl from '@/ui/window-control';
+import CallTable from './_list/call-table';
+import ChipStrip from './_list/chip-strip';
+import Histogram from './_list/histogram';
+import StatRow from './_list/stat-row';
 
 // The list is about the database right now; nothing here may be prerendered.
 export const dynamic = 'force-dynamic';
 
-/**
- * How the call ended, in one cell: the consent outcome and the end reason
- * together. The ordinary ending is said quietly and every exception wears the
- * tone it already had elsewhere (`docs/upstream.md` §Call list). Only the
- * exceptional half is drawn — a consented call that hit `max_duration` shows
- * the end reason alone, because a granted consent was never the news.
- */
-function Ending({ call }: { call: CallListRow }) {
-  const { outcome, end_reason: endReason } = call;
+const BASE = '/calls';
 
-  if (isOrdinaryEnding(outcome, endReason)) {
-    // The pipeline's own word, not a translation of it (CONTEXT.md §Language);
-    // the gloss sits once in the column header.
-    return <span className="text-text-muted">caller_hangup</span>;
-  }
+type Params = Record<string, string | string[] | undefined>;
 
-  const state = callState(call.ended_at, outcome);
-
-  return (
-    <div className="flex flex-col items-start gap-1">
-      {outcome === null ? (
-        // Trap 2: no consent row is a state of the call, never "no consent".
-        <CallStateBlock state={state} />
-      ) : isConsentGranted(outcome) ? null : (
-        <Vocabulary
-          value={outcome}
-          known={isKnownConsentOutcome(outcome)}
-          tone={consentOutcomeTone(outcome)}
-        />
-      )}
-      {endReason === null || endReason === 'caller_hangup' ? null : (
-        <Vocabulary
-          value={endReason}
-          known={isKnownEndReason(endReason)}
-          tone={endReasonTone(endReason)}
-        />
-      )}
-      {endReason === null && state === 'finalized' ? (
-        <span className="text-text-muted">end reason not on record</span>
-      ) : null}
-    </div>
-  );
+/** A query string key can arrive repeated; the first value is the answer. */
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
-export default async function CallsPage() {
-  const calls = await listCalls(CALL_LIST_LIMIT);
+/**
+ * This screen's URL with some keys changed — the link every control points at.
+ * An empty value drops the key, so "clear the search" and "the first page" are
+ * the same operation as any other, and no link ever carries `q=`.
+ */
+function hrefWith(params: Params, changes: Record<string, string>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    const single = first(value);
+    if (single !== undefined && single !== '') search.set(key, single);
+  }
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === '') search.delete(key);
+    else search.set(key, value);
+  }
+  const query = search.toString();
+  return query === '' ? BASE : `${BASE}?${query}`;
+}
+
+const SEARCH_NOTE = 'search covers all history; clear it to use the window';
+
+export default async function CallsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Params>;
+}) {
+  const params = await searchParams;
+  const now = new Date();
+  const scope = parseScope(params, now);
+  const config = getConfig();
+
+  const rows = await callsInScope(scope);
+  const active = parseChips(params);
+  const counts = chipCounts(rows, active);
+  const filtered = applyChips(rows, active);
+  const { rows: pageRows, page, hasOlder } = pageOf(filtered, parsePage(params));
+
+  // The cards and the histogram describe the scope, not the chip intersection
+  // (ADR 0006): one stable population per screen, so they always agree with the
+  // heading count above them.
+  const stats = callStats(rows);
+  const heading = scopeHeading(scope, rows.length);
+  // The window the control draws even while a search ignores it — parsed from
+  // the same URL, so clearing the keyword lands back on the operator's window.
+  const window = parseWindow(params, now);
+  const keyword = scope.kind === 'search' ? scope.keyword : '';
+  // Under three characters there is no predicate at all, so the query was never
+  // issued and the screen owes the operator the reason (ADR 0006).
+  const tooShort =
+    scope.kind === 'search' && scope.phoneDigits === null && scope.idPrefix === null;
 
   return (
     <>
       <PageHead title="Calls">
-        <Caveat as="span">
-          the {formatNumber(CALL_LIST_LIMIT)} most recent calls, newest first
-        </Caveat>
+        <Caveat as="span">{heading}</Caveat>
       </PageHead>
 
-      {calls.length === 0 ? (
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <WindowControl
+          base={BASE}
+          window={window}
+          extra={{ q: keyword, f: active.join(',') }}
+          {...(scope.kind === 'search' ? { disabled: true, disabledNote: SEARCH_NOTE } : {})}
+        />
+
+        <form method="get" action={BASE} className="flex items-center gap-2">
+          {/* The window rides along hidden, so a search does not forget which
+              window the operator will come back to. */}
+          {(['since', 'until'] as const).map((key) => {
+            const value = first(params[key]);
+            return value === undefined || value === '' ? null : (
+              <input key={key} type="hidden" name={key} value={value} />
+            );
+          })}
+          {active.length === 0 ? null : <input type="hidden" name="f" value={active.join(',')} />}
+          <input
+            type="search"
+            name="q"
+            defaultValue={keyword}
+            placeholder="Phone number or call id"
+            aria-label="Search by phone number or call id"
+            className="w-[280px] rounded-pill border border-border-hairline bg-surface-card px-4 py-2 font-num text-[length:var(--size-ui)]"
+          />
+          <button
+            type="submit"
+            className="inline-flex cursor-pointer items-center rounded-pill border border-transparent bg-action-primary px-[14px] py-[7px] font-ui text-[length:var(--size-ui)] leading-[1.4] font-semibold text-text-on-accent"
+          >
+            Search
+          </button>
+          {scope.kind === 'search' ? (
+            <Link
+              href={hrefWith(params, { q: '', page: '' })}
+              className="text-[length:var(--size-ui)] font-medium text-text-link hover:underline"
+            >
+              Clear
+            </Link>
+          ) : null}
+        </form>
+      </div>
+
+      {/* A rejected window is answered with the default window and the reason,
+          never an empty screen (ADR 0006). */}
+      {window.error === undefined ? null : <Caveat>{window.error}</Caveat>}
+
+      {rows.length === 0 ? (
         <Card>
-          <EmptyState title="No calls on record.">
-            The pipeline writes a row when a call starts; none has yet, or the retention sweep
-            has taken them.
-          </EmptyState>
+          {tooShort ? (
+            <EmptyState title="A keyword under three characters matches nothing.">
+              Type at least three digits of the number, or the first characters of the call id.
+            </EmptyState>
+          ) : scope.kind === 'search' ? (
+            <EmptyState title={`No call matches “${scope.keyword}”.`}>
+              The search covers all history. A number the retention sweep has already
+              cleared from the call row cannot be found by it, however recent the call
+              (trap 5) — search the call id instead.
+            </EmptyState>
+          ) : (
+            <EmptyState title="No calls in this window.">
+              The pipeline writes a row when a call starts. Widen the window, or check that the
+              calls you expect are older than the retention sweep allows.
+            </EmptyState>
+          )}
         </Card>
       ) : (
-        <Card>
-          <TableScroll>
-            <Table>
-              <thead>
-                <tr>
-                  <Th>When</Th>
-                  <Th>
-                    Caller
-                    {/* Trap 5: a null number may be the retention sweep's work. */}
-                    <Caveat>not on record = expired by retention, or never written</Caveat>
-                  </Th>
-                  <Th align="end">Duration</Th>
-                  <Th>
-                    How it ended
-                    {/* The gloss for the quiet default, said once (§Language). */}
-                    <Caveat>quiet = granted, then caller_hangup — the caller hung up</Caveat>
-                  </Th>
-                  <Th align="end">
-                    Turns on record
-                    {/* Trap 1: rows written, not turns spoken. The caveat sits in
-                        the header once, not on every row. */}
-                    <Caveat>turns written; an unconsented call has none</Caveat>
-                  </Th>
-                  <Th>
-                    Recording
-                    {/* ADR 0004: a signal only — the player lives on the detail page. */}
-                    <Caveat>in the bucket; open the call to play it</Caveat>
-                  </Th>
-                  <Th align="end">
-                    Cost
-                    {/* Trap 3: the column keeps no trace of the unpriced legs. */}
-                    <Caveat>floor — unpriced models count 0</Caveat>
-                  </Th>
-                </tr>
-              </thead>
-              <tbody>
-                {calls.map((call) => {
-                  const cost = parseCostVnd(call.total_cost_vnd);
-                  return (
-                    // The whole row is the click target; the first cell carries
-                    // the real anchor the keyboard and a middle click use.
-                    <LinkRow key={call.id} href={`/calls/${call.id}`}>
-                      <Td>
-                        <Link href={`/calls/${call.id}`} className="text-text-link hover:underline">
-                          {formatWhen(call.started_at)}
-                        </Link>
-                      </Td>
-                      <Td>
-                        {call.caller_phone_e164 === null ? (
-                          <span className="text-text-muted">not on record</span>
-                        ) : (
-                          <span className="font-num">{call.caller_phone_e164}</span>
-                        )}
-                      </Td>
-                      <Td num>{formatDuration(call.started_at, call.ended_at)}</Td>
-                      <Td>
-                        <Ending call={call} />
-                      </Td>
-                      <Td num>{formatCount(call.turn_count)}</Td>
-                      <Td>
-                        {isFetchable(call.artifact_state, call.artifact_key_prefix) ? (
-                          <span className="text-text-body" title="recording available">
-                            <Icon name="play" size={16} />
-                            <span className="sr-only">recording available</span>
-                          </span>
-                        ) : (
-                          <span className="text-text-muted">not yet</span>
-                        )}
-                      </Td>
-                      <Td num>{cost === null ? 'unpriced' : `≥ ${formatNumber(cost)} VND`}</Td>
-                    </LinkRow>
-                  );
-                })}
-              </tbody>
-            </Table>
-          </TableScroll>
-        </Card>
+        <>
+          <div className="grid gap-[18px] lg:grid-cols-[minmax(0,1fr)_444px]">
+            <Histogram counts={hourHistogram(rows)} scope={heading} />
+            <StatRow stats={stats} />
+          </div>
+
+          <ChipStrip
+            base={BASE}
+            params={params}
+            active={active}
+            counts={counts}
+            allHref={hrefWith(params, { f: '', page: '' })}
+          />
+
+          <Card>
+            {filtered.length === 0 && active.length > 0 ? (
+              <EmptyState title="No call in this scope is like that.">
+                The chips intersect. Drop one, or{' '}
+                <Link href={hrefWith(params, { f: '', page: '' })} className="text-text-link">
+                  show all {String(counts.all)}
+                </Link>
+                .
+              </EmptyState>
+            ) : pageRows.length === 0 ? (
+              <EmptyState title={`Page ${String(page)} is past the end of this scope.`}>
+                <Link href={hrefWith(params, { page: '' })} className="text-text-link">
+                  Back to the first page
+                </Link>
+                .
+              </EmptyState>
+            ) : (
+              <CallTable bands={dayBands(pageRows)} config={config} now={now} />
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border-hairline pt-4">
+              <Caveat>
+                A quiet <span className="font-num">caller_hangup</span> is the ordinary ending —
+                consent granted, then the caller hung up; every other ending wears a tone. A red
+                tick in the turn strip is a turn that failed. Cost counts unpriced models as
+                zero, so every figure is a floor.
+              </Caveat>
+              {hasOlder ? (
+                <Link
+                  href={hrefWith(params, { page: String(page + 1) })}
+                  className="text-[length:var(--size-ui)] font-medium text-text-link hover:underline"
+                >
+                  Older calls →
+                </Link>
+              ) : (
+                <Caveat>
+                  {filtered.length <= PAGE_SIZE
+                    ? 'the whole list on one page, newest first'
+                    : 'the oldest page of this list'}
+                </Caveat>
+              )}
+            </div>
+          </Card>
+        </>
       )}
     </>
   );
