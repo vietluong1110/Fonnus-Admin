@@ -445,6 +445,44 @@ timing pairs `tts/sentence` with `tts/settled` per generation and, after W2-L3 F
 `tts/first_byte`. With F5 landed the same records are in Postgres (§The call timeline), so the
 bucket serves the audio and the verbatim files, not the timing.
 
+## Configuration (row A9 — the runtime config form; ADR 0011)
+
+The one screen that writes. It reads a tenant's `runtime_config` rows and the calls that
+ran after the newest one, and inserts one new row per save through `src/writes/runtime-config.ts`
+on the `console_editor` pool (ADR 0007). Everything it validates comes from two files copied
+byte for byte from the pipeline — `src/contract/config/runtime-document.ts` and
+`src/contract/domain/speakable.ts`, from `../Fonnus/app/src/config/runtime-document.ts` and
+`../Fonnus/app/src/domain/speakable.ts` — whose bytes the contract's two `contract-hash:`
+lines (§7) pin and `src/contract/contract-hash.test.ts` checks. **Re-copying is the only
+edit** these files ever get; a console-side change fails that test.
+
+| Table | Columns read | Trap / rule |
+|---|---|---|
+| `tenant_config` | `id`, `clinic_name` | The tenant the form edits; `pilot` today. One row → named in the head, no picker; more → a select (`?tenant=`). `clinic_name` may be null — the id is the label then |
+| `runtime_config` (by `tenant_id`, `order by id desc`, no `LIMIT`) | `id`, `tenant_id`, `config`, `created_at`, `created_by`, `note` | The newest row is "current" and pre-fills the form; every row is history, newest first. `config` is a complete document, never a patch: an absent leaf means the boot value applies (§3.4 absent ≠ false), and `{}` is a legal row meaning "back to boot config". A stored document the copied schema refuses (trap 6 — a row written by hand, or a copy that has gone stale) is shown raw with the refusal, never dropped and never pretended to parse; the form then starts from boot config and says why. `id` is `bigint` and arrives as a string. `created_by` renders as stored (`console:<account>` for rows this console wrote; the pipeline's own tools write other prefixes) |
+| `call_log` (by `tenant_id`, `started_at > <newest row>.created_at`, one aggregate) | `started_at`, `config_snapshot->'runtime'->>'version'` | "Latest row not applied": the count of calls since the newest row whose version is distinct from that row's id — absent (boot config, or a row the pipeline refused: `runtime` is omitted on a refused row, pipeline ADR 0020 D7) or older. Counts only; the reason lives in the pipeline's log line (`reason: timeout \| query \| invalid \| provider`) and in `fonnus_runtime_config_fallbacks_total` on `/metrics`, never in this database and never inferred here. `started_at` is stamped after the row read at call open (`../Fonnus/app/src/session/session-manager.ts:162` then `persistence/call-sink.ts:119`), so a call started before `created_at` never saw the row and is outside the window; one that was being answered as the row landed can be counted although it ran on the previous row legitimately — the copy says so |
+| `call_log` (by `tenant_id`, `order by started_at desc limit 1`) | `config_snapshot` | The "last answered call ran on" hint beside each field: the snapshot's flat key for the leaf (`src/configuration/flat-keys.ts`, a copy of `RUNTIME_KEY_MAP` at `../Fonnus/app/src/config/runtime.ts:164`), resolved per vendor from the snapshot's own `STT_PROVIDER` / `TTS_PROVIDER` first — a vendor's keys are present only on that vendor's call, so a missing key reads "—", never a default (§3.4). The three Deepgram keys renamed on 2026-09-17 are read under both spellings (`KEY_ALIASES`, ADR 0009). Null snapshot = "not recorded" |
+
+**The write** (contract §7, verbatim): `insert into runtime_config (tenant_id, config,
+created_by, note) values ($1, $2::jsonb, $3, $4) returning id, created_at;` — `$3` is
+`console:<account>`, `$4` the optional note. Refusals the console maps to a sentence by
+SQLSTATE: `42501` (the role cannot insert — the credential is not `console_editor` or its
+grant was revoked), `23514` (the document is not a JSON object), `23503` (the tenant does not
+exist). Any other refusal from the server reads "the save failed; nothing was written"; an
+error that is not the server's answer (the pool's client-side timeout, a dropped connection)
+reads "the save did not complete — reload and check the history before saving again", since
+the row may have been committed anyway. The reason goes to stderr only in both cases. What the console cannot check before the insert and the tab says so: the FreeSWITCH
+backstop (`turn.max_call_duration_sec + 30 ≤ MAX_CALL_SEC`, 330 in production — runbook
+§10), which vendors hold keys on the box (`/healthz` `vendors`, unreachable from the
+container — every vendor is offered, the pipeline refuses per call, pipeline ADR 0028 D7),
+and any rule that reads `.env`. The disclosure phrases of `text.greeting`
+(`disclosureAdvice`) are advice, never a refusal (pipeline ADR 0021 D5).
+
+**What it must not do.** Read a column of `runtime_config` or `tenant_config` the contract
+does not name; `UPDATE` or `DELETE` anything (a correction is a new row, a restore is a new
+row carrying an old document); infer why a row was not applied; edit the copied files;
+import the pipeline's schema across repos (the copy is the boundary, pipeline ADR 0013).
+
 ## Waiting on `../Fonnus`
 
 The table in `PLAN.md` §Waiting on `../Fonnus` is the live list; it is kept there, not

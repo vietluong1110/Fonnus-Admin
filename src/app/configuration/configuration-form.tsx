@@ -1,0 +1,700 @@
+'use client';
+
+/**
+ * The Configuration form and its review step — one `useActionState` over the
+ * one server action (ADR 0011 decision 5), rendering a form that is generated
+ * from the copied schema and never written by hand (decision 4).
+ *
+ * Everything here works with JavaScript off: the two steps are plain `<form>`
+ * posts, every button is a `<button name="intent">`, and the controls are
+ * native. What script adds is the vendor branch switch, "restore shipped text",
+ * and the pending state — conveniences, not the mechanism.
+ *
+ * The one rule script changes rather than decorates: with script running, only
+ * the SELECTED vendor's branch is in the DOM, so the other branch's leaves are
+ * not submitted at all. `documentFromForm` keeps every submitted leaf on
+ * purpose — a leaf of the branch not chosen is an `unrecognized_keys` refusal
+ * the operator reads, never a silently dropped edit — so with JavaScript off
+ * every branch renders and the schema refuses the wrong one at review. That is
+ * the designed fallback, and the `<noscript>` under each provider says so.
+ */
+
+import { useActionState, useState, useSyncExternalStore } from 'react';
+import { mergeBranches, type BranchMerge, type Field } from '@/configuration/document';
+import { renderValue } from '@/dashboard';
+import Badge from '@/ui/badge';
+import Button from '@/ui/button';
+import Card from '@/ui/card';
+import Caveat from '@/ui/caveat';
+import Checkbox from '@/ui/checkbox';
+import Input from '@/ui/input';
+import Select from '@/ui/select';
+import { Table, TableScroll, Td, Th } from '@/ui/table';
+import Textarea from '@/ui/textarea';
+import { submitConfiguration, type FormState } from './actions';
+
+/** The document's top-level keys, in the pipeline's own names (ADR 0013). */
+const GROUPS = ['turn', 'stt', 'llm', 'tts', 'text'] as const;
+type Group = (typeof GROUPS)[number];
+
+const FORM_ID = 'configuration-form';
+const BOOT_FORM_ID = 'configuration-boot';
+const GREETING_FORM_ID = 'configuration-restore-greeting';
+
+/** The store never changes: "is script running" is answered once and stays. */
+const subscribeToNothing = (): (() => void) => () => undefined;
+
+/** Rule 3 of `docs/redesign.md` §4.2, on the screen beside the Save button. */
+const EFFECT = 'takes effect on the next call answered; no call in progress changes';
+
+export interface ConfigurationFormProps {
+  tenant: string;
+  initial: FormState;
+  fields: Field[];
+  /**
+   * `renderValue` of the value the last answered call ran on, per leaf path;
+   * `null` where the snapshot carries no such key. Precomputed on the server so
+   * nothing here reaches for a query or a pool.
+   */
+  ranOn: Record<string, string | null>;
+  /** False when the tenant has answered no call: then "—" would be a lie. */
+  snapshotRecorded: boolean;
+  editable: boolean;
+  /** The document the form started from; the diff is taken against it. */
+  from: Record<string, unknown>;
+  /** `SHIPPED_TEXT`, keyed by the leaf under `text.`. */
+  shippedText: Record<string, string>;
+  /**
+   * `disclosureAdvice` on the greeting of the row the pipeline runs on now —
+   * the newest one, not the document this form started from; empty when there
+   * is none.
+   */
+  disclosure: string[];
+  /** The id of that row, for the banner to name; null when there is no row. */
+  disclosureRow: string | null;
+}
+
+export default function ConfigurationForm(props: ConfigurationFormProps) {
+  const [state, formAction, pending] = useActionState(submitConfiguration, props.initial);
+
+  if (state.step === 'review') {
+    return (
+      <ReviewStep
+        state={state}
+        formAction={formAction}
+        pending={pending}
+        editable={props.editable}
+        from={props.from}
+      />
+    );
+  }
+  return <EditStep {...props} state={state} formAction={formAction} pending={pending} />;
+}
+
+/* ------------------------------------------------------------------ edit */
+
+function EditStep({
+  fields,
+  ranOn,
+  snapshotRecorded,
+  editable,
+  from,
+  shippedText,
+  disclosure,
+  disclosureRow,
+  state,
+  formAction,
+  pending,
+}: ConfigurationFormProps & {
+  state: Extract<FormState, { step: 'edit' }>;
+  formAction: (formData: FormData) => void;
+  pending: boolean;
+}) {
+  const { values, set, tenant } = state;
+
+  // Only what script has to own: which leaves are in the row, which vendor
+  // branch is chosen, and the texts a restore button has refilled. Every other
+  // control is uncontrolled, so typing in one does not re-render the other 53.
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set(set));
+  const [providers, setProviders] = useState<Record<string, string>>(() => ({
+    'stt.provider': set.includes('stt.provider') ? (values['stt.provider'] ?? '') : '',
+    'tts.provider': set.includes('tts.provider') ? (values['tts.provider'] ?? '') : '',
+  }));
+  const [restored, setRestored] = useState<Record<string, { value: string; generation: number }>>(
+    {},
+  );
+
+  // False on the server and through hydration, true once React is driving the
+  // page: exactly the divergence `useSyncExternalStore`'s server snapshot is
+  // for. So the markup a browser without script keeps is the one carrying every
+  // vendor branch, and the branch switch starts hiding the others only where
+  // there is script to switch them back.
+  const scripted = useSyncExternalStore(subscribeToNothing, () => true, () => false);
+
+  const tick = (path: string, on: boolean): void => {
+    setChosen((current) => {
+      const next = new Set(current);
+      if (on) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+  };
+
+  /**
+   * The leaves one group renders: with script, the chosen vendor's branch only;
+   * without it, every branch, each path once — a path several branches share
+   * (`stt.model`, `tts.params.speed`) is one control carrying the union of what
+   * those branches offer, not the first branch's alone.
+   */
+  const visible = (group: Group): BranchMerge[] => {
+    const provider = providers[`${group}.provider`] ?? '';
+    const byPath = new Map<string, Field[]>();
+    for (const field of fields) {
+      if (field.group !== group) continue;
+      if (field.vendor !== null && scripted && field.vendor !== provider) continue;
+      const branches = byPath.get(field.path);
+      if (branches === undefined) byPath.set(field.path, [field]);
+      else branches.push(field);
+    }
+    return [...byPath.values()].map(mergeBranches);
+  };
+
+  return (
+    <>
+      {disclosure.length === 0 ? null : (
+        <Card
+          tone="warm"
+          title={
+            disclosureRow === null
+              ? 'Disclosure advice on the greeting in the current row'
+              : `Disclosure advice on the greeting in row #${disclosureRow}`
+          }
+        >
+          <ul className="m-0 flex list-disc flex-col gap-1 pl-5 text-[length:var(--size-ui)]">
+            {disclosure.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <Caveat>
+            advice, never a refusal: the pipeline speaks whatever greeting the row carries
+            (pipeline ADR 0021 D5). Restoring opens the review step with the shipped greeting
+            in place — the save is still one more click.
+          </Caveat>
+          {/* Its own form, carrying the starting document with one leaf
+              replaced: a click here must not depend on what the operator has
+              since typed into the form below. */}
+          <form id={GREETING_FORM_ID} action={formAction} className="contents">
+            <input type="hidden" name="tenant" value={tenant} />
+            <input type="hidden" name="from" value={JSON.stringify(from)} />
+            {set
+              .filter((path) => path !== 'text.greeting')
+              .map((path) => (
+                <input key={path} type="hidden" name={`set:${path}`} value="on" />
+              ))}
+            {Object.entries(values)
+              .filter(([path]) => path !== 'text.greeting')
+              .map(([path, value]) => (
+                <input key={path} type="hidden" name={path} value={value} />
+              ))}
+            <input type="hidden" name="set:text.greeting" value="on" />
+            <input type="hidden" name="text.greeting" value={shippedText['greeting'] ?? ''} />
+            {editable ? (
+              <div>
+                <Button type="submit" name="intent" value="review" disabled={pending}>
+                  restore shipped greeting
+                </Button>
+              </div>
+            ) : null}
+          </form>
+        </Card>
+      )}
+
+      {state.failure === null ? null : (
+        <p className="mb-0 text-[length:var(--size-ui)] text-[color:var(--error)]">
+          {state.failure}
+        </p>
+      )}
+
+      <form id={FORM_ID} action={formAction} className="flex flex-col gap-[18px]">
+        <input type="hidden" name="tenant" value={tenant} />
+        {/* The document the diff is taken against, carried as JSON so the review
+            step compares against the same starting point the form opened on. */}
+        <input type="hidden" name="from" value={JSON.stringify(from)} />
+
+        {GROUPS.map((group) => (
+          <Card key={group} title={group}>
+            <div className="flex flex-col">
+              {visible(group).map(({ field, vendorBounds }) => (
+                <FieldRow
+                  key={field.path}
+                  field={field}
+                  vendorBounds={vendorBounds}
+                  isSet={chosen.has(field.path)}
+                  onTick={tick}
+                  value={restored[field.path]?.value ?? values[field.path] ?? ''}
+                  generation={restored[field.path]?.generation ?? 0}
+                  provider={providers[`${field.group}.provider`] ?? ''}
+                  onProvider={(next) => {
+                    setProviders((current) => ({ ...current, [field.path]: next }));
+                    tick(field.path, next !== '');
+                  }}
+                  onRestore={(text) => {
+                    setRestored((current) => ({
+                      ...current,
+                      [field.path]: {
+                        value: text,
+                        generation: (current[field.path]?.generation ?? 0) + 1,
+                      },
+                    }));
+                    tick(field.path, true);
+                  }}
+                  shipped={
+                    field.group === 'text' ? shippedText[field.path.slice('text.'.length)] : undefined
+                  }
+                  ranOn={ranOn[field.path] ?? null}
+                  snapshotRecorded={snapshotRecorded}
+                  editable={editable}
+                />
+              ))}
+            </div>
+          </Card>
+        ))}
+      </form>
+
+      {/* "Back to boot config" is a form of its own with no `set:` entry at all,
+          so the document it proposes is `{}` — which is a legal row meaning the
+          boot value applies to every leaf (contract §3.4). A button inside the
+          form above could not express "nothing ticked" without unticking 54
+          boxes. */}
+      <form id={BOOT_FORM_ID} action={formAction} className="contents">
+        <input type="hidden" name="tenant" value={tenant} />
+        <input type="hidden" name="from" value={JSON.stringify(from)} />
+      </form>
+
+      {editable ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" form={FORM_ID} name="intent" value="review" disabled={pending}>
+            Review
+          </Button>
+          <Button
+            type="submit"
+            form={BOOT_FORM_ID}
+            name="intent"
+            value="review"
+            variant="secondary"
+            disabled={pending}
+          >
+            Back to boot config
+          </Button>
+          <Caveat>{EFFECT}</Caveat>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------- one leaf */
+
+function FieldRow({
+  field,
+  vendorBounds,
+  isSet,
+  onTick,
+  value,
+  generation,
+  provider,
+  onProvider,
+  onRestore,
+  shipped,
+  ranOn,
+  snapshotRecorded,
+  editable,
+}: {
+  field: Field;
+  vendorBounds: string | null;
+  isSet: boolean;
+  onTick: (path: string, on: boolean) => void;
+  value: string;
+  /** Bumped by a restore; it is the control's `key`, so the box refills. */
+  generation: number;
+  provider: string;
+  onProvider: (next: string) => void;
+  onRestore: (text: string) => void;
+  shipped: string | undefined;
+  ranOn: string | null;
+  snapshotRecorded: boolean;
+  editable: boolean;
+}) {
+  const { path } = field;
+  const isProvider = path === 'stt.provider' || path === 'tts.provider';
+  const flatKey =
+    typeof field.flatKey === 'string' ? field.flatKey : (field.flatKey[provider] ?? '—');
+
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 border-t border-border-hairline py-3 first:border-t-0 first:pt-0">
+      <Checkbox
+        name={`set:${path}`}
+        label="set"
+        checked={isSet}
+        disabled={!editable}
+        onChange={(event) => {
+          onTick(path, event.target.checked);
+        }}
+        className="pt-[9px]"
+      />
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <label htmlFor={path} className="text-[length:var(--size-ui)] font-medium">
+            {path}
+          </label>
+          <span className="font-num text-[length:var(--size-eyebrow)] text-text-muted">
+            {flatKey}
+          </span>
+          {shipped === undefined ? null : (
+            <button
+              type="button"
+              disabled={!editable}
+              onClick={() => {
+                onRestore(shipped);
+              }}
+              className="cursor-pointer text-[length:var(--size-eyebrow)] font-medium text-text-link hover:underline disabled:cursor-default disabled:text-text-muted disabled:no-underline"
+            >
+              restore shipped text
+            </button>
+          )}
+        </div>
+
+        <Control
+          field={field}
+          value={value}
+          generation={generation}
+          provider={provider}
+          onProvider={onProvider}
+          editable={editable}
+          isProvider={isProvider}
+        />
+
+        <Hints
+          field={field}
+          vendorBounds={vendorBounds}
+          ranOn={ranOn}
+          snapshotRecorded={snapshotRecorded}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Control({
+  field,
+  value,
+  generation,
+  provider,
+  onProvider,
+  editable,
+  isProvider,
+}: {
+  field: Field;
+  value: string;
+  generation: number;
+  provider: string;
+  onProvider: (next: string) => void;
+  editable: boolean;
+  isProvider: boolean;
+}) {
+  const { path, kind } = field;
+  // The control is uncontrolled and remounts when a restore bumps the
+  // generation; that is the whole mechanism by which "restore shipped text"
+  // refills a box without making every keystroke a re-render.
+  const key = `${path}:${String(generation)}`;
+
+  if (isProvider) {
+    return (
+      <>
+        <Select
+          id={path}
+          name={path}
+          value={provider}
+          disabled={!editable}
+          onChange={(event) => {
+            onProvider(event.target.value);
+          }}
+        >
+          <option value="">not set — this leg leaves the row</option>
+          {(field.options ?? []).map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </Select>
+        <noscript>
+          <Caveat>
+            without JavaScript every vendor&apos;s parameters are shown at once; a parameter of
+            a vendor this row does not name refuses the whole row at review, which is where
+            you will read it
+          </Caveat>
+        </noscript>
+      </>
+    );
+  }
+
+  if (kind === 'boolean') {
+    // A two-option select, never a checkbox: an HTML checkbox submits `on`,
+    // which the copied schema refuses, and an unticked one submits nothing at
+    // all — which would read as "not set" (contract §3.4: absent ≠ false).
+    return (
+      <Select key={key} id={path} name={path} defaultValue={value} disabled={!editable}>
+        <Unknown value={value} options={['true', 'false']} />
+        <option value="true">true</option>
+        <option value="false">false</option>
+      </Select>
+    );
+  }
+
+  if (kind === 'enum') {
+    const options = field.options ?? [];
+    return (
+      <Select key={key} id={path} name={path} defaultValue={value} disabled={!editable}>
+        <Unknown value={value} options={options} />
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </Select>
+    );
+  }
+
+  if (kind === 'integer' || kind === 'number') {
+    return (
+      <Input
+        key={key}
+        id={path}
+        name={path}
+        type="number"
+        step={kind === 'integer' ? '1' : 'any'}
+        // An exclusive bound is not expressible as `min`/`max`, so it stays out
+        // of the attribute and lives in the hint instead — the browser must not
+        // accept a value the schema then refuses, nor refuse one it accepts.
+        min={field.min !== null && !field.minExclusive ? field.min : undefined}
+        max={field.max !== null && !field.maxExclusive ? field.max : undefined}
+        defaultValue={value}
+        disabled={!editable}
+      />
+    );
+  }
+
+  if (kind === 'textarea' || kind === 'list' || kind === 'record') {
+    return (
+      <Textarea
+        key={key}
+        id={path}
+        name={path}
+        rows={kind === 'textarea' ? 5 : 3}
+        defaultValue={value}
+        disabled={!editable}
+        className={kind === 'textarea' ? undefined : 'font-num'}
+      />
+    );
+  }
+
+  return <Input key={key} id={path} name={path} defaultValue={value} disabled={!editable} />;
+}
+
+/**
+ * A stored value the schema does not offer — a row written by hand, or a
+ * catalogue the pipeline has moved on from (trap 6). It is offered as its own
+ * option rather than dropped, so the select does not silently change the row's
+ * value to the first legal one.
+ */
+function Unknown({ value, options }: { value: string; options: readonly string[] }) {
+  if (value === '' || options.includes(value)) return null;
+  return <option value={value}>{value} — not a value this build offers</option>;
+}
+
+function Hints({
+  field,
+  vendorBounds,
+  ranOn,
+  snapshotRecorded,
+}: {
+  field: Field;
+  vendorBounds: string | null;
+  ranOn: string | null;
+  snapshotRecorded: boolean;
+}) {
+  const bounds: string[] = [];
+  if (field.min !== null) {
+    bounds.push(`${field.minExclusive ? 'greater than' : 'at least'} ${String(field.min)}`);
+  }
+  if (field.max !== null) {
+    bounds.push(`${field.maxExclusive ? 'less than' : 'at most'} ${String(field.max)}`);
+  }
+
+  return (
+    <>
+      {bounds.length === 0 ? null : <Caveat>{bounds.join(' · ')}</Caveat>}
+      {/* A merged control carries no bound of its own: each vendor bounds the
+          leaf its own way, and the row names one vendor. */}
+      {vendorBounds === null ? null : <Caveat>{vendorBounds}</Caveat>}
+      {field.kind === 'list' ? (
+        <Caveat>
+          one entry per line
+          {field.path === 'llm.params.stop'
+            ? ' — a stop sequence that itself contains a line break cannot be written here'
+            : ''}
+        </Caveat>
+      ) : null}
+      {field.kind === 'record' ? <Caveat>a JSON object, as stored</Caveat> : null}
+      {/* Contract §3.4: the snapshot is the only record of what a leaf's value
+          actually WAS on a call. A key the snapshot does not carry is "—" —
+          that vendor did not run — and never this build's default. */}
+      <Caveat>
+        last answered call ran on:{' '}
+        {!snapshotRecorded ? 'not recorded' : ranOn === null ? '—' : ranOn}
+      </Caveat>
+    </>
+  );
+}
+
+/* ---------------------------------------------------------------- review */
+
+function ReviewStep({
+  state,
+  formAction,
+  pending,
+  editable,
+  from,
+}: {
+  state: Extract<FormState, { step: 'review' }>;
+  formAction: (formData: FormData) => void;
+  pending: boolean;
+  editable: boolean;
+  from: Record<string, unknown>;
+}) {
+  const blocked = state.issues.length > 0;
+
+  return (
+    <form action={formAction} className="flex flex-col gap-[18px]">
+      <input type="hidden" name="tenant" value={state.tenant} />
+      <input type="hidden" name="from" value={JSON.stringify(from)} />
+      {/* The proposed document, carried back so `save` can parse it again on the
+          server — the client's copy is read, never trusted. */}
+      <input type="hidden" name="document" value={JSON.stringify(state.document)} />
+      {/* The form as it was left, so "Edit" gives it back leaf for leaf. */}
+      {state.set.map((path) => (
+        <input key={`set:${path}`} type="hidden" name={`set:${path}`} value="on" />
+      ))}
+      {Object.entries(state.values).map(([path, value]) => (
+        <input key={path} type="hidden" name={path} value={value} />
+      ))}
+
+      <Card title="Proposed document" sub="the whole row, never a patch — an absent leaf means the boot value applies">
+        <pre className="m-0 overflow-x-auto rounded-md bg-surface-page p-3 font-num text-[length:var(--size-ui)] leading-[1.5] whitespace-pre-wrap">
+          {JSON.stringify(state.document, null, 2)}
+        </pre>
+      </Card>
+
+      <Card title={`Diff — ${String(state.diff.length)} leaves`}>
+        {state.diff.length === 0 ? (
+          <Caveat>nothing changes: this document is the one the form started from</Caveat>
+        ) : (
+          <TableScroll>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>path</Th>
+                  <Th>change</Th>
+                  <Th>from</Th>
+                  <Th>to</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.diff.map((entry) => (
+                  <tr key={entry.path}>
+                    <Td>{entry.path}</Td>
+                    <Td>{entry.change}</Td>
+                    <Td>
+                      {entry.from === undefined ? (
+                        <span className="text-text-muted">not set</span>
+                      ) : (
+                        <span className="font-num">{renderValue(entry.from)}</span>
+                      )}
+                    </Td>
+                    <Td>
+                      {entry.to === undefined ? (
+                        <span className="text-text-muted">not set</span>
+                      ) : (
+                        <span className="font-num">{renderValue(entry.to)}</span>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableScroll>
+        )}
+      </Card>
+
+      {blocked ? (
+        <Card tone="rose" title="The copied schema refuses this document">
+          <div className="flex flex-col gap-2">
+            {state.issues.map((issue) => (
+              <div key={`${issue.path}:${issue.message}`} className="flex flex-wrap items-baseline gap-2">
+                <Badge tone="error">{issue.path === '' ? 'the document' : issue.path}</Badge>
+                <span className="text-[length:var(--size-ui)]">{issue.message}</span>
+              </div>
+            ))}
+          </div>
+          <Caveat>
+            the pipeline runs this same schema on the row, so a row it refuses would leave every
+            call on boot config — Save is not offered until these are gone
+          </Caveat>
+        </Card>
+      ) : null}
+
+      {state.advice.length === 0 ? null : (
+        <Card tone="warm" title="Worth knowing before you save">
+          <div className="flex flex-col gap-2">
+            {state.advice.map((line) => (
+              <div key={line} className="flex flex-wrap items-baseline gap-2">
+                <Badge tone="warning">advice</Badge>
+                <span className="text-[length:var(--size-ui)]">{line}</span>
+              </div>
+            ))}
+          </div>
+          <Caveat>advice never blocks a save; the pipeline evaluates none of it</Caveat>
+        </Card>
+      )}
+
+      <Card title="Save this as a new row">
+        <label htmlFor="note" className="text-[length:var(--size-ui)] font-medium">
+          note
+        </label>
+        <Textarea id="note" name="note" rows={2} defaultValue={state.note} />
+        <Caveat>
+          optional, stored on the row as written — what this change is for, so the history reads
+          as a record rather than as a list of documents
+        </Caveat>
+        <Caveat>{EFFECT}</Caveat>
+
+        {state.failure === null ? null : (
+          <p className="mb-0 text-[length:var(--size-ui)] text-[color:var(--error)]">
+            {state.failure}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" name="intent" value="edit" variant="secondary" disabled={pending}>
+            Edit
+          </Button>
+          {editable && !blocked ? (
+            <Button type="submit" name="intent" value="save" disabled={pending}>
+              {pending ? 'Saving…' : 'Save'}
+            </Button>
+          ) : null}
+        </div>
+      </Card>
+    </form>
+  );
+}

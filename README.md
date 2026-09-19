@@ -77,6 +77,23 @@ Every key is checked once, when the server starts (`src/instrumentation.ts`): a 
 `.env` stops `pnpm dev`, `pnpm start` and the container at boot with the message naming
 the key, in the terminal or `docker logs` — never as a page error after the first request.
 
+### The Configuration tab (the one write surface so far)
+
+`/configuration` shows the tenant's current `runtime_config` row and a form generated
+from a byte-exact copy of the pipeline's runtime document schema (`src/contract/`,
+drift-tested against the two `contract-hash` lines of the read contract §7 — re-copy
+from `../Fonnus/app/src/...` when that test fails, never edit the bytes). A save appends
+a new row through `EDITOR_DATABASE_URL` under `console:<account>`; without that key the
+form is read-only and says so, and without the account header it refuses to write. The
+smoke check of a save, on the box: save one row, then
+
+```bash
+select id, created_by, note from runtime_config order by id desc limit 1;
+```
+
+shows `console:<account>`, and the next call's `config_snapshot->'runtime'->>'version'`
+equals that id (the tab's "latest row not applied" warning stays silent).
+
 ## Run locally against the pipeline's dev database
 
 `../Fonnus/docker-compose.yml` runs a dev Postgres on `127.0.0.1`; the port is whatever

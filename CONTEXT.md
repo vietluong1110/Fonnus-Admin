@@ -85,9 +85,23 @@ caveats; the decisions stay with the person reading it.
    Vietnix S3 landed with `../Fonnus` PLAN row W2-L1 on 2026-09-07; `call_log.artifact_state`
    says whether a given call's files are in the bucket yet. The bucket holds internal test calls only for as long as this
    repo's account-wide key exists off the VPS (`../Fonnus` ADR 0019).
+5. **Configuration** (`/configuration`, row A9, ADR 0011) — the console's first write
+   surface: the tenant's current `runtime_config` row, a form generated from a byte-exact
+   copy of the pipeline's runtime document schema (drift-tested against the two
+   `contract-hash` lines of contract §7), each leaf beside the value the last answered call
+   actually ran on, a review step that shows the proposed document and its diff against the
+   current row before anything is written, then a new row appended as a whole-document
+   replace under `console:<account>` — it takes effect on the next call answered, no call
+   in progress changes. The row history sits under the form; any row can be loaded back into
+   the form, so a restore is a new row too. Three warnings travel with what they qualify:
+   the latest row not applied (counted from `config_snapshot->'runtime'->>'version'` on
+   the calls since the row, the reason pointed at the pipeline's log and
+   `fonnus_runtime_config_fallbacks_total`, never inferred), the disclosure advice on the
+   greeting (advice, never a refusal), and every vendor offered while the box refuses the
+   ones it holds no keys for (`/healthz vendors` is unreachable from the container).
 
 Not here: any write beyond the two the read contract's §7 allows — a configuration edit
-(row A9) and an annotation on a call (row A10), both appended as rows under the account
+(row A9, shipped) and an annotation on a call (row A10), both appended as rows under the account
 the proxy authenticated (ADR 0007). Bookings, notes, tenant configuration, the onboarding
 UI, the landing page are other repos; a third kind of write is ADR 0007's revisit trigger.
 

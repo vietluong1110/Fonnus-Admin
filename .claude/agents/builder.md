@@ -49,14 +49,16 @@ complete spec up front — that is what the input contract guarantees; hold it t
   command is unfinished work: wire it or flag it in the report.
 - The spine is law: read only the columns `docs/upstream.md` and the contract name;
   hand-written SQL with parameters, never string-built, through the one `pg` pool
-  (ADR 0001); no `INSERT`/`UPDATE`/`DELETE` anywhere; `turn.caller_text` and every other
+  (ADR 0001); no `UPDATE` or `DELETE` anywhere, and `INSERT` only in the two write
+  modules under `src/writes/` through the editor pool (ADR 0007 — the tree scans in
+  `src/writes.test.ts` hold it); `turn.caller_text` and every other
   caller-derived byte is rendered only when the call's `consent_record.outcome` is
   `granted`; each caveat (cost floor, consented-calls-only, first-sentence-only,
   retention age) travels on screen with the number it qualifies. A rule copied from the
   pipeline (leg partition, percentile rule, event pairing) is copied with a comment naming
   its source file and pinned by a test against the pipeline's names.
 - New dependencies are a fork, not a decision (ADR 0001 keeps the stack small).
-- Secrets: only `DATABASE_URL` and, later, the bucket key, from `.env`; never a pipeline
+- Secrets: only `DATABASE_URL`, `EDITOR_DATABASE_URL` and the bucket key, from `.env`; never a pipeline
   secret, never a value committed.
 - Match the surrounding code's idiom and comment density; identifiers use the pipeline's
   terms.

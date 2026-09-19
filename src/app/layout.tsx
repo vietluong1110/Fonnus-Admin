@@ -41,13 +41,15 @@ const plex = IBM_Plex_Sans({
 
 export const metadata: Metadata = {
   title: 'Fonnus Admin',
-  description: 'Read-only console over the Fonnus voice pipeline.',
+  description:
+    'The internal console over the Fonnus voice pipeline: it reads the pipeline’s database and appends the two rows the read contract allows.',
 };
 
-/** The console's destinations. `/dashboard` lands in Piece 2 (PLAN.md row A2). */
+/** The console's destinations. */
 const NAV = [
   { href: '/', label: 'Overview', icon: 'report' },
   { href: '/calls', label: 'Calls', icon: 'answered' },
+  { href: '/configuration', label: 'Configuration', icon: 'settings' },
 ] as const;
 
 /*
@@ -112,9 +114,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
             {/* What this console is and who it is doing it as. Muted, never the
                 accent: the accent is for what the operator acts on, and this is
-                not an action (ADR 0003). "read-only" stays in the line until the
-                first write module lands (ADR 0007 decision 6). Hidden on the
-                64px rail, like every other piece of sidebar text. */}
+                not an action (ADR 0003). "read-only" left the line when the
+                first write module landed (ADR 0007 decision 6); "edits" does not
+                replace it, because decision 1 allows two inserts, not editing.
+                Hidden on the 64px rail, like every other piece of sidebar text. */}
             <footer
               className="mt-auto px-3 pt-4 text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted max-[900px]:hidden"
               title={
@@ -123,7 +126,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                   : undefined
               }
             >
-              console · read-only · {account ?? 'no account'}
+              console · {account ?? 'no account'}
             </footer>
           </aside>
 

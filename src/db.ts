@@ -75,3 +75,14 @@ export function getEditorPool(): Pool | undefined {
   globalPools[EDITOR_POOL_KEY] = pool;
   return pool;
 }
+
+/**
+ * Whether the editor credential is configured at all — the question a write
+ * surface asks before it renders a submit button, answered without creating a
+ * pool or opening a socket. It lives here rather than in the screen so that the
+ * name `getEditorPool` stays inside this file and the write modules, which is
+ * what `src/writes.test.ts` holds (ADR 0007 decision 3).
+ */
+export function editingConfigured(): boolean {
+  return getConfig().editorDatabaseUrl !== undefined;
+}

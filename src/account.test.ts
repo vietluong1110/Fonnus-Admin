@@ -129,9 +129,16 @@ describe('the account footer in the shell (ADR 0007 decision 6)', () => {
   // both of its endings, and the rule that it is muted and never accented.
   it('draws both endings of the line, with the reason for the missing one', () => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(layout())?.[0] ?? '';
-    expect(footer).toContain('console · read-only ·');
+    expect(footer).toContain('console · ');
     expect(footer).toContain("account ?? 'no account'");
     expect(footer).toContain('did not come through the reverse proxy');
+  });
+
+  it('dropped "read-only" when the first write module landed (ADR 0007 decision 6)', () => {
+    // The word is wrong the moment a screen can insert, and "edits" would be
+    // wrong too — decision 1 allows two inserts, not editing.
+    const footer = /<footer[\s\S]*?<\/footer>/.exec(layout())?.[0] ?? '';
+    expect(footer).not.toContain('read-only');
   });
 
   it('is muted, never accent-coloured — a state is not an action', () => {
@@ -140,9 +147,13 @@ describe('the account footer in the shell (ADR 0007 decision 6)', () => {
     expect(footer).not.toContain('accent');
   });
 
-  it('is read once, in the layout', () => {
+  it('is read in the shell and on the one screen that decides whether it may write', () => {
+    // The shell reads it for the footer; the Configuration page reads it to
+    // decide whether the form is editable at all. Every other surface that
+    // needs the account goes through `requireAccount` on the write path.
     expect(filesMatching(/\bcurrentAccount\b/).sort()).toEqual([
       'src/account.ts',
+      'src/app/configuration/page.tsx',
       'src/app/layout.tsx',
     ]);
   });

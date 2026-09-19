@@ -14,7 +14,19 @@ import { describe, expect, it } from 'vitest';
  * ships in: it is wired now and holds from the first write module on.
  */
 
-/** Every non-test source file under `src/`, as `src/…` paths with their text. */
+/**
+ * Comments stripped, the way `../Fonnus/scripts/check-config.ts` does it before
+ * it reads a file's imports: what the scans below look for are statements, and
+ * prose that happens to spell one is not a statement. The copied contract file
+ * of ADR 0011 is what forced this — it explains that the speakable filter would
+ * "delete from this text", and its bytes are pinned and cannot be reworded. The
+ * `[^:]` guard keeps a `https://` link from reading as a line comment.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+/** Every non-test source file under `src/`, as `src/…` paths with their code. */
 function sources(): { path: string; text: string }[] {
   const root = fileURLToPath(new URL('.', import.meta.url));
   const found: { path: string; text: string }[] = [];
@@ -25,7 +37,7 @@ function sources(): { path: string; text: string }[] {
       else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
         found.push({
           path: `src/${relative(root, full).split(sep).join('/')}`,
-          text: readFileSync(full, 'utf8'),
+          text: withoutComments(readFileSync(full, 'utf8')),
         });
       }
     }
@@ -76,8 +88,13 @@ describe('the editor pool belongs to the write modules (ADR 0007 decision 3)', (
     ).toEqual([]);
   });
 
-  it('creates and probes it in exactly those two places today', () => {
-    expect(matching(/\bgetEditorPool\b/)).toEqual([...ALLOWED].sort());
+  it('creates and probes it in exactly those two places, and writes from one module today', () => {
+    // The write modules are the third place the name may appear, and they are
+    // listed one by one: a new file under `src/writes/` is a new row this
+    // console writes, which is a decision, never a side effect of a refactor.
+    expect(matching(/\bgetEditorPool\b/)).toEqual(
+      [...ALLOWED, 'src/writes/runtime-config.ts'].sort(),
+    );
   });
 
   it('never reads through the read pool from a write module', () => {
