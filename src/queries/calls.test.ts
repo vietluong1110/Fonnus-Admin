@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 const query = vi.fn();
 vi.mock('@/db', () => ({ getPool: () => ({ query }) }));
 
-const { callsInScope, getCallEvents } = await import('./calls');
+const { callsInScope, getCallAnnotations, getCallEvents } = await import('./calls');
 const { parseScope } = await import('@/calls-scope');
 
 const NOW = new Date('2026-09-07T10:00:00Z');
@@ -117,6 +117,41 @@ describe('getCallEvents', () => {
     // The completeness verdict is count(*) against max(seq) over this array, so
     // a bounded read would make it lie (trap 8, ADR 0010).
     expect(sql).not.toMatch(/limit/i);
+    expect(values).toEqual(['330052e1-0000-4000-8000-000000000000']);
+  });
+});
+
+describe('getCallAnnotations', () => {
+  it('reads the eleven columns of call_annotation the contract names, and no other', async () => {
+    query.mockResolvedValue({ rows: [] });
+    await getCallAnnotations('330052e1-0000-4000-8000-000000000000');
+
+    const { sql, values } = lastCall();
+    for (const column of [
+      'id',
+      'call_id',
+      'from_ms',
+      'to_ms',
+      'label',
+      'caller_said',
+      'note',
+      'supersedes',
+      'text_expired_at',
+      'created_by',
+      'created_at',
+    ]) {
+      expect(sql).toContain(column);
+    }
+    expect(sql).toContain('from call_annotation');
+    expect(sql).toContain('where call_id = $1');
+    // The order a correction is written in: a superseding row always comes
+    // after the row it names (contract §3, `callEvidenceOf`).
+    expect(sql).toContain('order by id');
+    // "Current" is derived over this whole array, and so is the history the
+    // card shows on demand: a bounded read would make both lie.
+    expect(sql).not.toMatch(/limit/i);
+    // Read-only, as every statement of this file is (CLAUDE.md §Ground rules).
+    expect(sql).not.toMatch(/insert|update|delete/i);
     expect(values).toEqual(['330052e1-0000-4000-8000-000000000000']);
   });
 });

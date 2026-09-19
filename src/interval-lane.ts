@@ -85,17 +85,30 @@ export const DEAF_EXPLANATION = 'deaf — stt exhausted';
 
 const UNSUPPORTED_NOTE = "after the trail's hole — unsupported";
 
-/** Seconds on the recording clock, as `src/intervals.ts` prints every offset. */
-function seconds(ms: number): string {
+/**
+ * Seconds on the recording clock, as every column of `intervals.txt` prints
+ * them (`call-evidence.ts:1041-1043`) and every offset of the card follows.
+ */
+export function seconds(ms: number): string {
   return (ms / 1000).toFixed(2);
 }
 
 /**
- * The empty cell `src/intervals.ts` prints (`call-evidence.ts:566`): a column
- * that has nothing is never blank, it says so. Held here too because the card
- * asks whether a cell has content before it puts a second line under it.
+ * The empty cell (`call-evidence.ts:566`): a column that has nothing is never
+ * blank, it says so. The card asks whether a cell has content before it puts
+ * a second line under it.
  */
 export const EMPTY_CELL = '—';
+
+/**
+ * The two covers a caller-derived text wears instead of its bytes, explained
+ * by `INTERVAL_CAVEATS.withheld` below. They live here, with the wording,
+ * rather than in `src/intervals.ts`, so that `src/annotations.ts` — which the
+ * interval cells consume — can share them without importing its own consumer.
+ */
+export const WITHHELD = '[withheld]';
+/** This console's own reading of trap 10: a granted call whose payload is gone aged out. */
+export const EXPIRED = '[expired]';
 
 /** What a screen reader says for a segment: who held the line, and from when to when. */
 export function segmentLabel(segment: LaneSegment): string {
@@ -214,7 +227,19 @@ export const INTERVAL_CAVEATS = {
     'A canned line with no audible byte on the trail holds the line until the next bot intent — a synthesis that produced no audio is one cause (pipeline ISSUES L10-260917-1); caller sound under it is listed there.',
   unheard:
     'unheard — the recogniser feed was muted at that instant, read from the trail’s mute/unmute effects.',
+  annotation:
+    'annotation — what a person who heard the call wrote afterwards (contract §3), current rows only: a corrected or retracted row is history, shown on demand. One row is shown on every interval it overlaps (§8). A call without granted consent, or without a recording_started_at, has no rows at all by the insert gate — not because nothing was wrong on it (trap 13).',
 } as const;
+
+/**
+ * The summary of the history block, which is this console's own label for what
+ * the pipeline's bundle prints as `annotations.txt`. Both counts are named
+ * because the difference between them is the block's whole reason to exist:
+ * the rows the table does not show are the corrections and the retractions.
+ */
+export function annotationHistorySummary(rows: number, current: number): string {
+  return `Annotation history — ${formatNumber(rows)} rows, ${formatNumber(current)} current`;
+}
 
 /** The lane with no trail to draw: the turn blocks stay, under the reason. */
 export const NO_TRAIL_LANE_CAVEAT = 'no event trail on record — lane drawn from turn marks';

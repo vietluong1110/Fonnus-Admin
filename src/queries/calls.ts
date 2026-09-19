@@ -284,3 +284,72 @@ export async function getCallEvents(callId: string): Promise<CallEventRow[]> {
   );
   return rows;
 }
+
+/**
+ * One `call_annotation` row — the eleven columns
+ * `../Fonnus/docs/read-contract.md` §3 names, and no other. Written by a person
+ * who heard the call, after it (pipeline ADR 0027); the pipeline writes none of
+ * them, and this repo's own form is PLAN row A10.
+ */
+export interface AnnotationRow {
+  /** §3: `bigint`, which `pg` hands over as a string to keep the precision. */
+  id: string;
+  call_id: string;
+  /** §3: milliseconds on the recording clock, 0 being `recording_started_at`. */
+  from_ms: number;
+  /** §3: the same clock; a CHECK enforces `to_ms > from_ms`. */
+  to_ms: number;
+  /** §3.1 vocabulary; null is a retraction of `supersedes`, never "unlabelled" (trap 13). */
+  label: string | null;
+  /** §3: the caller's actual words there — caller content, under trap 4 and trap 13. */
+  caller_said: string | null;
+  /** §3: free text, same consent and TTL rules as `caller_said`. */
+  note: string | null;
+  /** §3: the row this one replaces whole; `bigint`, so a string here too. */
+  supersedes: string | null;
+  /** §3: when the retention sweep nulled both texts — null means they are as written. */
+  text_expired_at: Date | null;
+  /**
+   * §3: who wrote the row — the console's own account prefix (`src/account.ts`)
+   * or a hand insert on the box. Opaque text to every reader, never re-derived
+   * from the session that is reading.
+   */
+  created_by: string;
+  /** §3: when the row was inserted — the annotator's clock, not the TTL predicate (trap 13). */
+  created_at: Date;
+}
+
+/**
+ * Every annotation of one call, history included, with no `LIMIT`: "current"
+ * is the contract §3 rule (a labelled row no other row supersedes) and it is
+ * derived in TypeScript from this array, beside the history the card shows on
+ * demand — a bounded read would make both lie. The order is `id`, the order
+ * the pipeline's own `callEvidenceOf` uses: a correction is always inserted
+ * after the row it supersedes.
+ *
+ * One statement on the `console` pool, outside any transaction, beside
+ * `getCallEvents` (ADR 0010, "No shared transaction"). No row at all is the
+ * ordinary case — nobody has annotated the call — and, by the insert gate of
+ * §7, the only case on a call without granted consent or without a
+ * `recording_started_at` (trap 13).
+ */
+export async function getCallAnnotations(callId: string): Promise<AnnotationRow[]> {
+  const { rows } = await getPool().query<AnnotationRow>(
+    `select id,
+            call_id,
+            from_ms,
+            to_ms,
+            label,
+            caller_said,
+            note,
+            supersedes,
+            text_expired_at,
+            created_by,
+            created_at
+       from call_annotation
+      where call_id = $1
+      order by id`,
+    [callId],
+  );
+  return rows;
+}

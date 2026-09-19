@@ -19,9 +19,11 @@
  *
  * This module is pure: no Next.js, no React, no database.
  */
+import { annotationCellItems, currentAnnotations, type AnnotationCellItem } from '@/annotations';
 import { isConsentGranted, showCallerData } from '@/calls';
 import type { ConsentGate } from '@/config';
-import type { CallEventRow } from '@/queries/calls';
+import { EMPTY_CELL, EXPIRED, WITHHELD, seconds } from '@/interval-lane';
+import type { AnnotationRow, CallEventRow } from '@/queries/calls';
 
 // ── the trail: rows as this module reads them ───────────────────────────
 
@@ -326,17 +328,12 @@ const HEARD = new Set([
 
 /** More instants than a reader takes in one glance collapse to a count (`:569`). */
 const ENERGY_SHOWN = 6;
-const WITHHELD = '[withheld]';
-/** This console's own reading of trap 10: a granted call whose payload is gone aged out. */
-const EXPIRED = '[expired]';
 /**
  * A payload that is there but carries no `text` — the ASSUMED key was not
  * found (`docs/upstream.md` §The call timeline). Trap 10 is about a null
  * payload only, so this is named as its own thing rather than read as the TTL.
  */
 const NO_TEXT = '[no text in payload]';
-/** An empty cell — a column that has nothing is never blank, it says so (`:566`). */
-const NOTHING = '—';
 
 /**
  * The call's recording clock as intervals — contiguous, non-overlapping, from
@@ -689,6 +686,12 @@ export interface IntervalCell {
   recogniser: string;
   botText: string | null;
   unsupported: boolean;
+  /**
+   * The current annotations this interval overlaps — a fourth fact beside the
+   * holder, the caller line and the recogniser, never a replacement for the
+   * recogniser column (contract §8; PLAN row A7).
+   */
+  annotations: AnnotationCellItem[];
   /** Where the player seeks to; the axis has no negative side (ADR 0006). */
   seekMs: number;
 }
@@ -707,6 +710,8 @@ export function intervalCells(
     outcome: string | null;
     gate: ConsentGate;
     assistantText: ReadonlyMap<number, string | null>;
+    /** Every `call_annotation` row of the call; "current" is derived here, once. */
+    annotations: AnnotationRow[];
   },
 ): IntervalCell[] {
   const showCaller = showCallerData(ctx.outcome, ctx.gate);
@@ -714,6 +719,9 @@ export function intervalCells(
   // a refusal — the two are told apart here and nowhere else.
   const granted = isConsentGranted(ctx.outcome);
   const bySeq = new Map(rows.map((r) => [r.seq, r]));
+  // Contract §3's current rule, applied once for the whole table rather than
+  // per interval: an annotation lands on every interval it overlaps.
+  const current = currentAnnotations(ctx.annotations);
   const text = (ref: TextRef): string => sttText(ref, bySeq, { showCaller, granted });
   return intervals.map((interval) => ({
     from: seconds(interval.fromMs),
@@ -725,13 +733,9 @@ export function intervalCells(
     recogniser: recogniserCell(interval, text),
     botText: botTextOf(interval, rows, { assistantText: ctx.assistantText }),
     unsupported: interval.unsupported,
+    annotations: annotationCellItems(current, interval, { showCaller }),
     seekMs: Math.max(0, interval.fromMs),
   }));
-}
-
-/** Seconds on the recording clock, as every column of `intervals.txt` prints them (`:1041-1043`). */
-function seconds(ms: number): string {
-  return (ms / 1000).toFixed(2);
 }
 
 /**
@@ -746,7 +750,7 @@ function callerLineCell(interval: Interval): string {
   const energy = interval.energyMs;
   const firstAt = energy[0];
   const lastAt = energy[energy.length - 1];
-  if (firstAt === undefined || lastAt === undefined) return NOTHING;
+  if (firstAt === undefined || lastAt === undefined) return EMPTY_CELL;
   const shown =
     energy.length > ENERGY_SHOWN
       ? `sound ×${String(energy.length)} (${seconds(firstAt)}…${seconds(lastAt)})`
@@ -769,7 +773,7 @@ function recogniserCell(interval: Interval, text: (ref: TextRef) => string): str
     parts.push(`segmented, returned nothing${named}${run.count > 1 ? ` ×${String(run.count)}` : ''}`);
   }
   if (interval.watchdog) parts.push('no-input watchdog fired');
-  return parts.length === 0 ? NOTHING : parts.join(' · ');
+  return parts.length === 0 ? EMPTY_CELL : parts.join(' · ');
 }
 
 /**

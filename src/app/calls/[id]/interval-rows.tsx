@@ -7,9 +7,11 @@
  * the interval has one, so the transcript and the waterfall follow, the same
  * `?turn=` contract the turn blocks use (ADR 0006).
  *
- * Every cell arrives as a string built on the server by `intervalCells`
- * (`src/intervals.ts`): the consent gate ran there, once, and no recogniser text
- * reaches this file that the gate did not pass (ADR 0005, trap 4).
+ * Every cell arrives as strings built on the server by `intervalCells`
+ * (`src/intervals.ts`) — the annotation column as one already-rendered item per
+ * row: the consent gate ran there, once, and no recogniser text and no
+ * annotation text reaches this file that the gate did not pass (ADR 0005,
+ * trap 4).
  */
 
 import type { MouseEvent } from 'react';
@@ -25,6 +27,7 @@ import type { IntervalCell } from '@/intervals';
 import Badge from '@/ui/badge';
 import { INTERACTIVE_SELECTOR, shouldFollowRow } from '@/ui/row-click';
 import { Table, TableScroll, Td, Th } from '@/ui/table';
+import Vocabulary from '@/ui/vocabulary';
 import { usePlayback } from './playback-provider';
 
 /** One interval as the card prints it, plus the two instants the playhead needs. */
@@ -125,9 +128,35 @@ export default function IntervalRows({ rows }: { rows: IntervalRow[] }) {
                 )}
               </Td>
               <Td>
-                {/* Reserved for row A7; an empty column says so rather than
-                    leaving the cell blank. */}
-                <span className="text-text-muted">{EMPTY_CELL}</span>
+                {/* What a person who heard the call wrote about this stretch
+                    (contract §8; PLAN row A7). Current rows only, and the same
+                    row appears on every interval it overlaps — an empty column
+                    says so rather than leaving the cell blank. */}
+                {row.annotations.length === 0 ? (
+                  <span className="text-text-muted">{EMPTY_CELL}</span>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {row.annotations.map((annotation) => (
+                      <div key={annotation.id}>
+                        <div className="flex flex-wrap items-baseline gap-1.5">
+                          <span className="font-num text-text-muted tabular-nums">
+                            #{annotation.id}
+                          </span>
+                          <Vocabulary
+                            value={annotation.label}
+                            known={annotation.labelKnown}
+                            tone="info"
+                          />
+                          <span className="font-num tabular-nums">
+                            {annotation.from}–{annotation.to} s
+                          </span>
+                          <span className="text-text-muted">{annotation.author}</span>
+                        </div>
+                        <div>{annotation.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Td>
             </tr>
           ))}

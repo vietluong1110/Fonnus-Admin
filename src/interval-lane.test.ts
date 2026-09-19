@@ -8,6 +8,7 @@ import {
   INTERVAL_CAVEATS,
   UNSUPPORTED_OPACITY,
   VERDICT_BADGE,
+  annotationHistorySummary,
   gapNote,
   holderTone,
   rowAtPlayhead,
@@ -200,6 +201,18 @@ describe('the card’s fixed wording', () => {
     expect(INTERVAL_CAVEATS.cannedSilent).toContain('L10-260917-1');
     expect(INTERVAL_CAVEATS.unheard).toContain('unheard');
     expect(INTERVAL_CAVEATS.trail).toContain('100 ms');
+    // The annotation column's two facts: only current rows are shown, and a
+    // call with no rows is the insert gate, not a call nothing went wrong on.
+    expect(INTERVAL_CAVEATS.annotation).toContain('current rows only');
+    expect(INTERVAL_CAVEATS.annotation).toContain('insert gate');
+    expect(INTERVAL_CAVEATS.annotation).toContain('overlaps');
+  });
+
+  it('counts both the rows and the current ones in the history summary', () => {
+    // The difference between the two numbers is the block's reason to exist:
+    // the rows the table does not show are the corrections and retractions.
+    expect(annotationHistorySummary(3, 1)).toBe('Annotation history — 3 rows, 1 current');
+    expect(annotationHistorySummary(1_200, 1_000)).toContain('1 200 rows');
   });
 });
 

@@ -3,6 +3,7 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ANNOTATION_LABELS,
   CALL_STATE_CAVEAT,
   CALL_STATE_LABEL,
   CALL_STATE_TONE,
@@ -20,6 +21,7 @@ import {
   failureLine,
   isKnownConsentOutcome,
   isKnownEndReason,
+  isKnownAnnotationLabel,
   isKnownFailedLeg,
   isKnownFailedStage,
   isKnownTurnSource,
@@ -252,6 +254,23 @@ describe('fixed vocabularies — contract §3.1', () => {
     expect(isKnownFailedStage('idle')).toBe(true);
     expect(isKnownFailedStage('total')).toBe(true);
     expect(isKnownFailedStage('deadline')).toBe(false);
+  });
+
+  it('holds call_annotation.label to exactly the six values of contract §3.1', () => {
+    // Closed by the database CHECK `call_annotation_label_known`: a seventh
+    // value is a pipeline migration and an edit here, in the same commit.
+    expect([...ANNOTATION_LABELS]).toEqual([
+      'stt_wrong',
+      'stt_missed',
+      'bot_wrong_answer',
+      'bot_interrupted',
+      'bot_silent',
+      'other',
+    ]);
+    for (const label of ANNOTATION_LABELS) expect(isKnownAnnotationLabel(label)).toBe(true);
+    expect(isKnownAnnotationLabel('stt_late')).toBe(false);
+    // Null is a retraction, never a label — it never reaches this test.
+    expect(isKnownAnnotationLabel('')).toBe(false);
   });
 });
 

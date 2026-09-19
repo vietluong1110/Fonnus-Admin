@@ -61,6 +61,21 @@ export const FAILED_LEGS = ['llm', 'tts'] as const;
 /** Contract §3.1 — `turn.failed_stage`: which deadline tripped. */
 export const FAILED_STAGES = ['ttfb', 'idle', 'total'] as const;
 
+/**
+ * Contract §3.1 — `call_annotation.label`: what kind of fact a person who heard
+ * the call recorded (pipeline ADR 0027). Closed, enforced by the database CHECK
+ * `call_annotation_label_known` (`../Fonnus/app/drizzle/0013_call_annotation.sql`);
+ * a null label is a retraction, never a seventh value.
+ */
+export const ANNOTATION_LABELS = [
+  'stt_wrong',
+  'stt_missed',
+  'bot_wrong_answer',
+  'bot_interrupted',
+  'bot_silent',
+  'other',
+] as const;
+
 /** Contract §3.1 — `turn.source`. */
 export const TURN_SOURCES = ['speech_final', 'utterance_end', 'carry_over', 'reopen'] as const;
 
@@ -128,6 +143,10 @@ export function isKnownFailedLeg(value: string): boolean {
 
 export function isKnownFailedStage(value: string): boolean {
   return (FAILED_STAGES as readonly string[]).includes(value);
+}
+
+export function isKnownAnnotationLabel(value: string): boolean {
+  return (ANNOTATION_LABELS as readonly string[]).includes(value);
 }
 
 /**

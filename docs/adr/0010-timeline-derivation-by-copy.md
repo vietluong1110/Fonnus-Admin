@@ -127,5 +127,12 @@ its result reaches a screen:
 - Trail statement time on the box approaches the 10 s bound for a real call (it should
   not: the read is a primary-key range scan), or the row-volume revisit trigger of pipeline
   ADR 0018 fires — then a bounded read (by `seq` window) is designed.
-- Row A7 puts annotations on the same axis: the card's reserved annotation column and
-  `textCover` (`call-evidence.ts:940-990`) are copied then, not now.
+- Row A7 put annotations on the same axis (2026-09-19): the card's reserved annotation
+  column is filled and `currentAnnotations` / `annotationStanding` / `textCover` /
+  `annotationCell` (`call-evidence.ts:911-980`) are copied into `src/annotations.ts` under
+  the same discipline — cited by line, pinned by the ported tests. The copy departs where
+  the console already departs: the texts are gated by `showCallerData` (ADR 0005), not by
+  `granted` alone, and the cell prints the bare `[expired]` marker the card's caveat
+  explains, while the history prints the reference's `[expired <instant>]`; and a cell shows
+  both texts of a row that carries both, because the history the reference leans on for the
+  note is a collapsed block here.

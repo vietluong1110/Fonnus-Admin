@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { cache } from 'react';
+import { annotationHistory } from '@/annotations';
 import { RECORDING_REASON, isKnownArtifactState, recordingAccess } from '@/artifacts';
 import {
   CALL_STATE_LABEL,
@@ -45,7 +46,14 @@ import {
   type TurnBubbleView,
   type TurnSpan,
 } from '@/playback';
-import { getCall, getCallEvents, getTurns, type CallDetailRow, type TurnRow } from '@/queries/calls';
+import {
+  getCall,
+  getCallAnnotations,
+  getCallEvents,
+  getTurns,
+  type CallDetailRow,
+  type TurnRow,
+} from '@/queries/calls';
 import Badge from '@/ui/badge';
 import Card from '@/ui/card';
 import EmptyState from '@/ui/empty-state';
@@ -101,10 +109,15 @@ export default async function CallPage({
   const call = await callOnce(id);
   if (call === null) notFound();
 
-  // Two independent statements on the one `console` pool, side by side: the
-  // trail needs `recording_started_at` and `outcome` from `getCall`, which has
-  // already returned, and nothing else (ADR 0010, "No shared transaction").
-  const [turns, events] = await Promise.all([getTurns(id), getCallEvents(id)]);
+  // Three independent statements on the one `console` pool, side by side: the
+  // trail and the annotations need `recording_started_at` and `outcome` from
+  // `getCall`, which has already returned, and nothing else (ADR 0010, "No
+  // shared transaction").
+  const [turns, events, annotations] = await Promise.all([
+    getTurns(id),
+    getCallEvents(id),
+    getCallAnnotations(id),
+  ]);
   const state = callState(call.ended_at, call.outcome);
   // Read once per render and passed down: the gate is deployment state, not
   // per-turn state (ADR 0005).
@@ -142,11 +155,15 @@ export default async function CallPage({
     outcome: call.outcome,
     gate,
     assistantText: new Map(turns.map((turn) => [turn.idx, turn.assistant_text])),
+    annotations,
   }).map((cell, index) => ({
     ...cell,
     fromMs: intervals?.[index]?.fromMs ?? 0,
     toMs: intervals?.[index]?.toMs ?? 0,
   }));
+  // Every annotation row of the call, current and history, with its texts
+  // gated here on the server exactly as the cells' are (contract §3, trap 13).
+  const annotationRows = annotationHistory(annotations, { outcome: call.outcome, gate });
   // A turn that failed mid-reply is the one being looked for (trap 7), so its
   // segment wears the error tone the turn block already wears.
   const failedTurns = new Set(
@@ -356,6 +373,7 @@ export default async function CallPage({
         <IntervalsCard
           verdict={verdict}
           rows={intervalRows}
+          history={annotationRows}
           cannedSilent={cannedSilent}
           anyUnheard={anyUnheard}
         />

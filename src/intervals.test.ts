@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import type { AnnotationRow } from '@/queries/calls';
 import {
   callIntervals,
   intervalCells,
@@ -80,6 +81,7 @@ function cellsOf(
     outcome: granted ? 'granted' : 'hung_up_before_consent',
     gate: 'on',
     assistantText,
+    annotations: [],
   });
 }
 
@@ -595,6 +597,7 @@ describe('callIntervals', () => {
       outcome: 'granted',
       gate: 'on',
       assistantText: new Map(),
+      annotations: [],
     })[0]).toMatchObject({ from: '-0.10', seekMs: 0 });
     expectContiguous(list, -0.1, 5);
   });
@@ -843,5 +846,69 @@ describe('parseEventRow', () => {
       turnIdx: null,
       phase: null,
     });
+  });
+});
+
+describe('intervalCells — the annotation column (PLAN row A7)', () => {
+  /** The annotation of call 330052e1 the feature was built for (pipeline ADR 0027). */
+  const annotation: AnnotationRow = {
+    id: '1',
+    call_id: '330052e1-0000-4000-8000-000000000000',
+    from_ms: 29_400,
+    to_ms: 39_600,
+    label: 'stt_missed',
+    caller_said: 'ok mình cảm ơn',
+    note: null,
+    supersedes: null,
+    text_expired_at: null,
+    created_by: 'console:tester',
+    created_at: new Date('2026-09-10T02:30:00.000Z'),
+  };
+
+  it('attaches a current row to every interval it overlaps, and to no other', () => {
+    const events = tail330052e1();
+    const cells = intervalCells(intervalsOf(events), events, {
+      outcome: 'granted',
+      gate: 'on',
+      assistantText: new Map(),
+      annotations: [annotation],
+    });
+    // 29.4–39.6 s reaches back into the greeting and forward past the reprompt;
+    // the rule is overlap, not containment (contract §8).
+    const on = cells.map((cell) => cell.annotations.length > 0);
+    for (const [i, cell] of cells.entries()) {
+      const overlaps = Number(cell.from) < 39.6 && Number(cell.to) > 29.4;
+      expect(on[i]).toBe(overlaps);
+    }
+    expect(cells[0]?.annotations).toEqual([]);
+    expect(cells[1]?.holder).toBe('bot: greeting');
+    expect(cells[1]?.annotations[0]).toMatchObject({
+      id: '1',
+      label: 'stt_missed',
+      labelKnown: true,
+      from: '29.40',
+      to: '39.60',
+      author: 'console:tester',
+      text: '"ok mình cảm ơn"',
+    });
+    // Beside, never instead of, what the machine produced.
+    const spoke = cells.filter((cell) => cell.holder === 'caller');
+    expect(spoke[1]?.recogniser).toContain('segmented, returned nothing');
+    expect(spoke[1]?.annotations).toHaveLength(1);
+  });
+
+  it('withholds the annotation text on an unconsented call, and nothing else', () => {
+    const events = tail330052e1();
+    const cells = intervalCells(intervalsOf(events), events, {
+      outcome: 'hung_up_before_consent',
+      gate: 'on',
+      assistantText: new Map(),
+      annotations: [annotation],
+    });
+    const item = cells[1]?.annotations[0];
+    expect(item?.text).toBe('[withheld]');
+    expect(item?.label).toBe('stt_missed');
+    expect(item?.from).toBe('29.40');
+    expect(item?.author).toBe('console:tester');
   });
 });

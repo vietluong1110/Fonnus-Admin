@@ -63,8 +63,11 @@ caveats; the decisions stay with the person reading it.
    0010), are drawn from the sequence of contiguous intervals contract §8 derives from
    `call_event` — who held the line, what the caller's line carried, what the recogniser
    returned — with the trail's completeness verdict above the card, so a non-turn line, an
-   utterance that returned nothing and an overtaken partial become visible; the turn table
-   stays under it as the per-turn latency
+   utterance that returned nothing and an overtaken partial become visible; beside them, since
+   row A7, the fourth fact of contract §8: what a person who heard the call recorded about
+   that stretch (`call_annotation` — the current rows only, on every interval they overlap,
+   their texts under the same consent rule; the history of corrections and retractions
+   folded under the table). The turn table stays under it as the per-turn latency
    view, and the bucket (W2-L1) serves the verbatim files behind a step.
 3. **Overview** (`/`) — over the same window: P50 / P95 / max per leg against the ADR 0007
    targets, calls per day, the reply's composition, how calls ended (end reason and consent

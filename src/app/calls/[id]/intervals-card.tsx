@@ -13,6 +13,8 @@
  * (trap 8).
  */
 
+import { RETRACTION_LABEL, STANDING_CURRENT, type AnnotationHistoryRow } from '@/annotations';
+import { formatWhen } from '@/calls';
 import {
   INTERVALS_CARD_TITLE,
   INTERVAL_CAVEATS,
@@ -20,6 +22,7 @@ import {
   NO_CLOCK_TITLE,
   NO_TRAIL_TITLE,
   VERDICT_BADGE,
+  annotationHistorySummary,
   gapNote,
   verdictNote,
 } from '@/interval-lane';
@@ -28,16 +31,20 @@ import Badge from '@/ui/badge';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
+import Vocabulary from '@/ui/vocabulary';
 import IntervalRows, { type IntervalRow } from './interval-rows';
 
 export default function IntervalsCard({
   verdict,
   rows,
+  history,
   cannedSilent,
   anyUnheard,
 }: {
   verdict: TrailVerdict;
   rows: IntervalRow[];
+  /** Every `call_annotation` row of the call, current and history (PLAN row A7). */
+  history: AnnotationHistoryRow[];
   /** A canned line whose synthesis produced no audio — ISSUES L10-260917-1. */
   cannedSilent: boolean;
   /** Any interval whose caller sound fell inside a muted stretch. */
@@ -50,7 +57,7 @@ export default function IntervalsCard({
   return (
     <Card
       title={INTERVALS_CARD_TITLE}
-      sub="who held the line, what the caller's line carried, what the recogniser returned"
+      sub="who held the line, what the caller's line carried, what the recogniser returned, what a person said about it"
     >
       {verdict.kind === 'absent' ? (
         // Trap 8: no row at all is `RECORD_CALLS` off, a mirror that failed, a
@@ -75,6 +82,7 @@ export default function IntervalsCard({
             <Caveat>{INTERVAL_CAVEATS.trail}</Caveat>
             <Caveat>{INTERVAL_CAVEATS.text}</Caveat>
             <Caveat>{INTERVAL_CAVEATS.withheld}</Caveat>
+            <Caveat>{INTERVAL_CAVEATS.annotation}</Caveat>
             {cannedSilent ? <Caveat>{INTERVAL_CAVEATS.cannedSilent}</Caveat> : null}
             {anyUnheard ? <Caveat>{INTERVAL_CAVEATS.unheard}</Caveat> : null}
           </div>
@@ -87,6 +95,51 @@ export default function IntervalsCard({
             <IntervalRows rows={rows} />
           )}
         </>
+      )}
+
+      {/*
+       * The history on demand, never inline (`console-call-view.md`
+       * §Annotations): the table shows the current rows, and who corrected or
+       * withdrew which row is what an investigator opens this for. Rendered
+       * only when the call has a row at all — and outside the verdict branch,
+       * so a call whose trail is absent still shows what a person wrote.
+       */}
+      {history.length === 0 ? null : (
+        <details className="text-[length:var(--size-ui)]">
+          <summary className="cursor-pointer text-text-link">
+            {annotationHistorySummary(
+              history.length,
+              history.filter((row) => row.standing === STANDING_CURRENT).length,
+            )}
+          </summary>
+          <div className="mt-2 flex flex-col gap-3">
+            {history.map((row) => (
+              <div key={row.id}>
+                <div className="flex flex-wrap items-baseline gap-1.5">
+                  <span className="font-num tabular-nums">#{row.id}</span>
+                  <span className="text-text-muted">·</span>
+                  <span className="font-num tabular-nums">{formatWhen(row.createdAt)}</span>
+                  <span className="text-text-muted">·</span>
+                  <span>{row.author}</span>
+                  <span className="text-text-muted">·</span>
+                  <span className="font-num tabular-nums">
+                    {row.from}–{row.to} s
+                  </span>
+                  <span className="text-text-muted">·</span>
+                  {row.label === null ? (
+                    <span>{RETRACTION_LABEL}</span>
+                  ) : (
+                    <Vocabulary value={row.label} known={row.labelKnown} tone="info" />
+                  )}
+                  <span className="text-text-muted">·</span>
+                  <span className="text-text-muted">{row.standing}</span>
+                </div>
+                <div>caller_said: {row.callerSaid}</div>
+                <div>note: {row.note}</div>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </Card>
   );
