@@ -70,13 +70,15 @@ caveats; the decisions stay with the person reading it.
    folded under the table). The turn table stays under it as the per-turn latency
    view, and the bucket (W2-L1) serves the verbatim files behind a step.
 3. **Overview** (`/`) — over the same window: P50 / P95 / max per leg against the ADR 0007
-   targets, calls per day, the reply's composition, how calls ended (end reason and consent
-   outcome), turn failures by leg and stage, the window's cost floor, the turns outside the
-   percentile, and the same latency numbers **compared by configuration** — by one flat key
-   of `call_log.config_snapshot` (default `OPENROUTER_MODEL`) or by `runtime.version`, the
-   console-edited row a call ran under (ADR 0009) — so a change to an endpointing or flush
-   setting, or a console config edit, is visible as a step and not guessed at. Every
-   pipeline change from W3 on is one snapshot, and this comparison is how it is judged.
+   targets, calls per bucket (one hour for `24h`, one day up to 45 days, one week beyond;
+   the buckets cover the whole window, edge buckets marked partial), the reply's
+   composition, how calls ended (end reason and consent outcome), turn failures by leg and
+   stage, the window's cost floor, the turns outside the percentile, and the same latency
+   numbers **compared by configuration** — by one flat key of `call_log.config_snapshot`
+   (default `OPENROUTER_MODEL`) or by `runtime.version`, the console-edited row a call ran
+   under (ADR 0009) — so a change to an endpointing or flush setting, or a console config
+   edit, is visible as a step and not guessed at. Every pipeline change from W3 on is one
+   snapshot, and this comparison is how it is judged.
 4. **Audio and per-sentence views** — the call itself plays on the detail page (row A5,
    ADR 0004: the browser reads `call.wav` straight from the bucket through a short-lived
    presigned URL; the playhead drives the transcript and the waterfall, and no new pipeline
@@ -196,6 +198,14 @@ anything clickable, no dark mode, sentence case everywhere. Caveats (cost floor,
 consented-only, first-sentence-only, retention age) use muted text next to their number —
 once per column, in the header — never the accent: the accent is for actions, not warnings.
 A dashed border means "no content yet", never a button.
+
+The artboards draw one state each — the 7-day window, the Custom chip closed, no
+Configuration screen — so a screen is built for its range of states, not for the drawing's
+sample: a bar chart is fluid (columns share the card's width, at most the artboard's 40 px,
+labels thinned when they would collide, the plot filling the card's height); a control that
+reveals a panel overlays its neighbours instead of reflowing them; a form row is sized to
+its value (a number takes a short box on one line, a prompt takes the width); and an
+explanatory note never sits beside an input competing for its width.
 
 ## Stack
 

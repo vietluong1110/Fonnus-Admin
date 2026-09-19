@@ -4,19 +4,37 @@ import {
   DEFAULT_SINCE,
   MAX_WINDOW_DAYS,
   aggregate,
+  bucketKey,
   dayKey,
   dayLabel,
   differingKeys,
   groupKey,
   parseGroup,
   parseSince,
+  parseWindow,
   percentiles,
   snapshotKeys,
   snapshotValue,
+  weekKey,
+  windowBuckets,
 } from './dashboard';
+import type { Window } from './window';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
 
 const NOW = new Date('2026-09-07T10:00:00Z');
+
+/**
+ * The window the `aggregate` fixtures live in: 5–7 September in the clinic's
+ * zone, `until` exclusive at midnight of the 8th (ADR 0006). Three day buckets,
+ * whatever the calls happen to fall on — the charts draw the window, not the
+ * data's own range.
+ */
+const WINDOW: Window = {
+  since: new Date('2026-09-05T00:00:00+07:00'),
+  until: new Date('2026-09-08T00:00:00+07:00'),
+  preset: 'custom',
+  spec: '2026-09-05',
+};
 
 describe('percentiles — copied from ../Fonnus/tools/lib/call-report.ts', () => {
   it('answers nulls on an empty sample rather than zeros', () => {
@@ -101,6 +119,94 @@ describe('dayKey', () => {
     expect(dayKey(new Date('2026-09-06T23:30:00Z'))).toBe('2026-09-07');
     expect(dayKey(new Date('2026-09-06T16:59:00Z'))).toBe('2026-09-06');
     expect(dayKey(new Date('2026-09-06T17:00:00Z'))).toBe('2026-09-07');
+  });
+});
+
+describe('bucketKey and windowBuckets', () => {
+  it('names an hour bucket by the clinic zone, midnight as 00', () => {
+    expect(bucketKey('hour', new Date('2026-09-06T23:30:00Z'))).toBe('2026-09-07T06');
+    expect(bucketKey('hour', new Date('2026-09-06T17:00:00Z'))).toBe('2026-09-07T00');
+  });
+
+  it('names a week bucket by its Monday', () => {
+    // 5 September 2026 is a Saturday; 7 September is the next Monday.
+    expect(weekKey(new Date('2026-09-05T02:00:00Z'))).toBe('2026-08-31');
+    expect(weekKey(new Date('2026-09-07T02:00:00Z'))).toBe('2026-09-07');
+    // A Sunday belongs to the week that started six days earlier, not to the
+    // one starting tomorrow.
+    expect(weekKey(new Date('2026-09-06T02:00:00Z'))).toBe('2026-08-31');
+  });
+
+  it('stops at the last instant of the window, never one bucket past it', () => {
+    // `until` is exclusive — midnight of the 8th is the end of the 7th, so the
+    // 8th is not a column (ADR 0006).
+    const buckets = windowBuckets(
+      {
+        since: new Date('2026-09-05T00:00:00+07:00'),
+        until: new Date('2026-09-08T00:00:00+07:00'),
+        preset: 'custom',
+        spec: '2026-09-05',
+      },
+      NOW,
+      'day',
+    );
+    expect(buckets.map((bucket) => bucket.key)).toEqual([
+      '2026-09-05',
+      '2026-09-06',
+      '2026-09-07',
+    ]);
+    // A date-only range covers each of its days end to end: no partial column.
+    expect(buckets.every((bucket) => !bucket.partial)).toBe(true);
+  });
+
+  it('marks the edge buckets a rolling window only reaches into', () => {
+    // `24h` is open-ended, so it ends inside the current hour — the last
+    // column is "this hour so far" and the chart fades it. NOW sits exactly on
+    // the hour, so `now - 24h` lands exactly on a bucket boundary and the
+    // FIRST column is whole; a minute later it would not be, which the next
+    // assertion pins.
+    const onTheHour = windowBuckets(parseWindow({ since: '24h' }, NOW), NOW, 'hour');
+    expect(onTheHour).toHaveLength(25);
+    expect(onTheHour[0]?.partial).toBe(false);
+    expect(onTheHour[24]?.partial).toBe(true);
+    expect(onTheHour.slice(1, 24).every((bucket) => !bucket.partial)).toBe(true);
+
+    const mid = new Date(NOW.getTime() + 30 * 60_000);
+    const rolling = windowBuckets(parseWindow({ since: '24h' }, mid), mid, 'hour');
+    expect(rolling).toHaveLength(25);
+    expect(rolling[0]?.partial).toBe(true);
+    expect(rolling[24]?.partial).toBe(true);
+    expect(rolling.slice(1, 24).every((bucket) => !bucket.partial)).toBe(true);
+  });
+
+  it('marks a week the window starts or ends inside, and marks neither of a whole one', () => {
+    // 10 June 2026 is a Wednesday: the window opens inside the week of Monday
+    // the 8th, and closes inside the week of Monday 7 September.
+    const midweek = windowBuckets(
+      {
+        since: new Date('2026-06-10T00:00:00+07:00'),
+        until: new Date('2026-09-08T00:00:00+07:00'),
+        preset: 'custom',
+        spec: '2026-06-10',
+      },
+      NOW,
+      'week',
+    );
+    expect(midweek[0]?.partial).toBe(true);
+    expect(midweek.at(-1)?.partial).toBe(true);
+
+    // Monday 8 June to Sunday 6 September: every week whole, none faded.
+    const whole = windowBuckets(
+      {
+        since: new Date('2026-06-08T00:00:00+07:00'),
+        until: new Date('2026-09-07T00:00:00+07:00'),
+        preset: 'custom',
+        spec: '2026-06-08',
+      },
+      NOW,
+      'week',
+    );
+    expect(whole.every((bucket) => !bucket.partial)).toBe(true);
   });
 });
 
@@ -367,14 +473,14 @@ describe('aggregate', () => {
   ];
 
   it('counts the calls, the consented calls and the turns apart', () => {
-    const d = aggregate(calls, turns, 'none');
+    const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     expect(d.calls).toBe(3);
     expect(d.consentedCalls).toBe(2);
     expect(d.turns).toBe(3);
   });
 
   it('gives a leg a smaller count than the turn count when a mark is missing', () => {
-    const d = aggregate(calls, turns, 'none');
+    const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     // Three turns; two stamped `llm_first_token`, and only one has a `send` leg
     // that runs forwards.
     expect(d.legs.llm_ttft.count).toBe(2);
@@ -387,25 +493,33 @@ describe('aggregate', () => {
   });
 
   it('lists exactly the turns whose reply never became audible', () => {
-    const d = aggregate(calls, turns, 'none');
+    const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     expect(d.outside.map((t) => [t.call_id, t.idx])).toEqual([['c2', 1]]);
   });
 
-  it('buckets by day in the clinic zone, oldest first, with the calendar gap filled', () => {
-    const d = aggregate(calls, turns, 'none');
+  it('buckets the latency by day in the clinic zone, oldest first, across the window', () => {
+    const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     // c2 was answered at 23:30 UTC on the 6th — the 7th in +07. Nothing has
     // turns on the 6th, and that day is still a bucket: a real null point, so
-    // the trend line breaks there instead of sloping through it.
-    expect(d.byDay.map((day) => day.day)).toEqual(['2026-09-05', '2026-09-06', '2026-09-07']);
-    expect(d.byDay[0]?.turns).toBe(2);
-    expect(d.byDay[0]?.pipelineP95).toBe(800);
-    expect(d.byDay[1]).toEqual({
-      day: '2026-09-06',
+    // the chart draws a gap there instead of a fast day.
+    expect(d.bucketUnit).toBe('day');
+    expect(d.latencyByBucket.map((bucket) => bucket.key)).toEqual([
+      '2026-09-05',
+      '2026-09-06',
+      '2026-09-07',
+    ]);
+    expect(d.latencyByBucket.map((bucket) => bucket.label)).toEqual(['5/9', '6/9', '7/9']);
+    expect(d.latencyByBucket[0]?.turns).toBe(2);
+    expect(d.latencyByBucket[0]?.pipelineP95).toBe(800);
+    expect(d.latencyByBucket[1]).toEqual({
+      key: '2026-09-06',
+      label: '6/9',
+      partial: false,
       turns: 0,
       perceivedP95: null,
       pipelineP95: null,
     });
-    expect(d.byDay[2]?.perceivedP95).toBeNull();
+    expect(d.latencyByBucket[2]?.perceivedP95).toBeNull();
   });
 
   it('excludes a negative headline span from its percentile, as it does a leg', () => {
@@ -414,7 +528,7 @@ describe('aggregate', () => {
       turn({ call_id: 'c1', idx: 9, caller_perceived_ms: -5, pipeline_ms: -5 }),
       ...turns,
     ];
-    const d = aggregate(calls, faulty, 'none');
+    const d = aggregate(calls, faulty, 'none', WINDOW, NOW);
     expect(d.turns).toBe(4);
     expect(d.perceived.count).toBe(2);
     expect(d.pipeline.count).toBe(2);
@@ -426,7 +540,7 @@ describe('aggregate', () => {
     // `turnCount` never counts these; the console counts them apart instead of
     // hiding them. A stamped-nothing `{}` is a turn on both sides.
     const withNullMarks = [...turns, turn({ call_id: 'c1', idx: 3, marks: null })];
-    const full = aggregate(calls, withNullMarks, 'none');
+    const full = aggregate(calls, withNullMarks, 'none', WINDOW, NOW);
     expect(full.turns).toBe(3);
     expect(full.turnsWithoutMarks).toBe(1);
     expect(full.outside.map((t) => [t.call_id, t.idx])).toEqual([
@@ -434,7 +548,7 @@ describe('aggregate', () => {
       ['c1', 3],
     ]);
     // It brings no group into existence and no group counts it.
-    const grouped = aggregate(calls, withNullMarks, 'llm_model');
+    const grouped = aggregate(calls, withNullMarks, 'llm_model', WINDOW, NOW);
     expect(grouped.groups[0]?.turns).toBe(3);
   });
 
@@ -447,6 +561,8 @@ describe('aggregate', () => {
       withNull,
       [...turns, turn({ call_id: 'c4', idx: 1, pipeline_ms: 400 })],
       'config',
+      WINDOW,
+      NOW,
     );
     expect(d.differingKeys).toEqual(['TTS_FLUSH_MS']);
     expect(d.groups.map((g) => g.label)).toContain('unknown');
@@ -457,37 +573,186 @@ describe('aggregate', () => {
   });
 
   it('leaves the groups empty and the differing keys unread when nothing is grouped', () => {
-    const d = aggregate(calls, turns, 'none');
+    const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     expect(d.groups).toEqual([]);
     expect(d.differingKeys).toEqual([]);
   });
 
   it('groups by a model column', () => {
-    const d = aggregate(calls, turns, 'llm_model');
+    const d = aggregate(calls, turns, 'llm_model', WINDOW, NOW);
     expect(d.groups).toHaveLength(1);
     expect(d.groups[0]?.key).toBe('openrouter/some-model');
     expect(d.groups[0]?.calls).toBe(2);
   });
 
-  it('splits the calls of each day by consent and keeps an empty day at zero', () => {
+  it('splits the calls of each bucket by consent and covers both window edges', () => {
     // c1 on the 5th (granted), c3 on the 6th (hung up before consent), c2 at
     // 23:30 UTC on the 6th, which is the 7th in +07 (granted). Unlike the P95
-    // chart, a day with no call is a zero: nobody rang is a measurement.
-    const d = aggregate(calls, turns, 'none');
-    expect(d.callsByDay).toEqual([
-      { day: '2026-09-05', consented: 1, notConsented: 0 },
-      { day: '2026-09-06', consented: 0, notConsented: 1 },
-      { day: '2026-09-07', consented: 1, notConsented: 0 },
+    // chart, a bucket with no call is a zero: nobody rang is a measurement.
+    const d = aggregate(calls, turns, 'none', WINDOW, NOW);
+    expect(d.callsByBucket).toEqual([
+      { key: '2026-09-05', label: '5/9', partial: false, consented: 1, notConsented: 0 },
+      { key: '2026-09-06', label: '6/9', partial: false, consented: 0, notConsented: 1 },
+      { key: '2026-09-07', label: '7/9', partial: false, consented: 1, notConsented: 0 },
     ]);
-    const gapped = aggregate(
+  });
+
+  it('draws the whole window, not the first day with a call to the last', () => {
+    // A seven-day window with calls on its third and fifth day: seven buckets,
+    // and the zeros at both edges are the answer — the window was quiet there.
+    const week: Window = {
+      since: new Date('2026-09-01T00:00:00+07:00'),
+      until: new Date('2026-09-08T00:00:00+07:00'),
+      preset: 'custom',
+      spec: '2026-09-01',
+    };
+    const d = aggregate(
       [
-        call({ id: 'a', started_at: new Date('2026-09-05T02:00:00Z') }),
-        call({ id: 'b', started_at: new Date('2026-09-07T02:00:00Z') }),
+        call({ id: 'a', started_at: new Date('2026-09-03T02:00:00Z') }),
+        call({ id: 'b', started_at: new Date('2026-09-05T02:00:00Z') }),
       ],
       [],
       'none',
+      week,
+      NOW,
     );
-    expect(gapped.callsByDay[1]).toEqual({ day: '2026-09-06', consented: 0, notConsented: 0 });
+    expect(d.callsByBucket).toHaveLength(7);
+    expect(d.callsByBucket.map((bucket) => bucket.consented)).toEqual([0, 0, 1, 0, 1, 0, 0]);
+    expect(d.callsByBucket[0]?.label).toBe('1/9');
+    expect(d.callsByBucket[6]?.label).toBe('7/9');
+  });
+
+  it('draws a 24h window as hours in the clinic zone', () => {
+    // The `24h` preset is open-ended, so it runs from `now - 24h` to `now` —
+    // which touches 25 clock hours, the two partial ones at the edges included.
+    const day = parseWindow({ since: '24h' }, NOW);
+    const d = aggregate(
+      [call({ id: 'a', started_at: new Date('2026-09-07T09:30:00Z') })],
+      [],
+      'none',
+      day,
+      NOW,
+    );
+    expect(d.bucketUnit).toBe('hour');
+    expect(d.callsByBucket).toHaveLength(25);
+    // 10:00 UTC on the 7th is 17:00 in +07, at both ends of the window.
+    expect(d.callsByBucket[0]?.key).toBe('2026-09-06T17');
+    expect(d.callsByBucket[0]?.label).toBe('17');
+    expect(d.callsByBucket[24]?.key).toBe('2026-09-07T17');
+    // The call at 09:30 UTC is 16:30 in +07 — the second-to-last bucket.
+    expect(d.callsByBucket[23]).toEqual({
+      key: '2026-09-07T16',
+      label: '16',
+      partial: false,
+      consented: 1,
+      notConsented: 0,
+    });
+  });
+
+  it('pins the zone offset the partial flag is decided in against parseWindow', () => {
+    // `bucketInstant` turns a key back into an instant with a written +07:00
+    // offset, a second copy of the constant `src/window.ts` resolves date-only
+    // bounds with (and pins against Intl). If the two ever disagreed, every
+    // date-only window's first column would be marked partial — so a bound
+    // resolved by `parseWindow` is a whole day here, and one ms later is not.
+    const whole = parseWindow({ since: '2026-09-05', until: '2026-09-07' }, NOW);
+    expect(windowBuckets(whole, NOW, 'day').map((bucket) => bucket.partial)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    const shaved = { ...whole, since: new Date(whole.since.getTime() + 1) };
+    expect(windowBuckets(shaved, NOW, 'day')[0]?.partial).toBe(true);
+    expect(windowBuckets(whole, NOW, 'hour')[0]?.partial).toBe(false);
+    expect(windowBuckets(shaved, NOW, 'hour')[0]?.partial).toBe(true);
+  });
+
+  it('folds a call the clock put past the window into the last column', () => {
+    // The open-ended preset's SQL has no upper bound, so a box whose clock ran
+    // ahead can hand over a call from the future. 65 minutes past `now` is the
+    // NEXT clock hour (18:05 in +07), a key no column carries — five minutes
+    // would still land in the last column's own hour and test nothing.
+    // Dropping it would leave the chart totalling to less than the "Calls"
+    // figure printed beside it.
+    const day = parseWindow({ since: '24h' }, NOW);
+    const d = aggregate(
+      [
+        call({ id: 'a', started_at: new Date(NOW.getTime() + 65 * 60_000) }),
+        call({ id: 'b', started_at: new Date('2026-09-07T09:30:00Z') }),
+      ],
+      [],
+      'none',
+      day,
+      NOW,
+    );
+    expect(d.callsByBucket.map((bucket) => bucket.key)).not.toContain('2026-09-07T18');
+    const total = d.callsByBucket.reduce(
+      (sum, bucket) => sum + bucket.consented + bucket.notConsented,
+      0,
+    );
+    expect(total).toBe(d.calls);
+    expect(d.callsByBucket.at(-1)?.consented).toBe(1);
+    // And the edge columns say they are partial, so a short bar is readable.
+    expect(d.callsByBucket.at(-1)?.partial).toBe(true);
+  });
+
+  it('folds a call before the first column into it rather than dropping it', () => {
+    const d = aggregate(
+      [call({ id: 'a', started_at: new Date('2026-09-01T02:00:00Z') })],
+      [],
+      'none',
+      WINDOW,
+      NOW,
+    );
+    expect(d.callsByBucket[0]?.consented).toBe(1);
+    expect(
+      d.callsByBucket.reduce((sum, bucket) => sum + bucket.consented + bucket.notConsented, 0),
+    ).toBe(d.calls);
+  });
+
+  it('draws a window past 45 days as Monday-start weeks', () => {
+    const quarter: Window = {
+      since: new Date('2026-06-10T00:00:00+07:00'),
+      until: new Date('2026-09-08T00:00:00+07:00'),
+      preset: 'custom',
+      spec: '2026-06-10',
+    };
+    const d = aggregate(
+      [call({ id: 'a', started_at: new Date('2026-09-05T02:00:00Z') })],
+      [],
+      'none',
+      quarter,
+      NOW,
+    );
+    expect(d.bucketUnit).toBe('week');
+    // 10 June 2026 is a Wednesday: its week starts Monday the 8th. The last
+    // bucket is the week of Monday 7 September, the one `until` ends inside.
+    expect(d.callsByBucket[0]?.key).toBe('2026-06-08');
+    expect(d.callsByBucket[0]?.label).toBe('8/6');
+    expect(d.callsByBucket.at(-1)?.key).toBe('2026-09-07');
+    expect(d.callsByBucket).toHaveLength(14);
+    // The call on 5 September (a Saturday) lands in the week of Monday the 31st.
+    expect(d.callsByBucket.find((bucket) => bucket.key === '2026-08-31')?.consented).toBe(1);
+  });
+
+  it('places a call by the clinic zone, never by the box the console runs on', () => {
+    // 23:30 UTC on the 4th is 06:30 on the 5th in +07: the 5th's bucket.
+    const late = aggregate(
+      [call({ id: 'a', started_at: new Date('2026-09-04T23:30:00Z') })],
+      [],
+      'none',
+      {
+        since: new Date('2026-09-04T00:00:00+07:00'),
+        until: new Date('2026-09-06T00:00:00+07:00'),
+        preset: 'custom',
+        spec: '2026-09-04',
+      },
+      NOW,
+    );
+    expect(late.callsByBucket).toEqual([
+      { key: '2026-09-04', label: '4/9', partial: false, consented: 0, notConsented: 0 },
+      { key: '2026-09-05', label: '5/9', partial: false, consented: 1, notConsented: 0 },
+    ]);
   });
 
   it('sums the cost as a floor and counts the calls it could not price', () => {
@@ -499,11 +764,11 @@ describe('aggregate', () => {
       call({ id: 'c', total_cost_vnd: null }),
       call({ id: 'd', total_cost_vnd: 'n/a' }),
     ];
-    const d = aggregate(priced, [], 'none');
+    const d = aggregate(priced, [], 'none', WINDOW, NOW);
     expect(d.costFloorVnd).toBe(10_000.5);
     expect(d.unpricedCalls).toBe(2);
     // Not one parseable figure is "no cost on record", not a zero cost.
-    expect(aggregate([call({ total_cost_vnd: null })], [], 'none').costFloorVnd).toBeNull();
+    expect(aggregate([call({ total_cost_vnd: null })], [], 'none', WINDOW, NOW).costFloorVnd).toBeNull();
   });
 
   it('counts the end reasons and the outcomes, with not finalized beside them', () => {
@@ -516,7 +781,7 @@ describe('aggregate', () => {
       call({ id: 'c', end_reason: 'max_duration', outcome: 'hung_up_before_consent' }),
       call({ id: 'd', end_reason: null, ended_at: null, outcome: null }),
     ];
-    const d = aggregate(mixed, [], 'none');
+    const d = aggregate(mixed, [], 'none', WINDOW, NOW);
     expect(d.endReasons).toEqual([
       { value: 'caller_hangup', calls: 2 },
       { value: 'max_duration', calls: 1 },
@@ -542,7 +807,7 @@ describe('aggregate', () => {
       // No marks at all: in no number on the screen, this one included.
       turn({ call_id: 'c1', idx: 6, marks: null, failed_leg: 'tts', failed_stage: 'ttfb' }),
     ];
-    const d = aggregate([call({ id: 'c1' })], failing, 'none');
+    const d = aggregate([call({ id: 'c1' })], failing, 'none', WINDOW, NOW);
     expect(d.failedTurns).toBe(4);
     expect(d.turnFailures).toEqual([
       { leg: 'llm', stage: 'ttfb', turns: 2 },
@@ -552,7 +817,7 @@ describe('aggregate', () => {
   });
 
   it('lays the four partition legs out as the composition of a median reply', () => {
-    const d = aggregate(calls, turns, 'none');
+    const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     expect(d.medianReply.map((leg) => leg.leg)).toEqual([
       'endpoint_wait',
       'llm_ttft',
@@ -566,6 +831,6 @@ describe('aggregate', () => {
       { leg: 'send', p50: d.legs.send.p50 },
     ]);
     // A leg no turn stamped both marks of has no P50 — never a zero.
-    expect(aggregate(calls, [], 'none').medianReply.every((leg) => leg.p50 === null)).toBe(true);
+    expect(aggregate(calls, [], 'none', WINDOW, NOW).medianReply.every((leg) => leg.p50 === null)).toBe(true);
   });
 });

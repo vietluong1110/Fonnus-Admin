@@ -7,7 +7,7 @@
  */
 
 import { CALL_TIME_ZONE } from '@/calls';
-import VBars from '@/ui/vbars';
+import VBars, { hourLabelAt } from '@/ui/vbars';
 import Card from '@/ui/card';
 
 export default function Histogram({ counts, scope }: { counts: number[]; scope: string }) {
@@ -23,6 +23,10 @@ export default function Histogram({ counts, scope }: { counts: number[]; scope: 
           value: count,
         }))}
         scaleMax={scaleMax}
+        unit="hour"
+        // One rule for every chart whose columns are hours: `00 06 12 18` read
+        // off the clock, not off the position.
+        labelAt={hourLabelAt}
       />
     </Card>
   );

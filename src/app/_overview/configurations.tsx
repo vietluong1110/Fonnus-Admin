@@ -22,6 +22,7 @@ import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 import HBar from '@/ui/hbar';
+import Select from '@/ui/select';
 import { Table, TableScroll, Td, Th } from '@/ui/table';
 
 /** How a grouping reads in the select and in the card's subtitle. */
@@ -66,17 +67,13 @@ export default function Configurations({
           )}
           <label className="flex flex-col gap-1">
             <span className="text-[length:var(--size-eyebrow)] text-text-muted">group by</span>
-            <select
-              name="group"
-              defaultValue={grouping}
-              className="w-64 rounded-sm border border-border-hairline bg-surface-card px-3 py-2 text-[length:var(--size-ui)]"
-            >
+            <Select name="group" defaultValue={grouping} className="w-64">
               {options.map((option) => (
                 <option key={option} value={option}>
                   {groupingLabel(option)}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <button
             type="submit"

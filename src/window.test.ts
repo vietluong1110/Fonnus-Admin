@@ -4,6 +4,7 @@ import {
   DEFAULT_SINCE,
   MAX_WINDOW_DAYS,
   WINDOW_PRESETS,
+  bucketUnit,
   parseSince,
   parseWindow,
   windowHref,
@@ -140,5 +141,39 @@ describe('windowHref', () => {
     expect(windowHref('/', '30d', { until: '2026-09-10', group: 'config' })).toBe(
       '/?since=30d&group=config',
     );
+  });
+});
+
+describe('bucketUnit', () => {
+  it('draws the day window in hours and the two longer presets in days', () => {
+    expect(bucketUnit(parseWindow({ since: '24h' }, NOW), NOW)).toBe('hour');
+    expect(bucketUnit(parseWindow({ since: '7d' }, NOW), NOW)).toBe('day');
+    expect(bucketUnit(parseWindow({ since: '30d' }, NOW), NOW)).toBe('day');
+    expect(bucketUnit(parseWindow({}, NOW), NOW)).toBe('day');
+  });
+
+  it('turns a custom range over 45 days into weeks, and not a day sooner', () => {
+    // 45 days is already 45 columns and the label row carries every fifth;
+    // past that a column has to be a week or the chart stops being readable.
+    const span = (days: number) =>
+      bucketUnit(
+        {
+          since: new Date('2026-01-01T00:00:00Z'),
+          until: new Date(new Date('2026-01-01T00:00:00Z').getTime() + days * 86_400_000),
+          preset: 'custom',
+          spec: '2026-01-01',
+        },
+        NOW,
+      );
+    expect(span(45)).toBe('day');
+    expect(span(46)).toBe('week');
+    expect(span(1)).toBe('day');
+  });
+
+  it('measures an open-ended custom window against now', () => {
+    // `36h` is not one of the three presets, so it is a custom window; its
+    // span is still a day and a half and it is drawn in days.
+    expect(bucketUnit(parseWindow({ since: '36h' }, NOW), NOW)).toBe('day');
+    expect(bucketUnit(parseWindow({ since: '2026-01-01' }, NOW), NOW)).toBe('week');
   });
 });

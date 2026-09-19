@@ -12,6 +12,7 @@
 import { CALL_TIME_ZONE, isConsentGranted, parseCostVnd, shortSha } from './calls';
 import { LEGS, PARTITION_LEGS, type LegName, legSpans, parseMarks } from './latency';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
+import { type BucketUnit, type Window, bucketUnit } from './window';
 
 const DAY_MS = 86_400_000;
 
@@ -24,11 +25,12 @@ export {
   DEFAULT_SINCE,
   MAX_WINDOW_DAYS,
   WINDOW_PRESETS,
+  bucketUnit,
   parseSince,
   parseWindow,
   windowHref,
 } from './window';
-export type { Preset, Since, Window } from './window';
+export type { BucketUnit, Preset, Since, Window } from './window';
 
 export interface Percentiles {
   count: number;
@@ -81,6 +83,158 @@ export function dayKey(date: Date): string {
 export function dayLabel(day: string): string {
   const [, month, date] = day.split('-');
   return `${String(Number(date))}/${String(Number(month))}`;
+}
+
+// The same formatter with the hour, for the `24h` window's columns. `h23` so
+// midnight is `00` and not `24`, which is what the label row prints.
+const HOUR = new Intl.DateTimeFormat('en-GB', {
+  timeZone: CALL_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** `YYYY-MM-DDTHH` in the clinic's zone — the hour bucket a `started_at` falls in. */
+export function hourKey(date: Date): string {
+  const parts = new Map<string, string>(HOUR.formatToParts(date).map((p) => [p.type, p.value]));
+  const at = (type: string): string => parts.get(type) ?? '';
+  return `${at('year')}-${at('month')}-${at('day')}T${at('hour')}`;
+}
+
+/**
+ * The week bucket, named by its Monday in the clinic's zone (ISO weeks, the
+ * pipeline's own convention nowhere but here — the console says "weeks start
+ * Monday" on the card rather than leaving the reader to guess). The day key is
+ * already a calendar position, so the walk back to Monday is calendar
+ * arithmetic on it and no zone is involved a second time.
+ */
+export function weekKey(date: Date): string {
+  const day = dayKey(date);
+  const at = dayMillis(day);
+  // `getUTCDay()` is 0 on Sunday; `(d + 6) % 7` makes Monday the 0th day.
+  const back = (new Date(at).getUTCDay() + 6) % 7;
+  return new Date(at - back * DAY_MS).toISOString().slice(0, 10);
+}
+
+/** The bucket a call's `started_at` belongs to, under the window's unit. */
+export function bucketKey(unit: BucketUnit, date: Date): string {
+  if (unit === 'hour') return hourKey(date);
+  if (unit === 'week') return weekKey(date);
+  return dayKey(date);
+}
+
+/** What a column is called under the axis: `07` · `5/9` · the Monday's `5/9`. */
+export function bucketLabel(unit: BucketUnit, key: string): string {
+  return unit === 'hour' ? key.slice(11, 13) : dayLabel(key.slice(0, 10));
+}
+
+/** One bucket key as a position on the calendar — UTC midnight of its clinic day. */
+function bucketMillis(unit: BucketUnit, key: string): number {
+  return unit === 'hour'
+    ? dayMillis(key.slice(0, 10)) + Number(key.slice(11, 13)) * 3_600_000
+    : dayMillis(key);
+}
+
+const STEP_MS: Record<BucketUnit, number> = {
+  hour: 3_600_000,
+  day: DAY_MS,
+  week: 7 * DAY_MS,
+};
+
+/**
+ * The clinic zone as a fixed offset in milliseconds. A bucket KEY is a
+ * calendar position (`bucketMillis` puts it at UTC midnight of its clinic
+ * day); the instant that position really starts at is seven hours earlier,
+ * because Vietnam has run `+07:00` with no daylight saving since 1975 — the
+ * same constant assumption `src/window.ts` makes when it resolves a date-only
+ * bound, and the one `CALL_TIME_ZONE` is pinned against there.
+ */
+const ZONE_OFFSET_MS = 7 * 3_600_000;
+
+/** One column of a window chart: its key, what the axis calls it, and whether
+ * the window covers only part of it. */
+export interface WindowBucket {
+  key: string;
+  label: string;
+  /**
+   * The window starts or ends inside this bucket, so its bar stands on less
+   * time than its neighbours'. A rolling preset always ends inside one (the
+   * current hour or day "so far") and usually starts inside one, so the charts
+   * fade the column and the card says so — a shorter bar for a reason the
+   * reader cannot see is a wrong reading, not a small one.
+   */
+  partial: boolean;
+}
+
+/** The instant a bucket key really begins, in the clinic's zone. */
+function bucketInstant(unit: BucketUnit, key: string): number {
+  return bucketMillis(unit, key) - ZONE_OFFSET_MS;
+}
+
+/**
+ * The columns of a window chart: every bucket the window touches, from `since`
+ * to its last instant, in order — never "the first day with a call to the
+ * last". An edge of the window nobody rang in is a column of zeros, which is
+ * the answer the operator asked for; a walk over the data alone would have
+ * drawn a shorter window than the one the control says is on screen.
+ *
+ * The upper bound is the window's last instant rather than `until`: `until` is
+ * exclusive (00:00 of the day after the range on a date-only bound, ADR 0006),
+ * so taking it as an instant would add one empty bucket past the range. That
+ * same last instant decides the last column's `partial`, and `since` the
+ * first's: an edge bucket the window only reaches into is marked, never
+ * dropped, so the count of columns is the window's own count either way.
+ */
+export function windowBuckets(window: Window, now: Date, unit: BucketUnit): WindowBucket[] {
+  const last = window.until === null ? now : new Date(window.until.getTime() - 1);
+  const end = bucketMillis(unit, bucketKey(unit, last));
+  const step = STEP_MS[unit];
+
+  const buckets: WindowBucket[] = [];
+  for (let at = bucketMillis(unit, bucketKey(unit, window.since)); at <= end; at += step) {
+    const key =
+      unit === 'hour'
+        ? `${new Date(at).toISOString().slice(0, 10)}T${new Date(at).toISOString().slice(11, 13)}`
+        : new Date(at).toISOString().slice(0, 10);
+    buckets.push({ key, label: bucketLabel(unit, key), partial: false });
+  }
+
+  const first = buckets[0];
+  const final = buckets[buckets.length - 1];
+  if (first !== undefined && window.since.getTime() > bucketInstant(unit, first.key)) {
+    first.partial = true;
+  }
+  // The bucket is covered to its end only when the window's last instant
+  // reaches the last millisecond of it; an open-ended window ends at `now`, so
+  // its last column is the current hour, day or week so far.
+  if (final !== undefined && last.getTime() < bucketInstant(unit, final.key) + step - 1) {
+    final.partial = true;
+  }
+  return buckets;
+}
+
+/**
+ * The column a key belongs to when the key is not one of them. The open-ended
+ * preset's SQL has no upper bound, so a call whose `started_at` is past `now` —
+ * a clock that ran ahead on the pipeline's box — has a key past the last
+ * column and used to vanish from both charts while the "Calls" figure still
+ * counted it. It is folded into the edge it ran off instead. Keys are
+ * `YYYY-MM-DD` or `YYYY-MM-DDTHH`, so string order is time order within one
+ * unit. Null only when the window has no columns at all.
+ */
+function foldKey(key: string, keys: string[]): string | null {
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  if (first === undefined || last === undefined) return null;
+  if (key <= first) return first;
+  if (key >= last) return last;
+  // Between the edges every key of the unit is already a column; the scan is
+  // the answer if one ever is not.
+  let at = first;
+  for (const candidate of keys) if (candidate <= key) at = candidate;
+  return at;
 }
 
 /**
@@ -331,16 +485,23 @@ export interface DashboardGroup {
   pipeline: Percentiles;
 }
 
-export interface DashboardDay {
-  day: string;
+/** One column of the latency chart. A null P95 is "not measured", never "fast". */
+export interface DashboardLatencyBucket {
+  key: string;
+  label: string;
+  /** The window covers only part of this bucket — the chart fades it (`WindowBucket`). */
+  partial: boolean;
   turns: number;
   perceivedP95: number | null;
   pipelineP95: number | null;
 }
 
-/** Calls answered on one day of the window, split by trap 1's dividing line. */
-export interface DashboardCallDay {
-  day: string;
+/** Calls answered in one bucket of the window, split by trap 1's dividing line. */
+export interface DashboardCallBucket {
+  key: string;
+  label: string;
+  /** The window covers only part of this bucket — the chart fades it (`WindowBucket`). */
+  partial: boolean;
   consented: number;
   notConsented: number;
 }
@@ -375,9 +536,11 @@ export interface Dashboard {
   legs: Record<LegName, Percentiles>;
   perceived: Percentiles;
   pipeline: Percentiles;
-  byDay: DashboardDay[];
-  /** Every call of the window by day, consented or not — not only the measured ones. */
-  callsByDay: DashboardCallDay[];
+  /** The unit the two window charts are drawn in, decided by the window alone. */
+  bucketUnit: BucketUnit;
+  latencyByBucket: DashboardLatencyBucket[];
+  /** Every call of the window by bucket, consented or not — not only the measured ones. */
+  callsByBucket: DashboardCallBucket[];
   /**
    * The window's cost, a FLOOR while any model the calls ran on has no price
    * row (trap 3). Null when not one call carried a parseable figure.
@@ -485,43 +648,6 @@ function groupLabel(key: string, snapshot: Record<string, unknown> | null): stri
   return typeof sha === 'string' ? `FONNUS_BUILD_SHA ${shortSha(sha)}` : 'configuration';
 }
 
-/**
- * The buckets between the first and the last day, so a day the window holds no
- * turn for is a null point rather than a gap the trend line slopes straight
- * through — the thing `src/app/dashboard/trend.tsx` says a drawn-through gap
- * would misread as a measurement. A key is already `YYYY-MM-DD` in the clinic's
- * zone, so stepping it is calendar arithmetic on the label and no zone is
- * involved a second time.
- */
-function fillDayGaps(days: DashboardDay[]): DashboardDay[] {
-  return fillDays(days, (day) => ({ day, turns: 0, perceivedP95: null, pipelineP95: null }));
-}
-
-/**
- * The same calendar walk for the call counts. A day with no call is a zero
- * rather than a gap, and that is the difference between the two charts: a
- * calls-per-day zero is a measurement ("nobody rang"), while a P95 of a day
- * with no turn is not a fast day — it is no day at all.
- */
-function fillCallDayGaps(days: DashboardCallDay[]): DashboardCallDay[] {
-  return fillDays(days, (day) => ({ day, consented: 0, notConsented: 0 }));
-}
-
-/** The buckets from the first day to the last, the missing ones from `blank`. */
-function fillDays<T extends { day: string }>(days: T[], blank: (day: string) => T): T[] {
-  const first = days[0];
-  const last = days[days.length - 1];
-  if (first === undefined || last === undefined) return days;
-
-  const byDay = new Map(days.map((day) => [day.day, day]));
-  const filled: T[] = [];
-  for (let at = dayMillis(first.day); at <= dayMillis(last.day); at += DAY_MS) {
-    const day = new Date(at).toISOString().slice(0, 10);
-    filled.push(byDay.get(day) ?? blank(day));
-  }
-  return filled;
-}
-
 /** A distribution as rows, biggest first, ties by value so the order is stable. */
 function counted(counts: Map<string, number>): VocabularyCount[] {
   return [...counts.entries()]
@@ -535,15 +661,29 @@ function dayMillis(day: string): number {
   return Date.UTC(Number(year), Number(month) - 1, Number(date));
 }
 
+/**
+ * Everything the Overview renders, from one window's calls and turns.
+ *
+ * `window` and `now` are here for the charts alone: the columns are the
+ * window's own buckets, so an edge nobody rang in is drawn (`windowBuckets`).
+ * `now` is passed in rather than read from the clock so the screen and its
+ * tests agree on where an open-ended window ends.
+ */
 export function aggregate(
   calls: DashboardCall[],
   turns: DashboardTurn[],
   grouping: Grouping,
+  window: Window,
+  now: Date,
 ): Dashboard {
   const byId = new Map(calls.map((call) => [call.id, call]));
+  const unit = bucketUnit(window, now);
+  const buckets = windowBuckets(window, now, unit);
+
+  const bucketKeys = buckets.map((bucket) => bucket.key);
 
   const overall = blankSamples();
-  const days = new Map<string, Samples>();
+  const latencyBuckets = new Map<string, Samples>();
   const groups = new Map<string, { samples: Samples; snapshot: Record<string, unknown> | null }>();
   const withTurns = new Set<string>();
   const outside: DashboardTurn[] = [];
@@ -561,13 +701,17 @@ export function aggregate(
     withTurns.add(call.id);
     collect(overall, turn);
 
-    const day = dayKey(call.started_at);
-    let dayS = days.get(day);
-    if (dayS === undefined) {
-      dayS = blankSamples();
-      days.set(day, dayS);
+    // Folded onto a column rather than filed under a key of its own: a key
+    // outside the window's columns would be drawn nowhere at all.
+    const bucket = foldKey(bucketKey(unit, call.started_at), bucketKeys);
+    if (bucket !== null) {
+      let bucketS = latencyBuckets.get(bucket);
+      if (bucketS === undefined) {
+        bucketS = blankSamples();
+        latencyBuckets.set(bucket, bucketS);
+      }
+      collect(bucketS, turn);
     }
-    collect(dayS, turn);
 
     // A turn without marks is in no number, so it does not bring a group into
     // existence either: an all-zero row would read as a group that was measured
@@ -610,7 +754,7 @@ export function aggregate(
   // The window's calls, read once for everything that is a fact about calls
   // rather than about turns: the day split, the cost floor, and the two
   // distributions. An unconsented call has no turn row and is in all of them.
-  const callDays = new Map<string, DashboardCallDay>();
+  const callBuckets = new Map<string, { consented: number; notConsented: number }>();
   const endReasons = new Map<string, number>();
   const outcomes = new Map<string, number>();
   let costFloorVnd: number | null = null;
@@ -618,14 +762,18 @@ export function aggregate(
   let notFinalized = 0;
 
   for (const call of calls) {
-    const day = dayKey(call.started_at);
-    let bucket = callDays.get(day);
-    if (bucket === undefined) {
-      bucket = { day, consented: 0, notConsented: 0 };
-      callDays.set(day, bucket);
+    // The same fold the latency walk makes, so the columns of the calls chart
+    // total to the "Calls" figure beside them.
+    const key = foldKey(bucketKey(unit, call.started_at), bucketKeys);
+    if (key !== null) {
+      let bucket = callBuckets.get(key);
+      if (bucket === undefined) {
+        bucket = { consented: 0, notConsented: 0 };
+        callBuckets.set(key, bucket);
+      }
+      if (isConsentGranted(call.outcome)) bucket.consented += 1;
+      else bucket.notConsented += 1;
     }
-    if (isConsentGranted(call.outcome)) bucket.consented += 1;
-    else bucket.notConsented += 1;
 
     // Trap 3: `numeric` arrives as a string, an unparseable one is missing
     // rather than 0 — a real 0 already means "nothing on this call could be
@@ -676,19 +824,29 @@ export function aggregate(
     legs,
     perceived: percentiles(overall.perceived),
     pipeline: percentiles(overall.pipeline),
-    byDay: fillDayGaps(
-      [...days.entries()]
-        .map(([day, samples]) => ({
-          day,
-          turns: samples.turns,
-          perceivedP95: percentiles(samples.perceived).p95,
-          pipelineP95: percentiles(samples.pipeline).p95,
-        }))
-        .sort((a, b) => a.day.localeCompare(b.day)),
-    ),
-    callsByDay: fillCallDayGaps(
-      [...callDays.values()].sort((a, b) => a.day.localeCompare(b.day)),
-    ),
+    bucketUnit: unit,
+    // The window's own columns, in order, each filled from what landed in it.
+    // A bucket with no turn is a null P95 — not measured, never a fast bucket —
+    // while a bucket with no call is a zero on the calls chart: nobody rang is
+    // a measurement. That difference is the only one between the two walks.
+    latencyByBucket: buckets.map(({ key, label, partial }) => {
+      const samples = latencyBuckets.get(key);
+      return {
+        key,
+        label,
+        partial,
+        turns: samples?.turns ?? 0,
+        perceivedP95: samples === undefined ? null : percentiles(samples.perceived).p95,
+        pipelineP95: samples === undefined ? null : percentiles(samples.pipeline).p95,
+      };
+    }),
+    callsByBucket: buckets.map(({ key, label, partial }) => ({
+      key,
+      label,
+      partial,
+      consented: callBuckets.get(key)?.consented ?? 0,
+      notConsented: callBuckets.get(key)?.notConsented ?? 0,
+    })),
     costFloorVnd,
     unpricedCalls,
     endReasons: counted(endReasons),

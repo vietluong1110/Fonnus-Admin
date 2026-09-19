@@ -1,7 +1,8 @@
 /*
  * "Reply latency" — the first thing the operator reads after a deploy: the two
  * headline P95s against their ADR 0007 targets, and the same `pipeline_ms` P95
- * one bar per day so a change reads as a step rather than as a single number.
+ * one bar per bucket of the window (hour, day or week) so a change reads as a
+ * step rather than as a single number.
  * Layout: `docs/design/Main-html` band 1, left card.
  *
  * Every number here stands on consented calls only (trap 1), which the caption
@@ -9,14 +10,17 @@
  */
 
 import { formatNumber } from '@/calls';
-import { type Dashboard, dayLabel } from '@/dashboard';
+import type { BucketUnit, Dashboard } from '@/dashboard';
 import { TARGETS } from '@/latency';
 import Badge from '@/ui/badge';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 import HBar from '@/ui/hbar';
-import VBars from '@/ui/vbars';
+import VBars, { hourLabelAt, partialNote } from '@/ui/vbars';
+
+/** How the caption names one column of the per-bucket chart. */
+const BY: Record<BucketUnit, string> = { hour: 'hour', day: 'day', week: 'week' };
 
 /**
  * The axis a gauge is drawn on. The target sits at three quarters of it, so the
@@ -38,9 +42,18 @@ export default function ReplyLatency({
   /** The two axes, computed once by the page so the group gauges share them. */
   scales: { pipeline: number; perceived: number };
 }) {
-  const dayScale = Math.max(
+  const bars = data.latencyByBucket.map((bucket) => ({
+    label: bucket.label,
+    value: bucket.pipelineP95,
+    partial: bucket.partial,
+  }));
+  // The edge columns of a rolling window stand on less time than the rest, so
+  // a shorter bar there is not a quieter or a faster bucket (see `VBars`).
+  const partial = partialNote(bars, BY[data.bucketUnit]);
+
+  const bucketScale = Math.max(
     TARGETS.pipelineP95Ms,
-    ...data.byDay.map((day) => day.pipelineP95 ?? 0),
+    ...data.latencyByBucket.map((bucket) => bucket.pipelineP95 ?? 0),
   );
 
   return (
@@ -70,20 +83,20 @@ export default function ReplyLatency({
           <div className="border-t border-border-hairline pt-3.5">
             <div className="mb-2 flex items-baseline justify-between gap-3">
               <Caveat as="span">
-                <code className="font-num">pipeline_ms</code> P95 by day
+                <code className="font-num">pipeline_ms</code> P95 by {BY[data.bucketUnit]}
               </Caveat>
               <Caveat as="span">Asia/Ho_Chi_Minh</Caveat>
             </div>
             <VBars
-              bars={data.byDay.map((day) => ({
-                label: dayLabel(day.day),
-                value: day.pipelineP95,
-              }))}
+              bars={bars}
               target={TARGETS.pipelineP95Ms}
               targetLabel={`the dashed line is the ${formatNumber(TARGETS.pipelineP95Ms)} ms target; the red cap is the overshoot`}
-              scaleMax={dayScale}
+              scaleMax={bucketScale}
               valueLabel={formatNumber}
+              unit={BY[data.bucketUnit]}
+              {...(data.bucketUnit === 'hour' ? { labelAt: hourLabelAt } : {})}
             />
+            {partial === null ? null : <Caveat>{partial}</Caveat>}
           </div>
         </>
       )}
@@ -91,7 +104,7 @@ export default function ReplyLatency({
       <div className="mt-auto border-t border-border-hairline pt-3.5">
         <Caveat>
           {standsOn}. Percentiles do not add — the leg P95s below will not sum to these
-          numbers. A day with no turn is a gap, never a zero.
+          numbers. {data.bucketUnit === 'hour' ? 'An' : 'A'} {BY[data.bucketUnit]} with no turn is a gap, never a zero.
         </Caveat>
       </div>
     </Card>

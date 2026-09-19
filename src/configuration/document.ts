@@ -114,6 +114,20 @@ function boundsOf(schema: unknown): { min: Bound | null; max: Bound | null } {
   return { min, max };
 }
 
+/**
+ * The longest value a string leaf accepts, from its own `max_length` check, or
+ * null where it carries none. It is what decides one line or a box: a leaf that
+ * accepts 2000 characters cannot be edited in an `<input>`.
+ */
+function maxLengthOf(schema: unknown): number | null {
+  let maximum: number | null = null;
+  for (const check of defOf(schema).checks ?? []) {
+    const def = defOf(check) as unknown as { check?: string; maximum?: number };
+    if (def.check === 'max_length' && typeof def.maximum === 'number') maximum = def.maximum;
+  }
+  return maximum;
+}
+
 /** Whether a number leaf is an integer one (`z.int()`), by zod's own getter. */
 function isInteger(schema: unknown): boolean {
   return (schema as { isInt?: boolean }).isInt === true;
@@ -164,10 +178,17 @@ function leafField(path: string, group: Group, vendor: string | null, schema: un
       return { ...base, kind: 'list' };
     case 'record':
       return { ...base, kind: 'record' };
-    case 'string':
-      // The five `text.*` leaves are the spoken lines and the system prompt:
-      // sentences and a prompt block, never a one-line value.
-      return { ...base, kind: group === 'text' ? 'textarea' : 'text' };
+    case 'string': {
+      // A box or a line is decided by how long a value the leaf ACCEPTS, not by
+      // the group it lives in. The five `text.*` leaves are the spoken lines and
+      // the system prompt — sentences and a prompt block — and so is
+      // `stt.params.context_text`, which takes 2000 characters of biasing text.
+      // A model id or a pronunciation dictionary id (128 at most) is a one-line
+      // value and gets one line.
+      const maxLength = maxLengthOf(leaf);
+      const long = group === 'text' || (maxLength !== null && maxLength > 128);
+      return { ...base, kind: long ? 'textarea' : 'text' };
+    }
     default:
       throw new Error(`unhandled leaf type '${def.type}' at ${path}`);
   }

@@ -163,10 +163,16 @@ export default async function ConfigurationPage({
       ) : null}
 
       <div className="flex flex-col gap-1">
+        {/* One status line for the row the pipeline runs on: who wrote it, when,
+            and what for. `created_by` is shown exactly as stored — the writer
+            this console stamps on its own rows (`src/account.ts`), and whatever
+            the pipeline or a hand at the database wrote on the others. */}
         <Caveat>
           {newest === null
             ? 'boot config — no row yet'
-            : `newest row: #${newest.id} · ${formatWhen(newest.created_at)} · ${newest.created_by} · ${newest.note ?? 'no note'}`}
+            : `row #${newest.id} · ${formatWhen(newest.created_at)} · ${newest.created_by} · ${
+                newest.note === null ? 'no note' : `“${newest.note}”`
+              }`}
         </Caveat>
         {start.row === null ? null : (
           <Caveat>

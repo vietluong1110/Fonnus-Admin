@@ -275,10 +275,16 @@ rule is the one that runs and the one the tests pin: per-leg spans from `legSpan
 six legs, nearest-rank P50 / P95 / max copied from `../Fonnus/tools/lib/call-report.ts`
 (`sorted[min(n−1, ceil(q·n)−1)]`, null on empty), and the two headline percentiles of
 `caller_perceived_ms` and `pipeline_ms` — which the pipeline's baseline JSON does not carry —
-against the ADR 0007 targets. Day buckets take the **call's** `started_at` (a turn has no
-timestamp of its own) in `Asia/Ho_Chi_Minh`, the zone every screen pins; a day with no turn
-between the first and the last bucket is a null point, so the per-day P95 bars leave a
-gap there instead of drawing a zero.
+against the ADR 0007 targets. Buckets take the **call's** `started_at` (a turn has no
+timestamp of its own) in `Asia/Ho_Chi_Minh`, the zone every screen pins, and the bucket
+unit follows the window (`bucketUnit` in `src/window.ts`): one hour for `24h`, one calendar
+day for `7d`, `30d` and a custom range of at most 45 days, one Monday-start week beyond
+that. The buckets cover the whole window, `since` to `until` (or now), so a quiet edge of
+the window shows as zeros rather than being cut off; a bucket with no turn is a null point,
+so the P95 bars leave a gap there instead of drawing a zero, while "Calls per day" draws a
+real zero (nobody rang is a measurement). A rolling preset starts inside a bucket, so the
+first and last columns may be partial; they are drawn faded and the card says so. The card
+titles say the unit.
 
 Grouping by `config` keys on the whole `config_snapshot` object ("this exact
 configuration", labelled by its `FONNUS_BUILD_SHA`) and shows only the keys whose values

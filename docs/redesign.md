@@ -81,10 +81,10 @@ without it.
 
 Its sidebar has two items and its footer reads "console · read-only". The pipeline side is
 finished: 54 editable document paths, the vendor of each leg among them, and the role
-`console_editor` with its insert proven on the box. The product owner draws this artboard
-(operator's decision, 2026-09-18); what it must do is fixed by contract §7 and pipeline ADRs
-0020/0021/0028, and the write posture itself is the ADR in the "Absorb the 2026-09-17 contract"
-row.
+`console_editor` with its insert proven on the box. No artboard: the tab is designed in the
+existing visual language (operator's decision, 2026-09-19, `PLAN.md` row A9; a drawing
+arriving later re-enters as a sized task); what it must do is fixed by contract §7 and
+pipeline ADRs 0020/0021/0028, and the write posture is ADR 0007 here.
 
 1. **The form is generated, never hand-written.** Copy `../Fonnus/app/src/config/runtime-document.ts`
    and `../Fonnus/app/src/domain/speakable.ts` at the same relative layout, with the two

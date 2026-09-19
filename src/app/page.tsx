@@ -11,7 +11,8 @@
  * pasted into chat is the screen the next reader sees.
  */
 
-import { formatNumber, formatWhen } from '@/calls';
+import { formatNumber } from '@/calls';
+import { windowPhrase } from '@/calls-stats';
 import { GROUPINGS, type Grouping, RUNTIME_VERSION_KEY, aggregate, parseGroup, snapshotKeys } from '@/dashboard';
 import { TARGETS } from '@/latency';
 import { dashboardWindow } from '@/queries/dashboard';
@@ -42,14 +43,17 @@ export default async function OverviewPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const window = parseWindow(params, new Date());
+  // One reading of the clock for the whole render: the window and the chart
+  // buckets it is drawn in have to agree on where an open-ended window ends.
+  const now = new Date();
+  const window = parseWindow(params, now);
   const grouping = parseGroup(first(params.group));
   const showAll = first(params.outside) === 'all';
 
   // One client, one REPEATABLE READ transaction: the calls and the turns are
   // the same snapshot of the database (`src/queries/dashboard.ts`).
   const { calls, turns } = await dashboardWindow(window);
-  const data = aggregate(calls, turns, grouping);
+  const data = aggregate(calls, turns, grouping, window, now);
   const callsById = new Map(calls.map((call) => [call.id, call]));
 
   // The `key:` options are the keys the window's own snapshots carry, plus the
@@ -106,9 +110,10 @@ export default async function OverviewPage({
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-6 max-[900px]:grid-cols-1">
         <div className="flex flex-col gap-1.5">
           <PageHead title="Overview" />
+          {/* The window is described in the Calls screen's own words
+              (`windowPhrase`), so the two screens never name one window twice. */}
           <Caveat>
-            {standsOn}. Calls answered since {formatWhen(window.since)}
-            {window.until === null ? '' : `, up to ${formatWhen(window.until)}`}.
+            {standsOn}. Calls answered {windowPhrase(window)}.
           </Caveat>
         </div>
         <WindowControl base="/" window={window} extra={carried} />

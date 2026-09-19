@@ -15,6 +15,7 @@ import { CALL_TIME_ZONE, isConsentGranted } from './calls';
 import type { Scope } from './calls-scope';
 import { dayKey, percentiles } from './dashboard';
 import type { CallScopeRow } from './queries/calls';
+import type { Window } from './window';
 
 /** The row fields each function here needs, so a test fixture stays small. */
 type StatRow = Pick<
@@ -236,6 +237,21 @@ const PRESET_PHRASE: Record<string, string> = {
 };
 
 /**
+ * How one window reads in a sentence — `in the last 7 days`, `since Fri 12 Sep`,
+ * `from Fri 12 Sep to Thu 18 Sep`. Overview's heading and the Calls heading both
+ * call it, so the two screens describe the same window in the same words.
+ */
+export function windowPhrase(window: Window): string {
+  const { preset, since, until } = window;
+  const phrase = PRESET_PHRASE[preset];
+  if (phrase !== undefined) return `in ${phrase}`;
+  if (until === null) return `since ${formatBandDate(since)}`;
+  // `until` is the midnight after the last included day (ADR 0006); the phrase
+  // names the day the operator asked for, not the bound the SQL uses.
+  return `from ${formatBandDate(since)} to ${formatBandDate(new Date(until.getTime() - 1))}`;
+}
+
+/**
  * What the screen is counting, in one line above the list. A search says "all
  * time" because it ignores the window on purpose (ADR 0006) — the operator must
  * never read a search result as a window's worth of calls.
@@ -244,11 +260,5 @@ export function scopeHeading(scope: Scope, count: number): string {
   if (scope.kind === 'search') {
     return `${callCount(count)} matching “${scope.keyword}”, all time`;
   }
-  const { preset, since, until } = scope.window;
-  const phrase = PRESET_PHRASE[preset];
-  if (phrase !== undefined) return `${callCount(count)} in ${phrase}`;
-  if (until === null) return `${callCount(count)} since ${formatBandDate(since)}`;
-  // `until` is the midnight after the last included day (ADR 0006); the heading
-  // names the day the operator asked for, not the bound the SQL uses.
-  return `${callCount(count)} from ${formatBandDate(since)} to ${formatBandDate(new Date(until.getTime() - 1))}`;
+  return `${callCount(count)} ${windowPhrase(scope.window)}`;
 }

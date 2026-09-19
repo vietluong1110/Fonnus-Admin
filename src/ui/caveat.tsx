@@ -11,11 +11,27 @@ import type { ReactNode } from 'react';
 export default function Caveat({
   children,
   as = 'p',
+  className,
+  title,
 }: {
   children: ReactNode;
   as?: 'span' | 'p';
+  /** Layout only — `truncate` on a one-line meta row, never a colour. */
+  className?: string;
+  /** The untruncated text, for the caveats a row truncates to one line. */
+  title?: string;
 }) {
-  const className = 'text-[length:var(--size-eyebrow)] leading-[1.4] font-normal text-text-muted';
-  if (as === 'span') return <span className={className}>{children}</span>;
-  return <p className={`mb-0 ${className}`}>{children}</p>;
+  const tone = 'text-[length:var(--size-eyebrow)] leading-[1.4] font-normal text-text-muted';
+  const extra = className === undefined ? '' : ` ${className}`;
+  if (as === 'span')
+    return (
+      <span className={`${tone}${extra}`} title={title}>
+        {children}
+      </span>
+    );
+  return (
+    <p className={`mb-0 ${tone}${extra}`} title={title}>
+      {children}
+    </p>
+  );
 }

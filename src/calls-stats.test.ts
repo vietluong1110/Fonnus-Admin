@@ -10,6 +10,7 @@ import {
   hourHistogram,
   scopeHeading,
   turnTicks,
+  windowPhrase,
 } from './calls-stats';
 import type { CallScopeRow } from './queries/calls';
 
@@ -253,5 +254,33 @@ describe('scopeHeading', () => {
     expect(
       scopeHeading({ kind: 'search', keyword: '4417', phoneDigits: '4417', idPrefix: null }, 3),
     ).toBe('3 calls matching “4417”, all time');
+  });
+});
+
+describe('windowPhrase', () => {
+  // Overview prints this phrase too (`src/app/page.tsx`), so the two screens
+  // cannot describe one window in two sentences.
+  it('is the window half of the Calls heading, word for word', () => {
+    const preset = {
+      since: new Date('2026-09-02T00:00:00Z'),
+      until: null,
+      preset: '30d' as const,
+      spec: '30d',
+    };
+    expect(windowPhrase(preset)).toBe('in the last 30 days');
+    expect(scopeHeading({ kind: 'window', window: preset }, 214)).toBe(
+      `214 calls ${windowPhrase(preset)}`,
+    );
+  });
+
+  it('names a custom range by its days, and an open-ended one by its first', () => {
+    const custom = {
+      since: new Date('2026-08-31T17:00:00Z'),
+      until: new Date('2026-09-10T17:00:00Z'),
+      preset: 'custom' as const,
+      spec: '2026-09-01',
+    };
+    expect(windowPhrase(custom)).toBe('from Tue 1 Sep to Thu 10 Sep');
+    expect(windowPhrase({ ...custom, until: null })).toBe('since Tue 1 Sep');
   });
 });

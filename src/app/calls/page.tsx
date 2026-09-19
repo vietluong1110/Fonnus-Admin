@@ -17,6 +17,7 @@ import { getConfig } from '@/config';
 import { callsInScope } from '@/queries/calls';
 import { parseWindow } from '@/window';
 import Card from '@/ui/card';
+import { PILL, PILL_ON } from '@/ui/chip';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 import PageHead from '@/ui/page-head';
@@ -91,51 +92,57 @@ export default async function CallsPage({
 
   return (
     <>
-      <PageHead title="Calls">
-        <Caveat as="span">{heading}</Caveat>
-      </PageHead>
+      {/* The Overview's head shape, so the two screens carry the window in the
+          same place: scope on the left, the window control and the search on
+          the right, one under the other. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-6 max-[900px]:grid-cols-1">
+        <PageHead title="Calls">
+          <Caveat as="span">{heading}</Caveat>
+        </PageHead>
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <WindowControl
-          base={BASE}
-          window={window}
-          extra={{ q: keyword, f: active.join(',') }}
-          {...(scope.kind === 'search' ? { disabled: true, disabledNote: SEARCH_NOTE } : {})}
-        />
-
-        <form method="get" action={BASE} className="flex items-center gap-2">
-          {/* The window rides along hidden, so a search does not forget which
-              window the operator will come back to. */}
-          {(['since', 'until'] as const).map((key) => {
-            const value = first(params[key]);
-            return value === undefined || value === '' ? null : (
-              <input key={key} type="hidden" name={key} value={value} />
-            );
-          })}
-          {active.length === 0 ? null : <input type="hidden" name="f" value={active.join(',')} />}
-          <input
-            type="search"
-            name="q"
-            defaultValue={keyword}
-            placeholder="Phone number or call id"
-            aria-label="Search by phone number or call id"
-            className="w-[280px] rounded-pill border border-border-hairline bg-surface-card px-4 py-2 font-num text-[length:var(--size-ui)]"
+        <div className="flex flex-col items-end gap-2">
+          <WindowControl
+            base={BASE}
+            window={window}
+            extra={{ q: keyword, f: active.join(',') }}
+            {...(scope.kind === 'search' ? { disabled: true, disabledNote: SEARCH_NOTE } : {})}
           />
-          <button
-            type="submit"
-            className="inline-flex cursor-pointer items-center rounded-pill border border-transparent bg-action-primary px-[14px] py-[7px] font-ui text-[length:var(--size-ui)] leading-[1.4] font-semibold text-text-on-accent"
-          >
-            Search
-          </button>
-          {scope.kind === 'search' ? (
-            <Link
-              href={hrefWith(params, { q: '', page: '' })}
-              className="text-[length:var(--size-ui)] font-medium text-text-link hover:underline"
-            >
-              Clear
-            </Link>
-          ) : null}
-        </form>
+
+          <form method="get" action={BASE} className="flex items-center gap-2">
+            {/* The window rides along hidden, so a search does not forget which
+                window the operator will come back to. */}
+            {(['since', 'until'] as const).map((key) => {
+              const value = first(params[key]);
+              return value === undefined || value === '' ? null : (
+                <input key={key} type="hidden" name={key} value={value} />
+              );
+            })}
+            {active.length === 0 ? null : <input type="hidden" name="f" value={active.join(',')} />}
+            <input
+              type="search"
+              name="q"
+              defaultValue={keyword}
+              placeholder="Phone number or call id"
+              aria-label="Search by phone number or call id"
+              className="w-[280px] rounded-pill border border-border-hairline bg-surface-card px-4 py-2 font-num text-[length:var(--size-ui)]"
+            />
+            <button type="submit" className={`${PILL} ${PILL_ON} cursor-pointer`}>
+              Search
+            </button>
+            {/* A fixed slot: "Clear" appears only while searching, and an
+                appearing link must not shift the row it sits in. */}
+            <span className="inline-block w-[48px]">
+              {scope.kind === 'search' ? (
+                <Link
+                  href={hrefWith(params, { q: '', page: '' })}
+                  className="text-[length:var(--size-ui)] font-medium text-text-link hover:underline"
+                >
+                  Clear
+                </Link>
+              ) : null}
+            </span>
+          </form>
+        </div>
       </div>
 
       {/* A rejected window is answered with the default window and the reason,

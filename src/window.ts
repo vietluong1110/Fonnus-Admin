@@ -210,6 +210,32 @@ export function parseWindow(
 }
 
 /**
+ * The unit of one chart column. The console's own term, fixed here: a BUCKET
+ * is one column of a window chart, and the BUCKET UNIT is how wide it is. It
+ * is decided by the window alone, never by the data, so an empty edge of the
+ * window is still drawn (`src/dashboard.ts` builds the buckets from it).
+ */
+export type BucketUnit = 'hour' | 'day' | 'week';
+
+/**
+ * The span past which a day column stops being readable: 45 days is already
+ * 45 columns, and the label row can only carry every fifth of them.
+ */
+const WEEK_ABOVE_DAYS = 45;
+
+/**
+ * Which unit the window is drawn in. A preset answers by name, so the two
+ * screens never disagree about what `24h` looks like; a custom range answers
+ * by its span, measured against `now` when it is open-ended.
+ */
+export function bucketUnit(window: Window, now: Date): BucketUnit {
+  if (window.preset === '24h') return 'hour';
+  if (window.preset === '7d' || window.preset === '30d') return 'day';
+  const span = (window.until ?? now).getTime() - window.since.getTime();
+  return span <= WEEK_ABOVE_DAYS * DAY_MS ? 'day' : 'week';
+}
+
+/**
  * The link a preset pill points at. Every other key the screen carries (the
  * keyword, the grouping) is passed in `extra` and re-emitted, so switching the
  * window never silently drops the rest of the screen's state; `until` is left

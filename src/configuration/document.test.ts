@@ -93,6 +93,16 @@ describe('fieldsOf', () => {
     expect(field('text.greeting').kind).toBe('textarea');
   });
 
+  it('gives a string leaf a box or a line by the length it accepts, not by its group', () => {
+    // 2000 characters of biasing text, outside the `text` group: a box.
+    expect(field('stt.params.context_text', 'soniox').kind).toBe('textarea');
+    // At most 128, and a model id has no maximum at all: one line each.
+    expect(field('tts.params.pronunciation_dict_id', 'cartesia').kind).toBe('text');
+    expect(field('llm.model').kind).toBe('text');
+    expect(field('llm.fallback_model').kind).toBe('text');
+    expect(field('stt.params.language', 'deepgram').kind).toBe('text');
+  });
+
   it('bounds the same path differently in each vendor branch — the reason the branches exist', () => {
     expect(field('tts.params.speed', 'cartesia')).toMatchObject({ min: 0.6, max: 1.5 });
     expect(field('tts.params.speed', 'elevenlabs')).toMatchObject({ min: 0.7, max: 1.2 });

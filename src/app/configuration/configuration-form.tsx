@@ -25,6 +25,7 @@ import { renderValue } from '@/dashboard';
 import Badge from '@/ui/badge';
 import Button from '@/ui/button';
 import Card from '@/ui/card';
+import { PILL, PILL_OFF } from '@/ui/chip';
 import Caveat from '@/ui/caveat';
 import Checkbox from '@/ui/checkbox';
 import Input from '@/ui/input';
@@ -215,6 +216,20 @@ function EditStep({
         </p>
       )}
 
+      {/* 54 leaves is more than a screen however dense the rows are, so the five
+          groups are one click apart from anywhere in the form. Plain anchors:
+          no script, and the address bar keeps the group. */}
+      <nav
+        aria-label="Configuration groups"
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-surface-page py-2"
+      >
+        {GROUPS.map((group) => (
+          <a key={group} href={`#${group}`} className={`${PILL} ${PILL_OFF}`}>
+            {group}
+          </a>
+        ))}
+      </nav>
+
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-[18px]">
         <input type="hidden" name="tenant" value={tenant} />
         {/* The document the diff is taken against, carried as JSON so the review
@@ -222,42 +237,46 @@ function EditStep({
         <input type="hidden" name="from" value={JSON.stringify(from)} />
 
         {GROUPS.map((group) => (
-          <Card key={group} title={group}>
-            <div className="flex flex-col">
-              {visible(group).map(({ field, vendorBounds }) => (
-                <FieldRow
-                  key={field.path}
-                  field={field}
-                  vendorBounds={vendorBounds}
-                  isSet={chosen.has(field.path)}
-                  onTick={tick}
-                  value={restored[field.path]?.value ?? values[field.path] ?? ''}
-                  generation={restored[field.path]?.generation ?? 0}
-                  provider={providers[`${field.group}.provider`] ?? ''}
-                  onProvider={(next) => {
-                    setProviders((current) => ({ ...current, [field.path]: next }));
-                    tick(field.path, next !== '');
-                  }}
-                  onRestore={(text) => {
-                    setRestored((current) => ({
-                      ...current,
-                      [field.path]: {
-                        value: text,
-                        generation: (current[field.path]?.generation ?? 0) + 1,
-                      },
-                    }));
-                    tick(field.path, true);
-                  }}
-                  shipped={
-                    field.group === 'text' ? shippedText[field.path.slice('text.'.length)] : undefined
-                  }
-                  ranOn={ranOn[field.path] ?? null}
-                  snapshotRecorded={snapshotRecorded}
-                  editable={editable}
-                />
-              ))}
-            </div>
-          </Card>
+          // The anchor's target, offset by the sticky strip's own height so the
+          // card's title is not the line the strip covers.
+          <div key={group} id={group} className="scroll-mt-[64px]">
+            <Card title={group}>
+              <div className="flex flex-col">
+                {visible(group).map(({ field, vendorBounds }) => (
+                  <FieldRow
+                    key={field.path}
+                    field={field}
+                    vendorBounds={vendorBounds}
+                    isSet={chosen.has(field.path)}
+                    onTick={tick}
+                    value={restored[field.path]?.value ?? values[field.path] ?? ''}
+                    generation={restored[field.path]?.generation ?? 0}
+                    provider={providers[`${field.group}.provider`] ?? ''}
+                    onProvider={(next) => {
+                      setProviders((current) => ({ ...current, [field.path]: next }));
+                      tick(field.path, next !== '');
+                    }}
+                    onRestore={(text) => {
+                      setRestored((current) => ({
+                        ...current,
+                        [field.path]: {
+                          value: text,
+                          generation: (current[field.path]?.generation ?? 0) + 1,
+                        },
+                      }));
+                      tick(field.path, true);
+                    }}
+                    shipped={
+                      field.group === 'text' ? shippedText[field.path.slice('text.'.length)] : undefined
+                    }
+                    ranOn={ranOn[field.path] ?? null}
+                    snapshotRecorded={snapshotRecorded}
+                    editable={editable}
+                  />
+                ))}
+              </div>
+            </Card>
+          </div>
         ))}
       </form>
 
@@ -272,7 +291,10 @@ function EditStep({
       </form>
 
       {editable ? (
-        <div className="flex flex-wrap items-center gap-3">
+        // The way out of a 54-leaf form stays on screen wherever the operator
+        // has scrolled to; the buttons are still outside every form and wired
+        // by `form=`, because a form inside a form is not a thing.
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 border-t border-border-hairline bg-surface-page py-3">
           <Button type="submit" form={FORM_ID} name="intent" value="review" disabled={pending}>
             Review
           </Button>
@@ -329,60 +351,165 @@ function FieldRow({
   const isProvider = path === 'stt.provider' || path === 'tts.provider';
   const flatKey =
     typeof field.flatKey === 'string' ? field.flatKey : (field.flatKey[provider] ?? '—');
+  // The leaf name alone: the group is the card's title and the rest of the path
+  // is in the label's tooltip, so a column of rows reads as a column of names.
+  const leaf = path.slice(path.lastIndexOf('.') + 1);
+  const long = isLong(field);
+  const meta = metaLine({ field, vendorBounds, ranOn, snapshotRecorded });
 
-  return (
-    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 border-t border-border-hairline py-3 first:border-t-0 first:pt-0">
-      <Checkbox
-        name={`set:${path}`}
-        label="set"
-        checked={isSet}
+  const box = (
+    <Checkbox
+      name={`set:${path}`}
+      label={`set ${path}`}
+      labelHidden
+      checked={isSet}
+      disabled={!editable}
+      onChange={(event) => {
+        onTick(path, event.target.checked);
+      }}
+    />
+  );
+
+  const name = (
+    <>
+      <label htmlFor={path} title={path} className="text-[length:var(--size-ui)] font-medium">
+        {leaf}
+      </label>
+      <span className="font-num text-[length:var(--size-eyebrow)] text-text-muted">{flatKey}</span>
+    </>
+  );
+
+  const restore =
+    shipped === undefined ? null : (
+      <button
+        type="button"
         disabled={!editable}
-        onChange={(event) => {
-          onTick(path, event.target.checked);
+        onClick={() => {
+          onRestore(shipped);
         }}
-        className="pt-[9px]"
+        className="ml-auto cursor-pointer text-[length:var(--size-eyebrow)] font-medium text-text-link hover:underline disabled:cursor-default disabled:text-text-muted disabled:no-underline"
+      >
+        restore shipped text
+      </button>
+    );
+
+  const control = (
+    // Unticked is dimmed, never disabled or read-only: a disabled control
+    // submits nothing, and a value typed before the box is ticked must still be
+    // the one that is submitted when it is.
+    <div className={isSet ? undefined : 'opacity-60'}>
+      <Control
+        field={field}
+        value={value}
+        generation={generation}
+        provider={provider}
+        onProvider={onProvider}
+        onTick={onTick}
+        isSet={isSet}
+        editable={editable}
+        isProvider={isProvider}
+        width={long ? 'w-full' : controlWidth(field, isProvider)}
       />
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <label htmlFor={path} className="text-[length:var(--size-ui)] font-medium">
-            {path}
-          </label>
-          <span className="font-num text-[length:var(--size-eyebrow)] text-text-muted">
-            {flatKey}
-          </span>
-          {shipped === undefined ? null : (
-            <button
-              type="button"
-              disabled={!editable}
-              onClick={() => {
-                onRestore(shipped);
-              }}
-              className="cursor-pointer text-[length:var(--size-eyebrow)] font-medium text-text-link hover:underline disabled:cursor-default disabled:text-text-muted disabled:no-underline"
-            >
-              restore shipped text
-            </button>
-          )}
-        </div>
-
-        <Control
-          field={field}
-          value={value}
-          generation={generation}
-          provider={provider}
-          onProvider={onProvider}
-          editable={editable}
-          isProvider={isProvider}
-        />
-
-        <Hints
-          field={field}
-          vendorBounds={vendorBounds}
-          ranOn={ranOn}
-          snapshotRecorded={snapshotRecorded}
-        />
-      </div>
     </div>
   );
+
+  if (long) {
+    return (
+      <div className="flex flex-col gap-1.5 border-t border-border-hairline py-3 first:border-t-0 first:pt-0">
+        <div className="flex flex-wrap items-center gap-2">
+          {box}
+          {name}
+          {restore}
+        </div>
+        {control}
+        <Caveat className="truncate" title={meta.full}>
+          {meta.text}
+        </Caveat>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-[auto_minmax(200px,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 border-t border-border-hairline py-2 first:border-t-0">
+      {box}
+      <div className="flex min-w-0 flex-col">
+        {name}
+      </div>
+      {control}
+      <Caveat className="truncate" title={meta.full}>
+        {meta.text}
+      </Caveat>
+    </div>
+  );
+}
+
+/** A long control takes a line of its own; every other kind fits on its row. */
+function isLong(field: Field): boolean {
+  return field.kind === 'textarea' || field.kind === 'list' || field.kind === 'record';
+}
+
+/**
+ * How wide a short control is drawn: to what it holds, not to the column. A
+ * 120px box says "a number goes here" the way a full-width one never does.
+ */
+function controlWidth(field: Field, isProvider: boolean): string {
+  if (field.kind === 'integer' || field.kind === 'number') return 'w-[120px]';
+  if (isProvider || field.kind === 'boolean' || field.kind === 'enum') return 'w-[220px]';
+  return 'w-[280px]';
+}
+
+/** The longest "ran on" a one-line meta row shows; the rest is in its tooltip. */
+const RAN_ON_MAX = 80;
+
+/**
+ * The one muted line a row carries: what the last answered call ran on, the
+ * leaf's own bounds, the per-vendor bounds a merged control cannot carry, and
+ * the hint its kind needs — joined with ` · ` so one leaf is one line instead
+ * of four. `text` is what the row shows; `full` is its tooltip, because the
+ * line is truncated rather than wrapped.
+ */
+function metaLine({
+  field,
+  vendorBounds,
+  ranOn,
+  snapshotRecorded,
+}: {
+  field: Field;
+  vendorBounds: string | null;
+  ranOn: string | null;
+  snapshotRecorded: boolean;
+}): { text: string; full: string } {
+  const rest: string[] = [];
+  if (field.min !== null) {
+    rest.push(`${field.minExclusive ? 'greater than' : 'at least'} ${String(field.min)}`);
+  }
+  if (field.max !== null) {
+    rest.push(`${field.maxExclusive ? 'less than' : 'at most'} ${String(field.max)}`);
+  }
+  // A merged control carries no bound of its own: each vendor bounds the leaf
+  // its own way, and the row names one vendor.
+  if (vendorBounds !== null) rest.push(vendorBounds);
+  if (field.kind === 'list') {
+    rest.push(
+      field.path === 'llm.params.stop'
+        ? 'one entry per line — a stop sequence that itself contains a line break cannot be written here'
+        : 'one entry per line',
+    );
+  }
+  if (field.kind === 'record') rest.push('a JSON object, as stored');
+
+  // Contract §3.4: the snapshot is the only record of what a leaf's value
+  // actually WAS on a call. A key the snapshot does not carry is "—" — that
+  // vendor did not run — and never this build's default.
+  if (!snapshotRecorded) return join('ran on: not recorded', 'ran on: not recorded', rest);
+  if (ranOn === null) return join('ran on —', 'ran on —', rest);
+  const clipped =
+    ranOn.length > RAN_ON_MAX ? `ran on ${ranOn.slice(0, RAN_ON_MAX)}…` : `ran on ${ranOn}`;
+  return join(clipped, `ran on ${ranOn}`, rest);
+}
+
+function join(text: string, full: string, rest: readonly string[]): { text: string; full: string } {
+  return { text: [text, ...rest].join(' · '), full: [full, ...rest].join(' · ') };
 }
 
 function Control({
@@ -391,16 +518,23 @@ function Control({
   generation,
   provider,
   onProvider,
+  onTick,
+  isSet,
   editable,
   isProvider,
+  width,
 }: {
   field: Field;
   value: string;
   generation: number;
   provider: string;
   onProvider: (next: string) => void;
+  onTick: (path: string, on: boolean) => void;
+  isSet: boolean;
   editable: boolean;
   isProvider: boolean;
+  /** The width class of the box itself: to the kind, or `w-full` on a long row. */
+  width: string;
 }) {
   const { path, kind } = field;
   // The control is uncontrolled and remounts when a restore bumps the
@@ -408,25 +542,34 @@ function Control({
   // refills a box without making every keystroke a re-render.
   const key = `${path}:${String(generation)}`;
 
+  // Editing a leaf is what "set this leaf" means, so a first keystroke ticks
+  // the box rather than asking for it. Guarded on `isSet` so only that first
+  // one re-renders the form; the rest stay a keystroke in an uncontrolled box.
+  const autoTick = (): void => {
+    if (!isSet) onTick(path, true);
+  };
+
   if (isProvider) {
     return (
       <>
-        <Select
-          id={path}
-          name={path}
-          value={provider}
-          disabled={!editable}
-          onChange={(event) => {
-            onProvider(event.target.value);
-          }}
-        >
-          <option value="">not set — this leg leaves the row</option>
-          {(field.options ?? []).map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </Select>
+        <div className={width}>
+          <Select
+            id={path}
+            name={path}
+            value={provider}
+            disabled={!editable}
+            onChange={(event) => {
+              onProvider(event.target.value);
+            }}
+          >
+            <option value="">not set — this leg leaves the row</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </Select>
+        </div>
         <noscript>
           <Caveat>
             without JavaScript every vendor&apos;s parameters are shown at once; a parameter of
@@ -443,62 +586,101 @@ function Control({
     // which the copied schema refuses, and an unticked one submits nothing at
     // all — which would read as "not set" (contract §3.4: absent ≠ false).
     return (
-      <Select key={key} id={path} name={path} defaultValue={value} disabled={!editable}>
-        <Unknown value={value} options={['true', 'false']} />
-        <option value="true">true</option>
-        <option value="false">false</option>
-      </Select>
+      <div className={width}>
+        <Select
+          key={key}
+          id={path}
+          name={path}
+          defaultValue={value}
+          disabled={!editable}
+          onChange={autoTick}
+        >
+          <Unknown value={value} options={['true', 'false']} />
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </Select>
+      </div>
     );
   }
 
   if (kind === 'enum') {
     const options = field.options ?? [];
     return (
-      <Select key={key} id={path} name={path} defaultValue={value} disabled={!editable}>
-        <Unknown value={value} options={options} />
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </Select>
+      <div className={width}>
+        <Select
+          key={key}
+          id={path}
+          name={path}
+          defaultValue={value}
+          disabled={!editable}
+          onChange={autoTick}
+        >
+          <Unknown value={value} options={options} />
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </Select>
+      </div>
     );
   }
 
   if (kind === 'integer' || kind === 'number') {
     return (
-      <Input
-        key={key}
-        id={path}
-        name={path}
-        type="number"
-        step={kind === 'integer' ? '1' : 'any'}
-        // An exclusive bound is not expressible as `min`/`max`, so it stays out
-        // of the attribute and lives in the hint instead — the browser must not
-        // accept a value the schema then refuses, nor refuse one it accepts.
-        min={field.min !== null && !field.minExclusive ? field.min : undefined}
-        max={field.max !== null && !field.maxExclusive ? field.max : undefined}
-        defaultValue={value}
-        disabled={!editable}
-      />
+      <div className={width}>
+        <Input
+          key={key}
+          id={path}
+          name={path}
+          type="number"
+          step={kind === 'integer' ? '1' : 'any'}
+          // An exclusive bound is not expressible as `min`/`max`, so it stays
+          // out of the attribute and lives in the meta line instead — the
+          // browser must not accept a value the schema then refuses, nor refuse
+          // one it accepts.
+          min={field.min !== null && !field.minExclusive ? field.min : undefined}
+          max={field.max !== null && !field.maxExclusive ? field.max : undefined}
+          defaultValue={value}
+          disabled={!editable}
+          onInput={autoTick}
+        />
+      </div>
     );
   }
 
   if (kind === 'textarea' || kind === 'list' || kind === 'record') {
+    // Five rows for a spoken line or the prompt block; three for a list, a JSON
+    // object, and the one biasing text that is not a `text.*` leaf.
+    const rows = kind === 'textarea' && field.group === 'text' ? 5 : 3;
     return (
-      <Textarea
-        key={key}
-        id={path}
-        name={path}
-        rows={kind === 'textarea' ? 5 : 3}
-        defaultValue={value}
-        disabled={!editable}
-        className={kind === 'textarea' ? undefined : 'font-num'}
-      />
+      <div className={width}>
+        <Textarea
+          key={key}
+          id={path}
+          name={path}
+          rows={rows}
+          defaultValue={value}
+          disabled={!editable}
+          onInput={autoTick}
+          className={kind === 'textarea' ? undefined : 'font-num'}
+        />
+      </div>
     );
   }
 
-  return <Input key={key} id={path} name={path} defaultValue={value} disabled={!editable} />;
+  return (
+    <div className={width}>
+      <Input
+        key={key}
+        id={path}
+        name={path}
+        defaultValue={value}
+        disabled={!editable}
+        onInput={autoTick}
+      />
+    </div>
+  );
 }
 
 /**
@@ -510,51 +692,6 @@ function Control({
 function Unknown({ value, options }: { value: string; options: readonly string[] }) {
   if (value === '' || options.includes(value)) return null;
   return <option value={value}>{value} — not a value this build offers</option>;
-}
-
-function Hints({
-  field,
-  vendorBounds,
-  ranOn,
-  snapshotRecorded,
-}: {
-  field: Field;
-  vendorBounds: string | null;
-  ranOn: string | null;
-  snapshotRecorded: boolean;
-}) {
-  const bounds: string[] = [];
-  if (field.min !== null) {
-    bounds.push(`${field.minExclusive ? 'greater than' : 'at least'} ${String(field.min)}`);
-  }
-  if (field.max !== null) {
-    bounds.push(`${field.maxExclusive ? 'less than' : 'at most'} ${String(field.max)}`);
-  }
-
-  return (
-    <>
-      {bounds.length === 0 ? null : <Caveat>{bounds.join(' · ')}</Caveat>}
-      {/* A merged control carries no bound of its own: each vendor bounds the
-          leaf its own way, and the row names one vendor. */}
-      {vendorBounds === null ? null : <Caveat>{vendorBounds}</Caveat>}
-      {field.kind === 'list' ? (
-        <Caveat>
-          one entry per line
-          {field.path === 'llm.params.stop'
-            ? ' — a stop sequence that itself contains a line break cannot be written here'
-            : ''}
-        </Caveat>
-      ) : null}
-      {field.kind === 'record' ? <Caveat>a JSON object, as stored</Caveat> : null}
-      {/* Contract §3.4: the snapshot is the only record of what a leaf's value
-          actually WAS on a call. A key the snapshot does not carry is "—" —
-          that vendor did not run — and never this build's default. */}
-      <Caveat>
-        last answered call ran on:{' '}
-        {!snapshotRecorded ? 'not recorded' : ranOn === null ? '—' : ranOn}
-      </Caveat>
-    </>
-  );
 }
 
 /* ---------------------------------------------------------------- review */
