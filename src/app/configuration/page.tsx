@@ -122,6 +122,14 @@ export default async function ConfigurationPage({
   const disclosure = typeof currentGreeting === 'string' ? disclosureAdvice(currentGreeting) : [];
 
   const editable = editorConfigured && account !== undefined;
+  const readOnly = [
+    ...(editorConfigured
+      ? []
+      : ['EDITOR_DATABASE_URL is unset, so this process holds no credential that may insert.']),
+    ...(account === undefined
+      ? ['The reverse proxy passed no account, and a row cannot be written unsigned.']
+      : []),
+  ];
   const tenantRow = tenantRows.find((row) => row.id === tenant);
   const tenantLabel =
     tenantRow?.clinic_name === null || tenantRow?.clinic_name === undefined
@@ -167,38 +175,37 @@ export default async function ConfigurationPage({
             and what for. `created_by` is shown exactly as stored — the writer
             this console stamps on its own rows (`src/account.ts`), and whatever
             the pipeline or a hand at the database wrote on the others. */}
-        <Caveat>
-          {newest === null
-            ? 'boot config — no row yet'
-            : `row #${newest.id} · ${formatWhen(newest.created_at)} · ${newest.created_by} · ${
-                newest.note === null ? 'no note' : `“${newest.note}”`
-              }`}
-        </Caveat>
+        <p className="mb-0 text-[length:var(--size-ui)]">
+          {newest === null ? (
+            'No row yet: every call runs on boot config.'
+          ) : (
+            <>
+              Current row <span className="font-num tabular-nums font-medium">#{newest.id}</span>
+              <span className="text-text-muted">
+                {' '}
+                · {formatWhen(newest.created_at)} · {newest.created_by}
+                {newest.note === null ? null : <> · “{newest.note}”</>}
+              </span>
+            </>
+          )}
+        </p>
         {start.row === null ? null : (
           <Caveat>
-            the form below starts from row #{start.row.id}, not from the newest row — a save is
-            still a new row
+            the form below is loaded from row #{start.row.id}; saving still writes a new row
           </Caveat>
         )}
-        {/* Rule 4 of `docs/redesign.md` §4.2, fixed on this screen: the console
-            cannot see which vendors this box holds credentials for. */}
-        {/* This container cannot reach the pipeline's `/healthz`, so it cannot
-            narrow the list itself. */}
-        <Caveat>
-          every vendor is offered; the box refuses a row naming one it holds no keys for — its{' '}
-          <code>/healthz</code> lists them under <code>vendors</code>
-        </Caveat>
       </div>
 
       {applied !== null && applied.not_applied > 0 && newest !== null ? (
         <Card tone="warm" title="The latest row is not being applied">
+          {/* The reason is never in this database (ADR 0011 decision 7), so the
+              card points at where it is rather than guessing one. */}
           <Caveat>
             {applied.not_applied} of the {applied.total} calls since row #{newest.id} ran on boot
             config or an older row. The reason is in the pipeline&apos;s log line (
             <code>reason: timeout | query | invalid | provider</code>) and in{' '}
-            <code>fonnus_runtime_config_fallbacks_total</code> on <code>/metrics</code> — not in
-            this database. A call that was being answered at that moment ran on the row before,
-            legitimately, and is counted here all the same.
+            <code>fonnus_runtime_config_fallbacks_total</code> on <code>/metrics</code>. A call
+            already being answered when the row landed ran on the row before, and counts here too.
           </Caveat>
         </Card>
       ) : null}
@@ -206,11 +213,10 @@ export default async function ConfigurationPage({
       {parsedStart.ok ? null : (
         <Card tone="warm" title="The stored document does not pass the copied schema">
           <Caveat>
-            Either the row was written by hand with something the schema refuses — in which case
-            the pipeline refused it too and those calls ran on boot config — or this console&apos;s
-            copy of the schema has gone stale against the pipeline&apos;s
-            (<code>src/contract/contract-hash.test.ts</code> settles which). The form below starts
-            from boot config rather than from a document nothing can read.
+            The form starts from boot config instead. Either the row was written by hand with
+            something the schema refuses, and the pipeline refused it too, or this console&apos;s
+            copy of the schema is stale (<code>src/contract/contract-hash.test.ts</code> settles
+            which).
           </Caveat>
           <div className="flex flex-col gap-1">
             {parsedStart.issues.map((issue) => (
@@ -219,31 +225,24 @@ export default async function ConfigurationPage({
               </Caveat>
             ))}
           </div>
-          <pre className="m-0 overflow-x-auto rounded-md bg-surface-page p-3 font-num text-[length:var(--size-ui)] leading-[1.5] whitespace-pre-wrap">
-            {JSON.stringify(start.document, null, 2)}
-          </pre>
+          <details className="text-[length:var(--size-ui)]">
+            <summary className="cursor-pointer text-text-link">the stored document</summary>
+            <pre className="mt-2 mb-0 overflow-x-auto rounded-md bg-surface-page p-3 font-num text-[length:var(--size-ui)] leading-[1.5] whitespace-pre-wrap">
+              {JSON.stringify(start.document, null, 2)}
+            </pre>
+          </details>
         </Card>
       )}
 
-      {editorConfigured ? null : (
-        <Card tone="warm" title="Editing is not configured">
-          <Caveat>
-            <code>EDITOR_DATABASE_URL</code> is unset, so this process holds no credential that
-            may insert. The form below is read-only.
-          </Caveat>
+      {readOnly.length === 0 ? null : (
+        // ADR 0007: every row is signed with the account Caddy authenticated,
+        // by a credential that may insert — with either missing, nothing is.
+        <Card tone="warm" title="Read-only">
+          {readOnly.map((reason) => (
+            <Caveat key={reason}>{reason}</Caveat>
+          ))}
         </Card>
       )}
-
-      {account === undefined ? (
-        <Card tone="warm" title="No account on this request">
-          {/* ADR 0007: every row is signed with the account Caddy
-              authenticated, and there is no placeholder name. */}
-          <Caveat>
-            The reverse proxy passed no account, and a row cannot be written unsigned. The form
-            below is read-only.
-          </Caveat>
-        </Card>
-      ) : null}
 
       <ConfigurationForm
         tenant={tenant}

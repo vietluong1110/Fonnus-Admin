@@ -26,7 +26,7 @@ import Badge from '@/ui/badge';
 import Button from '@/ui/button';
 import Card from '@/ui/card';
 import { PILL, PILL_OFF } from '@/ui/chip';
-import Caveat from '@/ui/caveat';
+import Caveat, { Hint } from '@/ui/caveat';
 import Checkbox from '@/ui/checkbox';
 import Input from '@/ui/input';
 import Select from '@/ui/select';
@@ -176,11 +176,8 @@ function EditStep({
               <li key={line}>{line}</li>
             ))}
           </ul>
-          <Caveat>
-            advice, never a refusal: the pipeline speaks whatever greeting the row carries
-            (pipeline ADR 0021 D5). Restoring opens the review step with the shipped greeting
-            in place — the save is still one more click.
-          </Caveat>
+          {/* Pipeline ADR 0021 D5: advice, never a refusal. */}
+          <Caveat>advice only: the pipeline speaks whatever greeting the row carries</Caveat>
           {/* Its own form, carrying the starting document with one leaf
               replaced: a click here must not depend on what the operator has
               since typed into the form below. */}
@@ -202,7 +199,7 @@ function EditStep({
             {editable ? (
               <div>
                 <Button type="submit" name="intent" value="review" disabled={pending}>
-                  restore shipped greeting
+                  Review with the shipped greeting
                 </Button>
               </div>
             ) : null}
@@ -218,16 +215,29 @@ function EditStep({
 
       {/* 54 leaves is more than a screen however dense the rows are, so the five
           groups are one click apart from anywhere in the form. Plain anchors:
-          no script, and the address bar keeps the group. */}
+          no script, and the address bar keeps the group. The count is how many
+          of the group's leaves the row sets, so where the row departs from boot
+          config shows before any scrolling. */}
       <nav
         aria-label="Configuration groups"
         className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-surface-page py-2"
       >
-        {GROUPS.map((group) => (
-          <a key={group} href={`#${group}`} className={`${PILL} ${PILL_OFF}`}>
-            {group}
-          </a>
-        ))}
+        {GROUPS.map((group) => {
+          const count = [...chosen].filter((path) => path.startsWith(`${group}.`)).length;
+          return (
+            <a key={group} href={`#${group}`} className={`${PILL} ${PILL_OFF}`}>
+              {group}
+              {count === 0 ? null : (
+                <span
+                  className="font-num tabular-nums text-text-link"
+                  title={`${String(count)} set in this row`}
+                >
+                  {count}
+                </span>
+              )}
+            </a>
+          );
+        })}
       </nav>
 
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-[18px]">
@@ -242,6 +252,7 @@ function EditStep({
           <div key={group} id={group} className="scroll-mt-[64px]">
             <Card title={group}>
               <div className="flex flex-col">
+                <HeaderRow />
                 {visible(group).map(({ field, vendorBounds }) => (
                   <FieldRow
                     key={field.path}
@@ -308,7 +319,9 @@ function EditStep({
           >
             Back to boot config
           </Button>
-          <Caveat>{EFFECT}</Caveat>
+          <Caveat>
+            {chosen.size} {chosen.size === 1 ? 'value' : 'values'} set in this row · {EFFECT}
+          </Caveat>
         </div>
       ) : null}
     </>
@@ -316,6 +329,40 @@ function EditStep({
 }
 
 /* ------------------------------------------------------------- one leaf */
+
+/**
+ * The one column template the header and every row share, so the boxes, the
+ * names, the controls and the last-call values each form a straight column
+ * whatever kind of control a row holds. Below `md` the control and the
+ * last-call value wrap under the name.
+ */
+const ROW_GRID =
+  'grid grid-cols-[28px_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5 md:grid-cols-[28px_minmax(0,240px)_260px_minmax(0,1fr)]';
+
+/** What the tick means, read once and then known. */
+const SET_HINT =
+  'Ticked: this row carries the value. Unticked: the leaf is left out of the row and the pipeline boot value applies. Typing a value ticks it; emptying a number or choosing "boot value" unticks it.';
+
+/** Contract §3.4: a key the snapshot lacks is a vendor that did not run, never a default. */
+const LAST_CALL_HINT =
+  'What the most recent answered call ran on, from its config snapshot. "—" means that call carried no such key: its vendor did not run.';
+
+/** A column head per group card, in the Table's header style. */
+function HeaderRow() {
+  const head = 'text-[12px] leading-[1.4] font-semibold tracking-[.04em] text-text-muted';
+  return (
+    <div className={`${ROW_GRID} hidden border-b border-border-strong pb-2 md:grid`}>
+      <span className={head}>
+        <Hint hint={SET_HINT}>set</Hint>
+      </span>
+      <span className={head}>setting</span>
+      <span className={head}>value</span>
+      <span className={head}>
+        <Hint hint={LAST_CALL_HINT}>last call</Hint>
+      </span>
+    </div>
+  );
+}
 
 function FieldRow({
   field,
@@ -349,13 +396,11 @@ function FieldRow({
 }) {
   const { path } = field;
   const isProvider = path === 'stt.provider' || path === 'tts.provider';
-  const flatKey =
-    typeof field.flatKey === 'string' ? field.flatKey : (field.flatKey[provider] ?? '—');
-  // The leaf name alone: the group is the card's title and the rest of the path
-  // is in the label's tooltip, so a column of rows reads as a column of names.
+  // The leaf name alone: the group is the card's title, and the full path, the
+  // snapshot key and the bounds are the name's tooltip — read once, so they do
+  // not take a second line on each of 54 rows.
   const leaf = path.slice(path.lastIndexOf('.') + 1);
   const long = isLong(field);
-  const meta = metaLine({ field, vendorBounds, ranOn, snapshotRecorded });
 
   const box = (
     <Checkbox
@@ -371,12 +416,9 @@ function FieldRow({
   );
 
   const name = (
-    <>
-      <label htmlFor={path} title={path} className="text-[length:var(--size-ui)] font-medium">
-        {leaf}
-      </label>
-      <span className="font-num text-[length:var(--size-eyebrow)] text-text-muted">{flatKey}</span>
-    </>
+    <label htmlFor={path} className="min-w-0 truncate text-[length:var(--size-ui)] font-medium">
+      <Hint hint={nameHint({ field, vendorBounds, provider, isProvider })}>{leaf}</Hint>
+    </label>
   );
 
   const restore =
@@ -387,7 +429,7 @@ function FieldRow({
         onClick={() => {
           onRestore(shipped);
         }}
-        className="ml-auto cursor-pointer text-[length:var(--size-eyebrow)] font-medium text-text-link hover:underline disabled:cursor-default disabled:text-text-muted disabled:no-underline"
+        className="cursor-pointer justify-self-end text-[length:var(--size-eyebrow)] font-medium text-text-link hover:underline disabled:cursor-default disabled:text-text-muted disabled:no-underline"
       >
         restore shipped text
       </button>
@@ -408,37 +450,45 @@ function FieldRow({
         isSet={isSet}
         editable={editable}
         isProvider={isProvider}
-        width={long ? 'w-full' : controlWidth(field, isProvider)}
+        width={long ? 'w-full' : controlWidth(field)}
       />
     </div>
   );
 
+  const lastCall = lastCallText(ranOn, snapshotRecorded);
+
   if (long) {
     return (
-      <div className="flex flex-col gap-1.5 border-t border-border-hairline py-3 first:border-t-0 first:pt-0">
-        <div className="flex flex-wrap items-center gap-2">
-          {box}
+      <div className={`${ROW_GRID} border-t border-border-hairline py-3 first:border-t-0`}>
+        {box}
+        <div className="flex min-w-0 items-center justify-between gap-3 md:col-span-3">
           {name}
           {restore}
         </div>
-        {control}
-        <Caveat className="truncate" title={meta.full}>
-          {meta.text}
-        </Caveat>
+        <div className="col-[2/3] md:col-[2/5]">{control}</div>
+        <p
+          className="col-[2/3] mb-0 truncate text-[length:var(--size-eyebrow)] text-text-muted md:col-[2/5]"
+          title={lastCall}
+        >
+          last call: {lastCall}
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-[auto_minmax(200px,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 border-t border-border-hairline py-2 first:border-t-0">
+    <div className={`${ROW_GRID} border-t border-border-hairline py-2 first:border-t-0`}>
       {box}
-      <div className="flex min-w-0 flex-col">
-        {name}
-      </div>
-      {control}
-      <Caveat className="truncate" title={meta.full}>
-        {meta.text}
-      </Caveat>
+      {name}
+      <div className="col-start-2 md:col-start-auto">{control}</div>
+      <span
+        className="col-start-2 truncate font-num text-[length:var(--size-ui)] tabular-nums text-text-muted md:col-start-auto"
+        title={lastCall}
+      >
+        {/* The column head is hidden below `md`, so the value names itself. */}
+        <span className="font-ui md:hidden">last call: </span>
+        {lastCall}
+      </span>
     </div>
   );
 }
@@ -449,68 +499,78 @@ function isLong(field: Field): boolean {
 }
 
 /**
- * How wide a short control is drawn: to what it holds, not to the column. A
- * 120px box says "a number goes here" the way a full-width one never does.
+ * How wide a short control is drawn inside its column: a number box to what it
+ * holds, because a 120px box says "a number goes here" the way a full-width
+ * one never does; everything else fills the column.
  */
-function controlWidth(field: Field, isProvider: boolean): string {
-  if (field.kind === 'integer' || field.kind === 'number') return 'w-[120px]';
-  if (isProvider || field.kind === 'boolean' || field.kind === 'enum') return 'w-[220px]';
-  return 'w-[280px]';
+function controlWidth(field: Field): string {
+  return field.kind === 'integer' || field.kind === 'number' ? 'w-[120px]' : 'w-full';
 }
 
-/** The longest "ran on" a one-line meta row shows; the rest is in its tooltip. */
-const RAN_ON_MAX = 80;
+/** The last-call cell, in words: "not recorded" before any call, "—" for a key it lacked. */
+function lastCallText(ranOn: string | null, snapshotRecorded: boolean): string {
+  if (!snapshotRecorded) return 'not recorded';
+  return ranOn ?? '—';
+}
 
 /**
- * The one muted line a row carries: what the last answered call ran on, the
- * leaf's own bounds, the per-vendor bounds a merged control cannot carry, and
- * the hint its kind needs — joined with ` · ` so one leaf is one line instead
- * of four. `text` is what the row shows; `full` is its tooltip, because the
- * line is truncated rather than wrapped.
+ * The name's tooltip, one fact per line: the full path, the snapshot key the
+ * leaf becomes on a call, the leaf's own bounds, the per-vendor bounds a merged
+ * control cannot carry, and what the kind of box expects.
  */
-function metaLine({
+function nameHint({
   field,
   vendorBounds,
-  ranOn,
-  snapshotRecorded,
+  provider,
+  isProvider,
 }: {
   field: Field;
   vendorBounds: string | null;
-  ranOn: string | null;
-  snapshotRecorded: boolean;
-}): { text: string; full: string } {
-  const rest: string[] = [];
+  provider: string;
+  isProvider: boolean;
+}): string {
+  const lines = [field.path];
+  if (typeof field.flatKey === 'string') {
+    lines.push(`snapshot key ${field.flatKey}`);
+  } else {
+    const own = field.flatKey[provider];
+    lines.push(
+      own === undefined
+        ? `snapshot key per vendor: ${Object.entries(field.flatKey)
+            .map(([vendor, key]) => `${vendor} ${key}`)
+            .join(', ')}`
+        : `snapshot key ${own}`,
+    );
+  }
   if (field.min !== null) {
-    rest.push(`${field.minExclusive ? 'greater than' : 'at least'} ${String(field.min)}`);
+    lines.push(`${field.minExclusive ? 'greater than' : 'at least'} ${String(field.min)}`);
   }
   if (field.max !== null) {
-    rest.push(`${field.maxExclusive ? 'less than' : 'at most'} ${String(field.max)}`);
+    lines.push(`${field.maxExclusive ? 'less than' : 'at most'} ${String(field.max)}`);
   }
   // A merged control carries no bound of its own: each vendor bounds the leaf
-  // its own way, and the row names one vendor.
-  if (vendorBounds !== null) rest.push(vendorBounds);
+  // its own way.
+  if (vendorBounds !== null) lines.push(vendorBounds);
   if (field.kind === 'list') {
-    rest.push(
+    lines.push(
       field.path === 'llm.params.stop'
-        ? 'one entry per line — a stop sequence that itself contains a line break cannot be written here'
+        ? 'one entry per line; a stop sequence that itself contains a line break cannot be written here'
         : 'one entry per line',
     );
   }
-  if (field.kind === 'record') rest.push('a JSON object, as stored');
-
-  // Contract §3.4: the snapshot is the only record of what a leaf's value
-  // actually WAS on a call. A key the snapshot does not carry is "—" — that
-  // vendor did not run — and never this build's default.
-  if (!snapshotRecorded) return join('ran on: not recorded', 'ran on: not recorded', rest);
-  if (ranOn === null) return join('ran on —', 'ran on —', rest);
-  const clipped =
-    ranOn.length > RAN_ON_MAX ? `ran on ${ranOn.slice(0, RAN_ON_MAX)}…` : `ran on ${ranOn}`;
-  return join(clipped, `ran on ${ranOn}`, rest);
+  if (field.kind === 'record') lines.push('a JSON object, as stored');
+  // Rule 4 of `docs/redesign.md` §4.2: this container cannot reach the
+  // pipeline's `/healthz`, so it cannot narrow the list itself.
+  if (isProvider) {
+    lines.push(
+      'Every vendor is offered. The box refuses a row naming a vendor it holds no keys for, and those calls run on boot config; its /healthz lists them under vendors.',
+    );
+  }
+  return lines.join('\n');
 }
 
-function join(text: string, full: string, rest: readonly string[]): { text: string; full: string } {
-  return { text: [text, ...rest].join(' · '), full: [full, ...rest].join(' · ') };
-}
+/** The option an unset select shows: the leaf is left out and the boot value applies. */
+const BOOT_OPTION = 'boot value';
 
 function Control({
   field,
@@ -541,12 +601,22 @@ function Control({
   // generation; that is the whole mechanism by which "restore shipped text"
   // refills a box without making every keystroke a re-render.
   const key = `${path}:${String(generation)}`;
+  // An empty unset box says what applies instead of saying nothing.
+  const placeholder = isSet ? undefined : BOOT_OPTION;
 
   // Editing a leaf is what "set this leaf" means, so a first keystroke ticks
   // the box rather than asking for it. Guarded on `isSet` so only that first
   // one re-renders the form; the rest stay a keystroke in an uncontrolled box.
   const autoTick = (): void => {
     if (!isSet) onTick(path, true);
+  };
+  // A select's "boot value" and an emptied number box both mean "leave this
+  // leaf out" — an empty number is no value the schema could accept — so they
+  // untick rather than send a refusal to the review.
+  const tickFor = (next: string): void => {
+    if (next === '') {
+      if (isSet) onTick(path, false);
+    } else autoTick();
   };
 
   if (isProvider) {
@@ -562,7 +632,7 @@ function Control({
               onProvider(event.target.value);
             }}
           >
-            <option value="">not set — this leg leaves the row</option>
+            <option value="">{BOOT_OPTION}</option>
             {(field.options ?? []).map((option) => (
               <option key={option} value={option}>
                 {option}
@@ -581,10 +651,12 @@ function Control({
     );
   }
 
-  if (kind === 'boolean') {
-    // A two-option select, never a checkbox: an HTML checkbox submits `on`,
-    // which the copied schema refuses, and an unticked one submits nothing at
-    // all — which would read as "not set" (contract §3.4: absent ≠ false).
+  if (kind === 'boolean' || kind === 'enum') {
+    // A boolean is a two-option select, never a checkbox: an HTML checkbox
+    // submits `on`, which the copied schema refuses, and an unticked one
+    // submits nothing at all — which would read as "not set" (contract §3.4:
+    // absent ≠ false).
+    const options = kind === 'boolean' ? ['true', 'false'] : (field.options ?? []);
     return (
       <div className={width}>
         <Select
@@ -593,28 +665,11 @@ function Control({
           name={path}
           defaultValue={value}
           disabled={!editable}
-          onChange={autoTick}
+          onChange={(event) => {
+            tickFor(event.target.value);
+          }}
         >
-          <Unknown value={value} options={['true', 'false']} />
-          <option value="true">true</option>
-          <option value="false">false</option>
-        </Select>
-      </div>
-    );
-  }
-
-  if (kind === 'enum') {
-    const options = field.options ?? [];
-    return (
-      <div className={width}>
-        <Select
-          key={key}
-          id={path}
-          name={path}
-          defaultValue={value}
-          disabled={!editable}
-          onChange={autoTick}
-        >
+          <option value="">{BOOT_OPTION}</option>
           <Unknown value={value} options={options} />
           {options.map((option) => (
             <option key={option} value={option}>
@@ -636,14 +691,17 @@ function Control({
           type="number"
           step={kind === 'integer' ? '1' : 'any'}
           // An exclusive bound is not expressible as `min`/`max`, so it stays
-          // out of the attribute and lives in the meta line instead — the
+          // out of the attribute and lives in the name's tooltip instead — the
           // browser must not accept a value the schema then refuses, nor refuse
           // one it accepts.
           min={field.min !== null && !field.minExclusive ? field.min : undefined}
           max={field.max !== null && !field.maxExclusive ? field.max : undefined}
           defaultValue={value}
+          placeholder={placeholder}
           disabled={!editable}
-          onInput={autoTick}
+          onInput={(event) => {
+            tickFor(event.currentTarget.value);
+          }}
         />
       </div>
     );
@@ -661,6 +719,7 @@ function Control({
           name={path}
           rows={rows}
           defaultValue={value}
+          placeholder={placeholder}
           disabled={!editable}
           onInput={autoTick}
           className={kind === 'textarea' ? undefined : 'font-num'}
@@ -676,6 +735,7 @@ function Control({
         id={path}
         name={path}
         defaultValue={value}
+        placeholder={placeholder}
         disabled={!editable}
         onInput={autoTick}
       />
@@ -696,6 +756,12 @@ function Unknown({ value, options }: { value: string; options: readonly string[]
 
 /* ---------------------------------------------------------------- review */
 
+/** One side of a diff line: the value, or the words for an absent leaf (§3.4). */
+function DiffValue({ value }: { value: unknown }) {
+  if (value === undefined) return <span className="text-text-muted">{BOOT_OPTION}</span>;
+  return <span className="font-num">{renderValue(value)}</span>;
+}
+
 function ReviewStep({
   state,
   formAction,
@@ -710,6 +776,7 @@ function ReviewStep({
   from: Record<string, unknown>;
 }) {
   const blocked = state.issues.length > 0;
+  const changes = state.diff.length;
 
   return (
     <form action={formAction} className="flex flex-col gap-[18px]">
@@ -726,53 +793,6 @@ function ReviewStep({
         <input key={path} type="hidden" name={path} value={value} />
       ))}
 
-      <Card title="Proposed document" sub="an absent leaf means the boot value applies">
-        <pre className="m-0 overflow-x-auto rounded-md bg-surface-page p-3 font-num text-[length:var(--size-ui)] leading-[1.5] whitespace-pre-wrap">
-          {JSON.stringify(state.document, null, 2)}
-        </pre>
-      </Card>
-
-      <Card title={`Diff — ${String(state.diff.length)} leaves`}>
-        {state.diff.length === 0 ? (
-          <Caveat>nothing changes: this document is the one the form started from</Caveat>
-        ) : (
-          <TableScroll>
-            <Table>
-              <thead>
-                <tr>
-                  <Th>path</Th>
-                  <Th>change</Th>
-                  <Th>from</Th>
-                  <Th>to</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.diff.map((entry) => (
-                  <tr key={entry.path}>
-                    <Td>{entry.path}</Td>
-                    <Td>{entry.change}</Td>
-                    <Td>
-                      {entry.from === undefined ? (
-                        <span className="text-text-muted">not set</span>
-                      ) : (
-                        <span className="font-num">{renderValue(entry.from)}</span>
-                      )}
-                    </Td>
-                    <Td>
-                      {entry.to === undefined ? (
-                        <span className="text-text-muted">not set</span>
-                      ) : (
-                        <span className="font-num">{renderValue(entry.to)}</span>
-                      )}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-          </TableScroll>
-        )}
-      </Card>
-
       {blocked ? (
         <Card tone="rose" title="The copied schema refuses this document">
           <div className="flex flex-col gap-2">
@@ -783,14 +803,55 @@ function ReviewStep({
               </div>
             ))}
           </div>
-          <Caveat>
-            the pipeline runs this same schema on the row, so a row it refuses would leave every
-            call on boot config — Save is not offered until these are gone
-          </Caveat>
+          {/* The pipeline runs this same schema on the row, so a row it refuses
+              would leave every call on boot config. */}
+          <Caveat>Save comes back once these are fixed: the pipeline would refuse this row too</Caveat>
         </Card>
       ) : null}
 
+      <Card title={changes === 1 ? '1 change' : `${String(changes)} changes`}>
+        {changes === 0 ? (
+          <Caveat>nothing changes: this document is the one the form started from</Caveat>
+        ) : (
+          <TableScroll>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>setting</Th>
+                  <Th hint="The document the form started from: the current row, or the history row it was loaded from.">
+                    before
+                  </Th>
+                  <Th>after</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.diff.map((entry) => (
+                  <tr key={entry.path}>
+                    <Td>{entry.path}</Td>
+                    <Td>
+                      <DiffValue value={entry.from} />
+                    </Td>
+                    <Td>
+                      <DiffValue value={entry.to} />
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableScroll>
+        )}
+        {/* The whole row as it will be stored, for whoever wants the bytes; the
+            diff above is what a review reads. */}
+        <details className="text-[length:var(--size-ui)]">
+          <summary className="cursor-pointer text-text-link">the whole document</summary>
+          <pre className="mt-2 mb-0 overflow-x-auto rounded-md bg-surface-page p-3 font-num text-[length:var(--size-ui)] leading-[1.5] whitespace-pre-wrap">
+            {JSON.stringify(state.document, null, 2)}
+          </pre>
+        </details>
+      </Card>
+
       {state.advice.length === 0 ? null : (
+        // Advice never blocks a save; the pipeline evaluates none of it.
         <Card tone="warm" title="Worth knowing before you save">
           <div className="flex flex-col gap-2">
             {state.advice.map((line) => (
@@ -800,7 +861,6 @@ function ReviewStep({
               </div>
             ))}
           </div>
-          <Caveat>advice never blocks a save; the pipeline evaluates none of it</Caveat>
         </Card>
       )}
 
@@ -817,7 +877,6 @@ function ReviewStep({
           defaultValue={state.note}
           placeholder="optional — what this change is for"
         />
-        <Caveat>{EFFECT}</Caveat>
 
         {state.failure === null ? null : (
           <p className="mb-0 text-[length:var(--size-ui)] text-[color:var(--error)]">
@@ -834,6 +893,7 @@ function ReviewStep({
               {pending ? 'Saving…' : 'Save'}
             </Button>
           ) : null}
+          <Caveat>{EFFECT}</Caveat>
         </div>
       </Card>
     </form>
