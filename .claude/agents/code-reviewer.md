@@ -50,32 +50,35 @@ and ask for a clean re-dispatch. Item 1–3 missing → STOP and name the gap; n
 ## Review focus — Fonnus-Admin
 
 Read for this repo: `CONTEXT.md` (the traps, the security posture), the `docs/upstream.md`
-sections the diff touches, `../Fonnus/docs/read-contract.md` (the columns this repo may read
-and its §5 traps), the ADRs here (0001 stack, 0002 posture) and the brief from the spec
-pointer; when the diff copies a rule from the pipeline, the pipeline source it cites.
+sections the diff touches, `../Fonnus/docs/read-contract.md` (the columns this repo may read,
+its §5 traps, its §7 writes), the ADRs here the diff touches (0001 stack, 0002 posture, 0007
+writes and account at minimum) and the brief from the spec pointer; when the diff copies a
+rule from the pipeline, the pipeline source it cites.
 
 Mức Cao here = a number the operator will act on rendered wrong (a leg, a percentile, a cost,
-a consent state — a wrong reading here becomes a wrong pipeline decision), caller-derived
-content shown without `consent_record.outcome = 'granted'`, any write path to the database,
-or a secret or listener that widens the box's exposure. Three lenses, in order:
+a consent state — a wrong reading becomes a wrong pipeline decision); caller-derived content
+shown without `consent_record.outcome = 'granted'`; a write outside ADR 0007; or a secret or
+listener that widens the box's exposure. Three lenses, in order:
 
 1. **Reading under the contract** — every column read is one the contract and
-   `docs/upstream.md` name; vocabularies (`end_reason`, `outcome`, `turn.marks` keys) are
-   handled as fixed sets with unknown values surfaced, never dropped; the five contract
-   traps and the console's own are rendered (turns *on record*; missing consent row = not
-   finalized; cost is a floor; consent gate on caller text; nulls may be age); a reversed
-   span is "not measured", never negative and never in a percentile; `numeric` arrives as
-   text and is parsed. A rule copied from the pipeline (leg partition, nearest-rank
-   percentile, event pairing) matches its source and is pinned by a test against the
-   pipeline's names — a test written from the copy alone proves only self-consistency.
-2. **Query and page correctness** — SQL is parameterised, never string-built from input;
-   windows and `since` parsing hold against bad input; joins do not multiply rows (a
-   `turn` join must not double a call); pagination and ordering are stable; every page has
-   loading, error and empty states; a database outage renders as an error, not as an
-   empty console.
-3. **Posture** — read-only role only, no `INSERT`/`UPDATE`/`DELETE`; nothing bound to the
-   public interface except the reverse proxy; no secret in a tracked file; no request to
-   the pipeline process except what an ADR names.
+   `docs/upstream.md` name; fixed vocabularies (`end_reason`, `outcome`, `turn.marks` keys)
+   surface unknown values instead of dropping them; the contract's five traps and the
+   console's own are rendered (turns *on record*; a missing consent row means not
+   finalized; cost is a floor; the consent gate on caller text; a null may mean age); a
+   reversed span is "not measured", never negative and never in a percentile; `numeric`
+   arrives as text and is parsed. A rule copied from the pipeline (leg partition,
+   nearest-rank percentile, event pairing) matches its source and is pinned by a test
+   against the pipeline's names — a test written from the copy alone proves only
+   self-consistency.
+2. **Query and page correctness** — SQL is parameterised, never built from input; window
+   and `since` parsing hold against bad input; joins do not multiply rows (a `turn` join
+   must not double a call); pagination and ordering are stable; every page has loading,
+   error and empty states; a database outage renders as an error, not as an empty console.
+3. **Posture** — screens read through the `console` pool only; the only `INSERT`s are in
+   `src/writes/`, through the `console_editor` pool, carrying `console:<account>` from the
+   proxy's header and refusing without it; no `UPDATE` or `DELETE` anywhere; nothing bound
+   to the public interface except the reverse proxy; no secret in a tracked file; no
+   request to the pipeline process except what an ADR names.
 
 ## Output contract
 
