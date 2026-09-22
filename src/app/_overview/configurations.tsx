@@ -40,15 +40,14 @@ export default function Configurations({
   options,
   hidden,
   scales,
-  standsOn,
 }: {
   data: Dashboard;
   grouping: Grouping;
   options: Grouping[];
   /** The window keys, re-emitted so changing the grouping keeps the window. */
   hidden: Record<string, string>;
+  /** The headline's axes, so a group's gauge reads against the same target line. */
   scales: { pipeline: number; perceived: number };
-  standsOn: string;
 }) {
   return (
     <Card
@@ -151,10 +150,6 @@ export default function Configurations({
           </Table>
         </TableScroll>
       )}
-      <Caveat>
-        Both gauges share the scale of the headline above, so a group reads against the same
-        target line. {standsOn}
-      </Caveat>
     </Card>
   );
 }

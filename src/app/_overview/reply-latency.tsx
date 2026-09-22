@@ -5,8 +5,10 @@
  * step rather than as a single number.
  * Layout: `docs/design/Main-html` band 1, left card.
  *
- * Every number here stands on consented calls only (trap 1), which the caption
- * the page passes in says beside them — never in a footnote.
+ * Every number here stands on consented calls only (trap 1); the page head
+ * says so once, above every card it qualifies, rather than each card again.
+ * The chart carries no sentence under it: the target names itself at the end
+ * of its line and a partial edge column is keyed in the chart's legend.
  */
 
 import { formatNumber } from '@/calls';
@@ -17,7 +19,7 @@ import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 import HBar from '@/ui/hbar';
-import VBars, { hourLabelAt, partialNote } from '@/ui/vbars';
+import VBars, { hourLabelAt } from '@/ui/vbars';
 
 /** How the caption names one column of the per-bucket chart. */
 const BY: Record<BucketUnit, string> = { hour: 'hour', day: 'day', week: 'week' };
@@ -34,11 +36,9 @@ export function gaugeScale(target: number, values: (number | null)[]): number {
 
 export default function ReplyLatency({
   data,
-  standsOn,
   scales,
 }: {
   data: Dashboard;
-  standsOn: string;
   /** The two axes, computed once by the page so the group gauges share them. */
   scales: { pipeline: number; perceived: number };
 }) {
@@ -47,10 +47,6 @@ export default function ReplyLatency({
     value: bucket.pipelineP95,
     partial: bucket.partial,
   }));
-  // The edge columns of a rolling window stand on less time than the rest, so
-  // a shorter bar there is not a quieter or a faster bucket (see `VBars`).
-  const partial = partialNote(bars, BY[data.bucketUnit]);
-
   const bucketScale = Math.max(
     TARGETS.pipelineP95Ms,
     ...data.latencyByBucket.map((bucket) => bucket.pipelineP95 ?? 0),
@@ -80,33 +76,26 @@ export default function ReplyLatency({
             scale={scales.perceived}
           />
 
-          <div className="border-t border-border-hairline pt-3.5">
-            <div className="mb-2 flex items-baseline justify-between gap-3">
+          <div className="flex min-h-0 flex-1 flex-col border-t border-border-hairline pt-3.5">
+            <div className="mb-2">
+              {/* A bucket with no turn is a gap, never a zero bar (`VBars`);
+                  its tooltip says "not measured". */}
               <Caveat as="span">
                 <code className="font-num">pipeline_ms</code> P95 by {BY[data.bucketUnit]}
               </Caveat>
-              <Caveat as="span">Asia/Ho_Chi_Minh</Caveat>
             </div>
             <VBars
               bars={bars}
               target={TARGETS.pipelineP95Ms}
-              targetLabel={`the dashed line is the ${formatNumber(TARGETS.pipelineP95Ms)} ms target; the red cap is the overshoot`}
+              targetLabel={`${formatNumber(TARGETS.pipelineP95Ms)} ms`}
               scaleMax={bucketScale}
               valueLabel={formatNumber}
               unit={BY[data.bucketUnit]}
               {...(data.bucketUnit === 'hour' ? { labelAt: hourLabelAt } : {})}
             />
-            {partial === null ? null : <Caveat>{partial}</Caveat>}
           </div>
         </>
       )}
-
-      <div className="mt-auto border-t border-border-hairline pt-3.5">
-        <Caveat>
-          {standsOn}. Percentiles do not add — the leg P95s below will not sum to these
-          numbers. {data.bucketUnit === 'hour' ? 'An' : 'A'} {BY[data.bucketUnit]} with no turn is a gap, never a zero.
-        </Caveat>
-      </div>
     </Card>
   );
 }

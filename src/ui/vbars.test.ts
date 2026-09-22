@@ -1,13 +1,12 @@
 /*
- * The label and value rules of the fluid bar chart, plus the two rules the
- * partial edge columns brought: which hour carries a label, and the line the
- * card prints when the window only reaches into its first or last column.
+ * The label and value rules of the fluid bar chart, plus the rule for which
+ * hour of a rolling window carries a label.
  * The density rules are pure functions of the column count because a server
  * component cannot measure the box it will be rendered into.
  */
 
 import { describe, expect, it } from 'vitest';
-import { hourLabelAt, labelEvery, labelShown, partialNote, valuesShown } from './vbars';
+import { hourLabelAt, labelEvery, labelShown, valuesShown } from './vbars';
 import type { VBar } from './vbars';
 
 describe('labelEvery', () => {
@@ -17,20 +16,23 @@ describe('labelEvery', () => {
     expect(labelEvery(12)).toBe(1);
   });
 
-  it('thins a month of days to every fifth, and keeps the last', () => {
-    expect(labelEvery(13)).toBe(5);
-    expect(labelEvery(24)).toBe(5);
-    expect(labelEvery(30)).toBe(5);
-    expect(labelEvery(31)).toBe(5);
-    const shown = [...Array(30).keys()].filter((i) => labelShown(i, 30, labelEvery(30)));
-    expect(shown).toEqual([0, 5, 10, 15, 20, 25, 29]);
+  it('labels a month of days once a week, anchored on the newest day', () => {
+    expect(labelEvery(13)).toBe(3);
+    expect(labelEvery(24)).toBe(3);
+    expect(labelEvery(31)).toBe(7);
+    expect(labelEvery(45)).toBe(7);
+    // The `30d` preset draws 31 columns; today is labelled and the rest fall a
+    // week apart from it, so no two labels are ever closer than seven columns.
+    const shown = [...Array(31).keys()].filter((i) => labelShown(i, 31, labelEvery(31)));
+    expect(shown).toEqual([2, 9, 16, 23, 30]);
   });
 
-  it('thins a year of weeks to every seventh and anything longer to eight labels', () => {
-    expect(labelEvery(53)).toBe(7);
-    expect(labelEvery(54)).toBe(7);
-    expect(labelEvery(80)).toBe(10);
-    expect(labelEvery(367)).toBe(46);
+  it('keeps anything longer to about seven labels', () => {
+    expect(labelEvery(53)).toBe(8);
+    expect(labelEvery(367)).toBe(53);
+    const shown = [...Array(53).keys()].filter((i) => labelShown(i, 53, labelEvery(53)));
+    expect(shown.length).toBeLessThanOrEqual(7);
+    expect(shown.at(-1)).toBe(52);
   });
 
   it('never skips a label when every column carries one', () => {
@@ -51,8 +53,8 @@ describe('valuesShown', () => {
   });
 });
 
-function bar(label: string, partial = false): VBar {
-  return { label, value: 1, partial };
+function bar(label: string): VBar {
+  return { label, value: 1 };
 }
 
 describe('hourLabelAt', () => {
@@ -75,24 +77,5 @@ describe('hourLabelAt', () => {
       1, 7, 13, 19,
     ]);
     expect(rolling.filter(hourLabelAt).map((b) => b.label)).toEqual(['18', '00', '06', '12']);
-  });
-});
-
-describe('partialNote', () => {
-  it('names whichever edges the window only reaches into', () => {
-    expect(partialNote([bar('17', true), bar('18'), bar('19', true)], 'hour')).toBe(
-      'first and last columns are partial hours',
-    );
-    expect(partialNote([bar('5/9', true), bar('6/9')], 'day')).toBe(
-      'first column is a partial day',
-    );
-    expect(partialNote([bar('5/9'), bar('6/9', true)], 'week')).toBe(
-      'last column is a partial week',
-    );
-  });
-
-  it('says nothing when every column stands on a whole bucket', () => {
-    expect(partialNote([bar('5/9'), bar('6/9')], 'day')).toBeNull();
-    expect(partialNote([], 'day')).toBeNull();
   });
 });

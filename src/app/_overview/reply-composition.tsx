@@ -31,13 +31,17 @@ const TONE: Record<LegName, string> = {
 
 const IN_PARTITION: readonly string[] = PARTITION_LEGS;
 
-export default function ReplyComposition({
-  data,
-  standsOn,
-}: {
-  data: Dashboard;
-  standsOn: string;
-}) {
+/**
+ * What a leg of the bar means, on hover — read once, so it is a tooltip rather
+ * than a paragraph under the bar every visit.
+ */
+const MEANS: Partial<Record<LegName, string>> = {
+  endpoint_wait:
+    'the silence before the reply starts — inside caller_perceived_ms, outside pipeline_ms',
+  llm_ttft: 'the only leg a model change moves',
+};
+
+export default function ReplyComposition({ data }: { data: Dashboard }) {
   const measured = data.medianReply.filter((leg) => leg.p50 !== null);
   const total = measured.reduce((sum, leg) => sum + (leg.p50 ?? 0), 0);
   const missing = data.medianReply.filter((leg) => leg.p50 === null).map((leg) => leg.leg);
@@ -72,7 +76,7 @@ export default function ReplyComposition({
             <Caveat as="span">
               A median reply — <code className="font-num">speech_end</code> to first audio
             </Caveat>
-            <Caveat as="span">
+            <Caveat as="span" title="a percentile is not a total: the legs' P50s do not sum to it">
               <code className="font-num">caller_perceived_ms</code> P50 ·{' '}
               {formatMs(data.perceived.p50)}
             </Caveat>
@@ -82,7 +86,9 @@ export default function ReplyComposition({
             {measured.map((leg) => (
               <div
                 key={leg.leg}
-                title={`${leg.leg} · ${formatMs(leg.p50)}`}
+                title={[`${leg.leg} · ${formatMs(leg.p50)}`, MEANS[leg.leg as LegName]]
+                  .filter(Boolean)
+                  .join(' — ')}
                 className="flex items-center overflow-hidden px-2.5"
                 style={{
                   width: `${String(((leg.p50 ?? 0) / total) * 100)}%`,
@@ -111,17 +117,14 @@ export default function ReplyComposition({
             </span>
           </div>
 
-          <Caveat>
-            <code className="font-num">endpoint_wait</code> is the silence before the reply
-            starts — inside <code className="font-num">caller_perceived_ms</code>, outside{' '}
-            <code className="font-num">pipeline_ms</code>, which the bracketed three partition.{' '}
-            <code className="font-num">llm_ttft</code> is the only leg a model change moves. The
-            P50s of the legs do not sum to the P50 of{' '}
-            <code className="font-num">caller_perceived_ms</code> — a percentile is not a total.
-            {missing.length === 0
-              ? ''
-              : ` No turn stamped both marks of ${missing.join(', ')}, so ${missing.length === 1 ? 'that leg is' : 'those legs are'} not in the bar.`}
-          </Caveat>
+          {/* Only what changes with the window is written; what the legs mean
+              is on each segment's tooltip. */}
+          {missing.length === 0 ? null : (
+            <Caveat>
+              No turn stamped both marks of {missing.join(', ')}, so{' '}
+              {missing.length === 1 ? 'that leg is' : 'those legs are'} not in the bar.
+            </Caveat>
+          )}
         </div>
       )}
 
@@ -178,7 +181,6 @@ export default function ReplyComposition({
           </tbody>
         </Table>
       </TableScroll>
-      <Caveat>{standsOn}</Caveat>
     </Card>
   );
 }

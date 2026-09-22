@@ -10,7 +10,12 @@
  * weeks. So a column is at most the artboard's 40 px and shrinks to fit, the
  * plot fills the height the card gives it (percent heights, not pixels), and
  * the label row thins as the columns narrow (`labelEvery`). Bars, values and
- * labels are cells of ONE grid, so a label can never drift off its bar.
+ * labels are cells of ONE grid, so a label can never drift off its bar; a label
+ * is centred on its column and may overflow it, never truncated to `2…`.
+ *
+ * The chart explains itself, so a card prints no sentence under it: the target
+ * is named at the end of its own dashed line, and a partial edge column is
+ * hatched and keyed in a legend that appears only when one is on screen.
  *
  * The rules it enforces, both from the data rather than the taste:
  *   - a null value is a GAP, never a zero bar (a day with no turn was not a day
@@ -22,8 +27,6 @@
  * custom property such as `var(--chart-1)`, never a hex.
  */
 
-import Caveat from './caveat';
-
 /** The artboard's column width — a ceiling now, so 1–7 bars are not slabs. */
 const MAX_COLUMN_PX = 40;
 
@@ -31,27 +34,28 @@ const MAX_COLUMN_PX = 40;
 const MIN_PLOT_PX = 104;
 
 /**
- * How dense the label row may be. A label is `00` or `5/9`, so a column under
- * roughly 24 px cannot carry one without colliding with its neighbour; the
- * answer is how many columns to skip, decided from the count alone because a
- * server component cannot measure the box it will land in.
+ * How dense the label row may be. A label is `00` or `24/8`, about 30 px wide,
+ * and a column of a 30-day window on the narrow card is barely 12 px — so the
+ * answer is how many columns sit between two labels, decided from the count
+ * alone because a server component cannot measure the box it will land in.
+ * A month of days is labelled once a week; anything longer, about seven times.
  */
 export function labelEvery(n: number): number {
   if (n <= 12) return 1;
-  if (n <= 31) return 5;
-  if (n <= 53) return 7;
-  return Math.ceil(n / 8);
+  if (n <= 24) return 3;
+  if (n <= 45) return 7;
+  return Math.ceil(n / 7);
 }
 
 /**
- * Whether a column carries its label, counting columns. The last column is
- * always labelled when labels are thinned, so the axis says where it ends.
- * A chart whose columns are hours overrides this with `hourLabelAt`, because
- * there the label must follow the clock rather than the index.
+ * Whether a column carries its label, counted back from the LAST column: the
+ * newest bucket (today, this week) is the one always read, and the rest fall a
+ * whole step apart from it, so two labels can never crowd each other at the
+ * end. A chart whose columns are hours overrides this with `hourLabelAt`,
+ * because there the label must follow the clock rather than the index.
  */
 export function labelShown(index: number, n: number, every: number): boolean {
-  if (index % every === 0) return true;
-  return every !== 1 && index === n - 1;
+  return (n - 1 - index) % every === 0;
 }
 
 /** The quarters of the day — the only labels an hour chart draws. */
@@ -68,18 +72,12 @@ export function hourLabelAt(bar: VBar): boolean {
 }
 
 /**
- * The line a card prints under a chart whose edge columns are partial. Only an
- * edge can be one (`windowBuckets` in `src/dashboard.ts`), so the three cases
- * are the whole vocabulary.
+ * The hatch a partial column wears over its own colours — stripes of the card
+ * ground, so it reads as "not all there" on any fill, stacked or not, and can
+ * never be mistaken for a lighter segment of a stack.
  */
-export function partialNote(bars: VBar[], unit: string): string | null {
-  const first = bars[0]?.partial === true;
-  const last = bars.length > 1 && bars[bars.length - 1]?.partial === true;
-  if (first && last) return `first and last columns are partial ${unit}s`;
-  if (first) return `first column is a partial ${unit}`;
-  if (last) return `last column is a partial ${unit}`;
-  return null;
-}
+const HATCH =
+  'repeating-linear-gradient(135deg, var(--surface-card) 0 1.5px, transparent 1.5px 5px)';
 
 /**
  * Whether the written values are drawn at all. Past 16 columns they no longer
@@ -100,8 +98,8 @@ export interface VBar {
   dashed?: boolean;
   /**
    * The window covers only part of this column, so its bar stands on less time
-   * than its neighbours'. Drawn faded and said in the tooltip — NOT `dashed`,
-   * which means something else entirely.
+   * than its neighbours'. Drawn hatched, keyed in the legend and said in the
+   * tooltip — NOT `dashed`, which means something else entirely.
    */
   partial?: boolean;
 }
@@ -119,6 +117,7 @@ export default function VBars({
   bars: VBar[];
   /** Drawn as a dashed line across the plot, in the same units as the values. */
   target?: number;
+  /** Written at the end of the dashed line, e.g. `1 200 ms` — the line's only key. */
   targetLabel?: string;
   /** The top of the axis; a caller that passes 0 gets flat bars, not a divide by zero. */
   scaleMax: number;
@@ -127,13 +126,17 @@ export default function VBars({
   labelEvery?: number;
   /** Replaces the density rule entirely — the hour charts label by the clock. */
   labelAt?: (bar: VBar, index: number) => boolean;
-  /** What one column is, for the partial tooltip: `hour`, `day`, `week`. */
+  /** What one column is, for the partial tooltip and legend: `hour`, `day`, `week`. */
   unit?: string;
 }) {
   const n = bars.length;
   const step = every ?? labelEvery(n);
   const shows = labelAt ?? ((_bar: VBar, index: number) => labelShown(index, n, step));
   const withValues = valuesShown(n);
+  const anyPartial = bars.some((bar) => bar.partial === true);
+  // The end of the dashed line gets a column of its own, so its label sits
+  // beside the plot and no bar can be drawn over it.
+  const gutter = target !== undefined && targetLabel !== undefined;
 
   /** A value as a share of the axis, in percent — the plot has no fixed height. */
   const percent = (value: number): number =>
@@ -142,9 +145,14 @@ export default function VBars({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1">
       <div
-        className="grid min-w-0 justify-start gap-1"
+        className="grid min-h-0 min-w-0 flex-1 justify-start"
         style={{
-          gridTemplateColumns: `repeat(${String(n)}, minmax(0, ${String(MAX_COLUMN_PX)}px))`,
+          // A month of columns on the narrow card cannot spend 4 px on each gap.
+          columnGap: n > 20 ? '2px' : '4px',
+          rowGap: '4px',
+          gridTemplateColumns: `repeat(${String(n)}, minmax(0, ${String(MAX_COLUMN_PX)}px))${
+            gutter ? ' auto' : ''
+          }`,
           // The plot takes whatever height the card has left, never less than
           // the artboard's; the value and label rows take what they need.
           gridTemplateRows: `minmax(${String(MIN_PLOT_PX)}px, 1fr) auto auto`,
@@ -168,17 +176,32 @@ export default function VBars({
         ))}
 
         {/* Last in the DOM so it draws over the bars; it shares row 1 with them
-            and spans every column, which is what makes it an axis line. */}
+            and spans every bar column, which is what makes it an axis line. It
+            stops short of the gutter, so its label reads as the line's end. */}
         {target === undefined ? null : (
           <div
             className="pointer-events-none relative"
-            style={{ gridRow: 1, gridColumn: `1 / -1` }}
+            style={{ gridRow: 1, gridColumn: `1 / ${String(n + 1)}` }}
             aria-hidden
           >
             <div
-              className="absolute right-0 left-0 border-t border-dashed border-border-strong"
+              className="absolute right-0 left-0 border-t border-dashed border-text-muted"
               style={{ bottom: `${String(percent(target))}%` }}
             />
+          </div>
+        )}
+
+        {!gutter ? null : (
+          <div className="relative pl-1.5" style={{ gridRow: 1, gridColumn: n + 1 }}>
+            {/* The invisible copy gives the `auto` column its width; the
+                visible one rides the line's height. */}
+            <span className={`invisible whitespace-nowrap ${AXIS_TEXT}`}>{targetLabel}</span>
+            <span
+              className={`absolute left-1.5 translate-y-1/2 whitespace-nowrap ${AXIS_TEXT}`}
+              style={{ bottom: `${String(percent(target))}%` }}
+            >
+              {targetLabel}
+            </span>
           </div>
         )}
 
@@ -208,22 +231,40 @@ export default function VBars({
             ))}
 
         {bars.map((bar, index) => (
+          // Centred by flex so a label wider than its column spills evenly to
+          // both sides of it; the density rule keeps the spill clear of the
+          // next label.
           <span
             key={`label-${bar.label}-${String(index)}`}
-            className="truncate text-center font-num text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted tabular-nums opacity-75"
+            className={`flex min-w-0 justify-center whitespace-nowrap ${AXIS_TEXT}`}
             style={{ gridRow: 3, gridColumn: index + 1 }}
           >
             {/* A skipped label is an empty cell, not a missing one: the row
                 keeps its height and the columns keep their alignment. */}
-            {shows(bar, index) ? bar.label : ' '}
+            {shows(bar, index) ? bar.label : '\u00a0'}
           </span>
         ))}
       </div>
 
-      {target === undefined || targetLabel === undefined ? null : <Caveat>{targetLabel}</Caveat>}
+      {!anyPartial ? null : (
+        <div className="flex justify-end">
+          <span className={`flex items-center gap-1.5 ${AXIS_TEXT}`}>
+            <span
+              className="size-2.5 rounded-xs"
+              style={{ background: `${HATCH}, var(--chart-1)` }}
+              aria-hidden
+            />
+            partial {unit ?? 'column'}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
+
+/** The axis's own small type: the labels, the target's key, the legend. */
+const AXIS_TEXT =
+  'font-num text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted tabular-nums';
 
 /** One bar: its segments if it has them, else one fill, plus the overshoot cap. */
 function Bar({
@@ -248,22 +289,17 @@ function Bar({
   // The floor keeps a tiny value visible as a bar rather than as nothing at all.
   const style = { height: `${String(percent)}%`, minHeight: '2px' };
 
-  // A partial column is faded, and everything inside it inherits that: the
-  // segments and the overshoot cap are parts of a bar that stands on less time
-  // than its neighbours', not values of their own.
-  const faded = bar.partial === true ? ' opacity-60' : '';
-
   if (bar.dashed) {
     return (
       <div
-        className={`w-full rounded-t-xs border border-dashed border-border-dashed${faded}`}
+        className="w-full rounded-t-xs border border-dashed border-border-dashed"
         style={style}
       />
     );
   }
 
   return (
-    <div className={`relative w-full${faded}`} style={style}>
+    <div className="relative w-full" style={style}>
       {bar.segments === undefined ? (
         <div className="h-full w-full rounded-t-xs" style={{ background: 'var(--chart-1)' }} />
       ) : (
@@ -288,6 +324,16 @@ function Bar({
         <div
           className="absolute top-0 right-0 left-0 rounded-t-xs bg-error"
           style={{ height: `${String(overshoot)}%` }}
+          aria-hidden
+        />
+      ) : null}
+      {/* A partial column is hatched over everything inside it: the segments
+          and the overshoot cap are parts of a bar that stands on less time
+          than its neighbours', not values of their own. */}
+      {bar.partial === true ? (
+        <div
+          className="absolute inset-0 rounded-t-xs"
+          style={{ background: HATCH }}
           aria-hidden
         />
       ) : null}

@@ -5,8 +5,10 @@ import {
   MAX_WINDOW_DAYS,
   WINDOW_PRESETS,
   bucketUnit,
+  dayParts,
   parseSince,
   parseWindow,
+  partsIso,
   windowHref,
 } from './window';
 
@@ -175,5 +177,25 @@ describe('bucketUnit', () => {
     // span is still a day and a half and it is drawn in days.
     expect(bucketUnit(parseWindow({ since: '36h' }, NOW), NOW)).toBe('day');
     expect(bucketUnit(parseWindow({ since: '2026-01-01' }, NOW), NOW)).toBe('week');
+  });
+});
+
+describe('the custom range fields', () => {
+  it('split an instant into the clinic day it falls on', () => {
+    // 20:00 UTC on the 22nd is 03:00 on the 23rd in Ho Chi Minh City.
+    expect(dayParts(new Date('2026-09-22T20:00:00Z'))).toEqual({
+      day: '23',
+      month: '09',
+      year: '2026',
+    });
+  });
+
+  it('spell the URL value only for a real day', () => {
+    expect(partsIso({ day: '5', month: '9', year: '2026' })).toBe('2026-09-05');
+    expect(partsIso({ day: '29', month: '02', year: '2028' })).toBe('2028-02-29');
+    expect(partsIso({ day: '', month: '09', year: '2026' })).toBeNull();
+    expect(partsIso({ day: '31', month: '02', year: '2026' })).toBeNull();
+    expect(partsIso({ day: '10', month: '13', year: '2026' })).toBeNull();
+    expect(partsIso({ day: '10', month: '09', year: '26' })).toBeNull();
   });
 });

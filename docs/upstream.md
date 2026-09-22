@@ -283,7 +283,8 @@ that. The buckets cover the whole window, `since` to `until` (or now), so a quie
 the window shows as zeros rather than being cut off; a bucket with no turn is a null point,
 so the P95 bars leave a gap there instead of drawing a zero, while "Calls per day" draws a
 real zero (nobody rang is a measurement). A rolling preset starts inside a bucket, so the
-first and last columns may be partial; they are drawn faded and the card says so. The card
+first and last columns may be partial; they are drawn hatched and the chart's legend keys
+the hatch whenever one is on screen. The card
 titles say the unit.
 
 Grouping by `config` keys on the whole `config_snapshot` object ("this exact

@@ -9,6 +9,8 @@
  * names and `custom` are the console's own, settled with the operator.
  */
 
+import { CALL_TIME_ZONE } from './calls';
+
 const DAY_MS = 86_400_000;
 
 /** The three presets the control offers, in the order it draws them (ADR 0006). */
@@ -251,4 +253,43 @@ export function windowHref(
     if (value !== '' && key !== 'since' && key !== 'until') search.set(key, value);
   }
   return `${base}?${search.toString()}`;
+}
+
+/** A day as the custom range fields hold it: three strings, any of them blank. */
+export interface DayParts {
+  day: string;
+  month: string;
+  year: string;
+}
+
+// The clinic's zone, the one every screen pins: a day read in the process's
+// zone would be another day on a box set to UTC.
+const CLINIC_DAY = new Intl.DateTimeFormat('en-GB', {
+  timeZone: CALL_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** The clinic day an instant falls on, split for the `dd / mm / yyyy` fields. */
+export function dayParts(at: Date): DayParts {
+  const parts = new Map(CLINIC_DAY.formatToParts(at).map((part) => [part.type, part.value]));
+  return { day: parts.get('day') ?? '', month: parts.get('month') ?? '', year: parts.get('year') ?? '' };
+}
+
+/**
+ * The fields as the `since` / `until` value the URL carries (`YYYY-MM-DD`), or
+ * null while they do not spell a real day — `31/02/2026` included, which
+ * `Date` would otherwise roll over into March without a word.
+ */
+export function partsIso({ day, month, year }: DayParts): string | null {
+  if (!/^\d{1,2}$/.test(day) || !/^\d{1,2}$/.test(month) || !/^\d{4}$/.test(year)) return null;
+  const d = Number(day);
+  const m = Number(month);
+  const y = Number(year);
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+    return null;
+  }
+  return `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }

@@ -15,12 +15,12 @@ import type { BucketUnit, Dashboard } from '@/dashboard';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
-import VBars, { hourLabelAt, partialNote } from '@/ui/vbars';
+import VBars, { hourLabelAt } from '@/ui/vbars';
 
 /** The faded half of the stack, derived from the chart alias (ADR 0003). */
 const NOT_CONSENTED = 'color-mix(in srgb, var(--chart-1) 28%, transparent)';
 
-/** What one column is, for the partial caveat and the tooltips. */
+/** What one column is, for the partial legend and the tooltips. */
 const UNIT: Record<BucketUnit, string> = { hour: 'hour', day: 'day', week: 'week' };
 
 const TITLE: Record<BucketUnit, string> = {
@@ -43,18 +43,9 @@ export default function CallsPerDay({ data }: { data: Dashboard }) {
       { value: bucket.notConsented, tone: NOT_CONSENTED },
     ],
   }));
-  // A rolling preset starts and ends inside a bucket, so the edge columns
-  // stand on less time than the rest; they are faded and this says why.
-  const partial = partialNote(bars, UNIT[data.bucketUnit]);
-
   return (
     <Card
       title={TITLE[data.bucketUnit]}
-      sub={
-        data.bucketUnit === 'week'
-          ? 'Asia/Ho_Chi_Minh · weeks start Monday'
-          : 'Asia/Ho_Chi_Minh'
-      }
       actions={
         <div className="flex flex-col items-end gap-1">
           <Legend tone="var(--chart-1)" label="consented" />
@@ -65,25 +56,28 @@ export default function CallsPerDay({ data }: { data: Dashboard }) {
       <div className="grid grid-cols-3 gap-2.5">
         <Figure label="Calls" value={formatNumber(data.calls)} />
         <Figure label="Consented" value={share === null ? '—' : String(share)} unit="%" />
-        {data.costFloorVnd === null ? (
-          <Figure label="Cost floor" value="not on record" />
-        ) : (
-          <Figure
-            label="Cost floor"
-            value={formatNumber(Math.round(data.costFloorVnd))}
-            unit="₫"
-          />
-        )}
+        {/* Trap 3: the figure is a floor while any model the calls ran on has
+            no price row — the label says "floor" and its tooltip says why —
+            and the calls that carried no parseable figure are missing from it,
+            which is counted directly under the number whenever there are any. */}
+        <div title="a floor while any model is unpriced">
+          {data.costFloorVnd === null ? (
+            <Figure label="Cost floor" value="not on record" />
+          ) : (
+            <Figure
+              label="Cost floor"
+              value={formatNumber(Math.round(data.costFloorVnd))}
+              unit="₫"
+            />
+          )}
+          {data.unpricedCalls > 0 ? (
+            <Caveat>
+              {formatNumber(data.unpricedCalls)} call{data.unpricedCalls === 1 ? '' : 's'} without
+              a price
+            </Caveat>
+          ) : null}
+        </div>
       </div>
-      {/* Trap 3: the figure is a floor while any model the calls ran on has no
-          price row, and the calls that carried no parseable figure are missing
-          from it — both said directly under the number, never in a footnote. */}
-      <Caveat>
-        a floor while any model is unpriced
-        {data.unpricedCalls > 0
-          ? ` — ${formatNumber(data.unpricedCalls)} call${data.unpricedCalls === 1 ? '' : 's'} without a price`
-          : ''}
-      </Caveat>
 
       {/* The buckets now cover the whole window, so an empty window still has
           columns; the empty state is decided by the calls, not by the axis. */}
@@ -100,7 +94,6 @@ export default function CallsPerDay({ data }: { data: Dashboard }) {
             unit={UNIT[data.bucketUnit]}
             {...(data.bucketUnit === 'hour' ? { labelAt: hourLabelAt } : {})}
           />
-          {partial === null ? null : <Caveat>{partial}</Caveat>}
         </div>
       )}
     </Card>

@@ -67,8 +67,9 @@ export default async function OverviewPage({
   if (!options.includes(grouping)) options.push(grouping);
 
   // Trap 1 / CONTEXT.md trap 6: every percentile on this screen is drawn from
-  // turn rows, and an unconsented call has none. The sentence travels with the
-  // numbers, on the card, never in a footnote.
+  // turn rows, and an unconsented call has none. The sentence is said ONCE, in
+  // the page head above every card it qualifies — repeated on each card it was
+  // read past rather than read.
   const standsOn = `consented calls only — ${formatNumber(data.consentedCalls)} of ${formatNumber(
     data.calls,
   )} calls, ${formatNumber(data.turns)} turns${
@@ -126,11 +127,11 @@ export default async function OverviewPage({
       )}
 
       <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] items-stretch gap-[18px] max-[1100px]:grid-cols-1">
-        <ReplyLatency data={data} standsOn={standsOn} scales={scales} />
+        <ReplyLatency data={data} scales={scales} />
         <CallsPerDay data={data} />
       </div>
 
-      <ReplyComposition data={data} standsOn={standsOn} />
+      <ReplyComposition data={data} />
 
       <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] items-stretch gap-[18px] max-[1100px]:grid-cols-1">
         <HowCallsEnded data={data} />
@@ -147,7 +148,6 @@ export default async function OverviewPage({
           ...(showAll ? { outside: 'all' } : {}),
         }}
         scales={scales}
-        standsOn={standsOn}
       />
 
       <Outside
