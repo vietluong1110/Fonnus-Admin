@@ -1,18 +1,18 @@
 /*
  * The Calls screen (PLAN.md row A6), after `docs/design/Calls-html`: the window
- * or a search at the top, four cards and the hour histogram over the scope, the
+ * or a search at the top, four cards and the calls-per-bucket chart over the scope, the
  * five chips over the list, and one page of 100 calls in day bands.
  *
  * The URL is the whole input (ADR 0006) — no client state, nothing to
  * rehydrate, and a filtered list is a pasteable address. One query reads the
- * scope whole; the cards, the histogram and the chip counts stand on the same
+ * scope whole; the cards, the chart and the chip counts stand on the same
  * rows the list is sliced from, so the header count and the cards can never
  * disagree.
  */
 
 import Link from 'next/link';
-import { callStats, dayBands, hourHistogram, scopeHeading } from '@/calls-stats';
-import { PAGE_SIZE, applyChips, chipCounts, pageOf, parseChips, parsePage, parseScope } from '@/calls-scope';
+import { callStats, callsTimeline, dayBands, scopeHeading } from '@/calls-stats';
+import { applyChips, chipCounts, pageOf, parseChips, parsePage, parseScope } from '@/calls-scope';
 import { getConfig } from '@/config';
 import { callsInScope } from '@/queries/calls';
 import { parseWindow } from '@/window';
@@ -24,8 +24,8 @@ import PageHead from '@/ui/page-head';
 import WindowControl from '@/ui/window-control';
 import CallTable from './_list/call-table';
 import ChipStrip from './_list/chip-strip';
-import Histogram from './_list/histogram';
 import StatRow from './_list/stat-row';
+import Timeline from './_list/timeline';
 
 // The list is about the database right now; nothing here may be prerendered.
 export const dynamic = 'force-dynamic';
@@ -76,7 +76,7 @@ export default async function CallsPage({
   const filtered = applyChips(rows, active);
   const { rows: pageRows, page, hasOlder } = pageOf(filtered, parsePage(params));
 
-  // The cards and the histogram describe the scope, not the chip intersection
+  // The cards and the chart describe the scope, not the chip intersection
   // (ADR 0006): one stable population per screen, so they always agree with the
   // heading count above them.
   const stats = callStats(rows);
@@ -171,7 +171,7 @@ export default async function CallsPage({
       ) : (
         <>
           <div className="grid gap-[18px] lg:grid-cols-[minmax(0,1fr)_444px]">
-            <Histogram counts={hourHistogram(rows)} scope={heading} />
+            <Timeline {...callsTimeline(rows, scope, now)} />
             <StatRow stats={stats} />
           </div>
 
@@ -203,28 +203,22 @@ export default async function CallsPage({
               <CallTable bands={dayBands(pageRows)} config={config} now={now} />
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border-hairline pt-4">
-              <Caveat>
-                A quiet <span className="font-num">caller_hangup</span> is the ordinary ending —
-                consent granted, then the caller hung up; every other ending wears a tone. A red
-                tick in the turn strip is a turn that failed. Cost counts unpriced models as
-                zero, so every figure is a floor.
-              </Caveat>
-              {hasOlder ? (
-                <Link
-                  href={hrefWith(params, { page: String(page + 1) })}
-                  className="text-[length:var(--size-ui)] font-medium text-text-link hover:underline"
-                >
-                  Older calls →
-                </Link>
-              ) : (
-                <Caveat>
-                  {filtered.length <= PAGE_SIZE
-                    ? 'the whole list on one page, newest first'
-                    : 'the oldest page of this list'}
-                </Caveat>
-              )}
-            </div>
+            {/* Paging is said only when there is more than one page; a list
+                that fits needs no footer. */}
+            {hasOlder || page > 1 ? (
+              <div className="flex items-center justify-end border-t border-border-hairline pt-4">
+                {hasOlder ? (
+                  <Link
+                    href={hrefWith(params, { page: String(page + 1) })}
+                    className="text-[length:var(--size-ui)] font-medium text-text-link hover:underline"
+                  >
+                    Older calls →
+                  </Link>
+                ) : (
+                  <Caveat>the oldest page of this list</Caveat>
+                )}
+              </div>
+            ) : null}
           </Card>
         </>
       )}

@@ -2,17 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
   NO_TURNS_LABEL,
   callDurationMs,
-  callHour,
   callStats,
   dayBands,
   formatDayBand,
   formatTimeOfDay,
-  hourHistogram,
+  callsTimeline,
   scopeHeading,
   turnTicks,
   windowPhrase,
 } from './calls-stats';
 import type { CallScopeRow } from './queries/calls';
+import { parseWindow } from './window';
 
 /** One scope row; every field the Calls screen reads has a harmless default. */
 function call(over: Partial<CallScopeRow> = {}): CallScopeRow {
@@ -112,23 +112,41 @@ describe('callStats — the four cards of docs/upstream.md §Call list', () => {
   });
 });
 
-describe('hourHistogram — the clinic zone, not the process zone', () => {
-  it('buckets a 23:30 UTC call into hour 6 of the next day in +07', () => {
-    expect(callHour(new Date('2026-09-08T23:30:00Z'))).toBe(6);
-    const counts = hourHistogram([
-      call({ started_at: new Date('2026-09-08T23:30:00Z') }),
-      call({ started_at: new Date('2026-09-09T07:15:00Z') }),
-      call({ started_at: new Date('2026-09-09T07:45:00Z') }),
-    ]);
-    expect(counts).toHaveLength(24);
-    expect(counts[6]).toBe(1);
-    expect(counts[14]).toBe(2);
-    expect(counts.reduce((a, b) => a + b, 0)).toBe(3);
+describe('callsTimeline — the window’s own buckets, in the clinic zone', () => {
+  const now = new Date('2026-09-09T10:00:00Z');
+
+  it('draws a 7d window as eight day columns, a 23:30 UTC call on the next +07 day', () => {
+    const { unit, bars } = callsTimeline(
+      [
+        call({ started_at: new Date('2026-09-08T23:30:00Z') }),
+        call({ started_at: new Date('2026-09-09T07:15:00Z') }),
+        call({ started_at: new Date('2026-09-05T07:45:00Z') }),
+      ],
+      { kind: 'window', window: parseWindow({ since: '7d' }, now) },
+      now,
+    );
+    expect(unit).toBe('day');
+    expect(bars).toHaveLength(8);
+    expect(bars.at(-1)).toMatchObject({ label: '9/9', value: 2, partial: true });
+    expect(bars.reduce((sum, bar) => sum + bar.value, 0)).toBe(3);
   });
 
-  it('keeps midnight and the last hour of the day apart', () => {
-    expect(callHour(new Date('2026-09-08T17:00:00Z'))).toBe(0);
-    expect(callHour(new Date('2026-09-08T16:59:00Z'))).toBe(23);
+  it('changes the column with the window: hours for 24h, weeks past 45 days', () => {
+    const scope = (since: string) => ({ kind: 'window' as const, window: parseWindow({ since }, now) });
+    expect(callsTimeline([], scope('24h'), now).unit).toBe('hour');
+    expect(callsTimeline([], scope('30d'), now).bars).toHaveLength(31);
+    expect(callsTimeline([], scope('2026-06-01'), now).unit).toBe('week');
+  });
+
+  it('spans a search from its oldest match, with no partial first column', () => {
+    const { unit, bars } = callsTimeline(
+      [call({ started_at: new Date('2026-09-02T03:00:00Z') })],
+      { kind: 'search', keyword: '8064', phoneDigits: '8064', idPrefix: null },
+      now,
+    );
+    expect(unit).toBe('day');
+    expect(bars[0]).toMatchObject({ value: 1, partial: false });
+    expect(bars).toHaveLength(8);
   });
 });
 

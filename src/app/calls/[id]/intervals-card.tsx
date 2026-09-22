@@ -23,6 +23,7 @@ import {
   NO_TRAIL_TITLE,
   VERDICT_BADGE,
   annotationHistorySummary,
+  anyWithheld,
   gapNote,
   verdictNote,
 } from '@/interval-lane';
@@ -55,10 +56,7 @@ export default function IntervalsCard({
   const gap = verdict.kind === 'gap' ? gapNote(verdict.holeFromSeq) : null;
 
   return (
-    <Card
-      title={INTERVALS_CARD_TITLE}
-      sub="who held the line, what the caller's line carried, what the recogniser returned, what a person said about it"
-    >
+    <Card title={INTERVALS_CARD_TITLE}>
       {verdict.kind === 'absent' ? (
         // Trap 8: no row at all is `RECORD_CALLS` off, a mirror that failed, a
         // file that never opened, or a call that never reached consent — never
@@ -79,10 +77,9 @@ export default function IntervalsCard({
                 ) : null}
               </div>
             )}
-            <Caveat>{INTERVAL_CAVEATS.trail}</Caveat>
-            <Caveat>{INTERVAL_CAVEATS.text}</Caveat>
-            <Caveat>{INTERVAL_CAVEATS.withheld}</Caveat>
-            <Caveat>{INTERVAL_CAVEATS.annotation}</Caveat>
+            {/* The standing explanations are the column headers' tooltips
+                (`interval-rows.tsx`); only what this call's rows need is said. */}
+            {anyWithheld(rows) ? <Caveat>{INTERVAL_CAVEATS.withheld}</Caveat> : null}
             {cannedSilent ? <Caveat>{INTERVAL_CAVEATS.cannedSilent}</Caveat> : null}
             {anyUnheard ? <Caveat>{INTERVAL_CAVEATS.unheard}</Caveat> : null}
           </div>

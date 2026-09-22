@@ -89,11 +89,11 @@ export default function History({
         })}
       </div>
 
+      {/* `created_by` reads as stored: the prefix `src/account.ts` stamps
+          for a row this console wrote, another for one the pipeline's own tools
+          wrote. */}
       <Caveat>
-        a row is never updated and never deleted: a correction is a new row, and a restore is a
-        new row carrying an older document. <code>created_by</code> reads as stored —{' '}
-        <code>console:&lt;account&gt;</code> for a row this console wrote, another prefix for a
-        row the pipeline&apos;s own tools wrote.
+        a row is never edited or deleted: a correction or a restore is a new row
       </Caveat>
     </Card>
   );

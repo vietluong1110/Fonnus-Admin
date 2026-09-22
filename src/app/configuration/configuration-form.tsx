@@ -726,7 +726,7 @@ function ReviewStep({
         <input key={path} type="hidden" name={path} value={value} />
       ))}
 
-      <Card title="Proposed document" sub="the whole row, never a patch — an absent leaf means the boot value applies">
+      <Card title="Proposed document" sub="an absent leaf means the boot value applies">
         <pre className="m-0 overflow-x-auto rounded-md bg-surface-page p-3 font-num text-[length:var(--size-ui)] leading-[1.5] whitespace-pre-wrap">
           {JSON.stringify(state.document, null, 2)}
         </pre>
@@ -808,11 +808,15 @@ function ReviewStep({
         <label htmlFor="note" className="text-[length:var(--size-ui)] font-medium">
           note
         </label>
-        <Textarea id="note" name="note" rows={2} defaultValue={state.note} />
-        <Caveat>
-          optional, stored on the row as written — what this change is for, so the history reads
-          as a record rather than as a list of documents
-        </Caveat>
+        {/* Stored on the row as written, so the history reads as a record
+            rather than as a list of documents. */}
+        <Textarea
+          id="note"
+          name="note"
+          rows={2}
+          defaultValue={state.note}
+          placeholder="optional — what this change is for"
+        />
         <Caveat>{EFFECT}</Caveat>
 
         {state.failure === null ? null : (

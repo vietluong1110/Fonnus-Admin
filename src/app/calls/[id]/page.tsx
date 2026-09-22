@@ -328,7 +328,7 @@ export default async function CallPage({
           and the turn table; everything inside is rendered here and handed down
           as props, so no query result crosses the client boundary. */}
       <PlaybackProvider initialSelectedIdx={selectedIdx}>
-        <Card title="The call" sub="One axis, two lanes: what was said, and how long each reply took">
+        <Card title="The call">
           <RecordingBlock
             call={call}
             state={state}
@@ -346,7 +346,7 @@ export default async function CallPage({
             <Stat
               label="Turns on record"
               value={formatCount(call.turn_count)}
-              caveat="turns written; an unconsented call has none"
+              hint="turns written; an unconsented call has none"
             />
             <Stat
               label="Answered → first audio"
@@ -356,13 +356,13 @@ export default async function CallPage({
                   : formatNumber(call.greeting_first_audio_ms)
               }
               {...(call.greeting_first_audio_ms === null ? {} : { unit: 'ms' })}
-              caveat="from the channel answer, not started_at"
+              hint="from the channel answer, not started_at"
             />
             <Stat
               label="Cost floor"
               value={cost === null ? 'unpriced' : formatNumber(cost)}
               {...(cost === null ? {} : { unit: '₫' })}
-              caveat="a floor — a call on an unpriced model counts 0"
+              hint="a floor — a model with no price counts 0"
             />
           </div>
         </Card>
@@ -379,7 +379,7 @@ export default async function CallPage({
         />
 
         <div className="grid gap-[18px] min-[1180px]:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
-          <Card title="Transcript" sub="follows the playhead · a bubble seeks">
+          <Card title="Transcript">
             {bubbleTurns.length === 0 ? (
               <EmptyState title="No turns on record.">
                 {showCaller ? (
@@ -411,10 +411,7 @@ export default async function CallPage({
           </summary>
 
           <div className="mt-[18px] flex flex-col gap-[18px]">
-            <Card
-              title={`Turns on record (${formatNumber(turns.length)})`}
-              sub="a row selects the turn above — one table, not one card per turn"
-            >
+            <Card title={`Turns on record (${formatNumber(turns.length)})`}>
               {tableRows.length === 0 ? (
                 <EmptyState title="No turns on record." />
               ) : (
@@ -426,10 +423,7 @@ export default async function CallPage({
               <CallCard call={call} />
             </Card>
 
-            <Card
-              title="Config snapshot"
-              sub="the configuration the process booted with, written at call start"
-            >
+            <Card title="Config snapshot">
               <ConfigSnapshot value={call.config_snapshot} />
             </Card>
 

@@ -1,5 +1,5 @@
 /**
- * The Calls screen's arithmetic: the four cards, the hour-of-day histogram, the
+ * The Calls screen's arithmetic: the four cards, the calls-per-bucket chart, the
  * day bands the list is drawn in, and the per-row turn strip. Pure functions
  * over the rows `callsInScope` returns, so every rule of `docs/upstream.md`
  * §Call list is tested without a database or React and the components stay a
@@ -13,9 +13,9 @@
 import { isFetchable } from './artifacts';
 import { CALL_TIME_ZONE, isConsentGranted } from './calls';
 import type { Scope } from './calls-scope';
-import { dayKey, percentiles } from './dashboard';
+import { bucketKey, dayKey, foldKey, percentiles, windowBuckets } from './dashboard';
 import type { CallScopeRow } from './queries/calls';
-import type { Window } from './window';
+import { bucketUnit, type BucketUnit, type Window } from './window';
 
 /** The row fields each function here needs, so a test fixture stays small. */
 type StatRow = Pick<
@@ -87,20 +87,6 @@ export function callStats(rows: StatRow[]): CallStats {
   };
 }
 
-// The clinic's zone, the one every screen pins (`src/calls.ts`): a call
-// answered at 23:30 UTC is a 06:30 call here, and an hour read in the process's
-// zone would move the whole histogram on a box set to UTC.
-const HOUR = new Intl.DateTimeFormat('en-GB', {
-  timeZone: CALL_TIME_ZONE,
-  hour: '2-digit',
-  hourCycle: 'h23',
-});
-
-/** The hour of day, 0–23, a call's `started_at` falls in — in the clinic's zone. */
-export function callHour(startedAt: Date): number {
-  return Number(HOUR.format(startedAt));
-}
-
 // The list writes the clock alone: the date is the day band's job, and
 // repeating it on 100 rows is the noise the band exists to remove. Same zone,
 // pinned the same way — `formatWhen` remains the full instant everywhere else.
@@ -117,14 +103,54 @@ export function formatTimeOfDay(at: Date): string {
   return TIME_OF_DAY.format(at);
 }
 
-/** Twenty-four counts, hour 0 first: "when calls come in" over the scope. */
-export function hourHistogram(rows: Pick<StatRow, 'started_at'>[]): number[] {
-  const counts = Array.from({ length: 24 }, () => 0);
+/** One column of the Calls chart: what the axis calls it, and how many calls it holds. */
+export interface TimelineBar {
+  label: string;
+  value: number;
+  partial: boolean;
+}
+
+/**
+ * "Calls per hour / day / week" over the scope, in the Overview's buckets
+ * (`bucketUnit`, `windowBuckets`), so the chart changes shape with the window
+ * the way the list under it does, and the two screens draw `30d` alike.
+ *
+ * A search has no window (ADR 0006), so its chart spans the oldest match to
+ * now; the first column then starts where the data does, which is not a
+ * partial bucket the reader should discount, so it is never marked as one.
+ */
+export function callsTimeline(
+  rows: Pick<StatRow, 'started_at'>[],
+  scope: Scope,
+  now: Date,
+): { unit: BucketUnit; bars: TimelineBar[] } {
+  const window: Window =
+    scope.kind === 'window'
+      ? scope.window
+      : {
+          since: new Date(Math.min(...rows.map((row) => row.started_at.getTime()), now.getTime())),
+          until: null,
+          preset: 'custom',
+          spec: '',
+        };
+  const unit = bucketUnit(window, now);
+  const buckets = windowBuckets(window, now, unit);
+  const keys = buckets.map((bucket) => bucket.key);
+  const counts = new Map<string, number>();
   for (const row of rows) {
-    const hour = callHour(row.started_at);
-    counts[hour] = (counts[hour] ?? 0) + 1;
+    const key = foldKey(bucketKey(unit, row.started_at), keys);
+    if (key !== null) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  return counts;
+  const first = buckets[0];
+  if (scope.kind === 'search' && first !== undefined) first.partial = false;
+  return {
+    unit,
+    bars: buckets.map(({ key, label, partial }) => ({
+      label,
+      value: counts.get(key) ?? 0,
+      partial,
+    })),
+  };
 }
 
 export interface DayBand<T> {

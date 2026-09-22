@@ -52,7 +52,7 @@ carry rather than duplicate.
 ## 3. Computable, but with no query here yet
 
 One new query each, no new pipeline data: the Overview's total cost floor for the window; the
-hour-of-day histogram; median call duration; turns per consented call; how many recordings
+calls per bucket across the window; median call duration; turns per consented call; how many recordings
 reached the bucket and their share; and per-call failed-turn counts, which both the row tick
 strip and the Calls chips stand on.
 

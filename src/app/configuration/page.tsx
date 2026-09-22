@@ -182,10 +182,11 @@ export default async function ConfigurationPage({
         )}
         {/* Rule 4 of `docs/redesign.md` §4.2, fixed on this screen: the console
             cannot see which vendors this box holds credentials for. */}
+        {/* This container cannot reach the pipeline's `/healthz`, so it cannot
+            narrow the list itself. */}
         <Caveat>
-          every vendor is offered here; the box refuses the ones it holds no keys for, and the
-          whole row with them — the pipeline&apos;s <code>/healthz</code> on the box says which
-          under <code>vendors</code>, and this container cannot reach it
+          every vendor is offered; the box refuses a row naming one it holds no keys for — its{' '}
+          <code>/healthz</code> lists them under <code>vendors</code>
         </Caveat>
       </div>
 
@@ -227,18 +228,19 @@ export default async function ConfigurationPage({
       {editorConfigured ? null : (
         <Card tone="warm" title="Editing is not configured">
           <Caveat>
-            editing is not configured: <code>EDITOR_DATABASE_URL</code> is unset, so this process
-            holds no credential that may insert. The form below is shown read-only.
+            <code>EDITOR_DATABASE_URL</code> is unset, so this process holds no credential that
+            may insert. The form below is read-only.
           </Caveat>
         </Card>
       )}
 
       {account === undefined ? (
         <Card tone="warm" title="No account on this request">
+          {/* ADR 0007: every row is signed with the account Caddy
+              authenticated, and there is no placeholder name. */}
           <Caveat>
-            no account came through the reverse proxy; nothing can be written. Every row this
-            console writes is signed with the account Caddy authenticated, and there is no
-            placeholder name (ADR 0007). The form below is shown read-only.
+            The reverse proxy passed no account, and a row cannot be written unsigned. The form
+            below is read-only.
           </Caveat>
         </Card>
       ) : null}

@@ -6,7 +6,7 @@
  * figures, so a column of them lines up digit under digit.
  */
 
-import Caveat from './caveat';
+import Caveat, { Hint } from './caveat';
 
 const VALUE_SIZE = { sm: '16px', md: '28px', lg: '40px' } as const;
 
@@ -24,6 +24,7 @@ export default function Stat({
   delta,
   deltaTone = 'neutral',
   size = 'md',
+  hint,
   caveat,
 }: {
   label: string;
@@ -32,12 +33,15 @@ export default function Stat({
   delta?: string;
   deltaTone?: keyof typeof DELTA_TONE;
   size?: keyof typeof VALUE_SIZE;
+  /** What the figure is measured over, read once — the label's tooltip. */
+  hint?: string;
+  /** What the reader must see beside the figure every time. */
   caveat?: string;
 }) {
   return (
     <div className="flex flex-col gap-1">
       <div className="font-ui text-[length:var(--size-ui)] leading-[1.4] text-text-muted">
-        {label}
+        {hint === undefined ? label : <Hint hint={hint}>{label}</Hint>}
       </div>
       <div className="flex items-baseline gap-1.5">
         <span

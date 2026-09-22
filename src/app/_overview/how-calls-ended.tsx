@@ -91,7 +91,7 @@ export default function HowCallsEnded({ data }: { data: Dashboard }) {
   ];
 
   return (
-    <Card title="How calls ended" sub="Every call in the window, ordinary endings kept quiet">
+    <Card title="How calls ended">
       {data.calls === 0 ? (
         <EmptyState title="No calls in this window.">
           Nothing was answered in the window, so there is nothing to distribute.
@@ -102,11 +102,13 @@ export default function HowCallsEnded({ data }: { data: Dashboard }) {
           <Distribution caption="consent_record.outcome" segments={outcomes} />
         </>
       )}
-      <Caveat>
-        A call with no consent row is a state of the call, never a refusal: the row is written
-        at finalize. Those calls carry no end reason either, so they are counted beside both
-        bars rather than inside them.
-      </Caveat>
+      {/* Trap 2, said only when such a call is on screen. */}
+      {data.notFinalized === 0 ? null : (
+        <Caveat>
+          A call with no consent row is not finalized yet, never a refusal: the row is written at
+          finalize, and it has no end reason either.
+        </Caveat>
+      )}
     </Card>
   );
 }

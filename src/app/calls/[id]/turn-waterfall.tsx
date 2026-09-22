@@ -13,7 +13,7 @@ import type { EndOfTurnRow, HeadPairRow, WaterfallRow } from '@/latency';
 import { TARGETS } from '@/latency';
 import { currentTurnIdx, turnAt, waterfallPlayheadMs, type TurnSpan } from '@/playback';
 import Badge from '@/ui/badge';
-import Caveat from '@/ui/caveat';
+import Caveat, { Hint } from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 import Field from '@/ui/field';
 import HBar from '@/ui/hbar';
@@ -183,11 +183,10 @@ export default function TurnWaterfall({
         <Field label="TTS output">
           {formatCount(current.ttsChars)} chars · {formatCount(current.ttsBytes)} bytes
         </Field>
-        <Field label="Caller audio">
+        <Field label="Caller audio" hint="offset into the recording">
           {current.speechStartMs === null || current.speechEndMs === null
             ? 'not reported'
             : `${formatMs(current.speechStartMs)} → ${formatMs(current.speechEndMs)}`}
-          <Caveat>offset into the recording</Caveat>
         </Field>
       </dl>
     </div>
@@ -219,7 +218,10 @@ function Headline({
   return (
     <div>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <code className="text-[length:var(--size-ui)]">{name}</code>
+        {/* The marks a span is measured between are read once: its tooltip. */}
+        <code className="text-[length:var(--size-ui)]">
+          <Hint hint={marks}>{name}</Hint>
+        </code>
         <span className={`font-num text-[19px] font-semibold tabular-nums${over ? ' text-error' : ''}`}>
           {formatMs(valueMs)}
         </span>
@@ -238,7 +240,7 @@ function Headline({
         )}
       </div>
       <Caveat>
-        {marks} · {targetNote}
+        {targetNote}
         {over ? ` · ${formatNumber(valueMs - targetMs)} ms over` : ''}
       </Caveat>
     </div>

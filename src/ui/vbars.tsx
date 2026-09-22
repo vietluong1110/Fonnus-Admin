@@ -27,7 +27,11 @@
  * custom property such as `var(--chart-1)`, never a hex.
  */
 
-/** The artboard's column width — a ceiling now, so 1–7 bars are not slabs. */
+/**
+ * The artboard's bar width — a ceiling now, so 1–7 bars are not slabs. The
+ * columns themselves share the card's width, so a week of bars spreads across
+ * the plot instead of huddling at its left edge.
+ */
 const MAX_COLUMN_PX = 40;
 
 /** The artboard's plot height, now the floor a taller card grows from. */
@@ -62,9 +66,8 @@ export function labelShown(index: number, n: number, every: number): boolean {
 const HOUR_LABELS = ['00', '06', '12', '18'];
 
 /**
- * The `labelAt` rule for every chart whose columns are hours: the hour-of-day
- * histogram's 24 columns and the Overview's rolling 25-hour window alike. It
- * reads the clock, not the position, so a window that starts at 17:00 still
+ * The `labelAt` rule for every chart whose columns are hours — the rolling
+ * 25-hour window of both screens. It reads the clock, not the position, so a window that starts at 17:00 still
  * marks midnight, 06, noon and 18 where they really fall.
  */
 export function hourLabelAt(bar: VBar): boolean {
@@ -145,12 +148,12 @@ export default function VBars({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1">
       <div
-        className="grid min-h-0 min-w-0 flex-1 justify-start"
+        className="grid min-h-0 min-w-0 flex-1"
         style={{
           // A month of columns on the narrow card cannot spend 4 px on each gap.
           columnGap: n > 20 ? '2px' : '4px',
           rowGap: '4px',
-          gridTemplateColumns: `repeat(${String(n)}, minmax(0, ${String(MAX_COLUMN_PX)}px))${
+          gridTemplateColumns: `repeat(${String(n)}, minmax(0, 1fr))${
             gutter ? ' auto' : ''
           }`,
           // The plot takes whatever height the card has left, never less than
@@ -163,8 +166,8 @@ export default function VBars({
             // The label is a day or an hour and can repeat across a window, so
             // the position is part of the key.
             key={`bar-${bar.label}-${String(index)}`}
-            className="flex min-w-0 flex-col justify-end"
-            style={{ gridRow: 1, gridColumn: index + 1 }}
+            className="flex w-full min-w-0 flex-col justify-end justify-self-center"
+            style={{ gridRow: 1, gridColumn: index + 1, maxWidth: `${String(MAX_COLUMN_PX)}px` }}
             title={`${bar.label}: ${bar.value === null ? 'not measured' : valueLabel(bar.value)}${
               bar.partial === true ? ` (partial${unit === undefined ? '' : ` ${unit}`})` : ''
             }`}

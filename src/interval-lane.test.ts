@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { HolderKind, TrailVerdict } from './intervals';
 import {
+  anyWithheld,
   DEAF_EXPLANATION,
   INTERVAL_CAVEATS,
   UNSUPPORTED_OPACITY,
@@ -206,6 +207,13 @@ describe('the card’s fixed wording', () => {
     expect(INTERVAL_CAVEATS.annotation).toContain('current rows only');
     expect(INTERVAL_CAVEATS.annotation).toContain('insert gate');
     expect(INTERVAL_CAVEATS.annotation).toContain('overlaps');
+  });
+
+  it('owes the [withheld] and [expired] key only to a card that prints one', () => {
+    const row = { callerLine: 'speech', recogniser: '—', botText: null, annotations: [] };
+    expect(anyWithheld([row])).toBe(false);
+    expect(anyWithheld([row, { ...row, recogniser: '[withheld]' }])).toBe(true);
+    expect(anyWithheld([{ ...row, annotations: [{ text: '[expired]' }] }])).toBe(true);
   });
 
   it('counts both the rows and the current ones in the history summary', () => {

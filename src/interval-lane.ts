@@ -110,6 +110,26 @@ export const WITHHELD = '[withheld]';
 /** This console's own reading of trap 10: a granted call whose payload is gone aged out. */
 export const EXPIRED = '[expired]';
 
+/**
+ * Whether any cell of the card prints `[withheld]` or `[expired]` — the one
+ * time the card owes the reader what the two marks mean. Structural, so this
+ * file need not import the cells' own module (which imports this one).
+ */
+export function anyWithheld(
+  rows: Array<{
+    callerLine: string;
+    recogniser: string;
+    botText: string | null;
+    annotations: Array<{ text: string }>;
+  }>,
+): boolean {
+  return rows.some((row) =>
+    [row.callerLine, row.recogniser, row.botText, ...row.annotations.map((item) => item.text)].some(
+      (cell) => cell !== null && (cell.includes(WITHHELD) || cell.includes(EXPIRED)),
+    ),
+  );
+}
+
 /** What a screen reader says for a segment: who held the line, and from when to when. */
 export function segmentLabel(segment: LaneSegment): string {
   return `${segment.label} ${seconds(segment.fromMs)}–${seconds(segment.toMs)} s`;

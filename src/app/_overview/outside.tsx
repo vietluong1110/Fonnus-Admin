@@ -45,7 +45,7 @@ export default function Outside({
   return (
     <Card
       title="Turns outside the percentile"
-      sub="The reply never became audible — no first_audio_out mark — or the marks column is null"
+      sub="the reply never became audible, or the turn carries no marks"
       actions={
         <span
           className={`font-num text-[20px] font-semibold tabular-nums ${turns.length > 0 ? 'text-warning' : ''}`}
@@ -67,10 +67,9 @@ export default function Outside({
                 <Th>
                   <code className="font-num">source</code>
                 </Th>
-                <Th align="end">
+                {/* Trap 7: the elapsed time, never the bound that tripped. */}
+                <Th align="end" hint="elapsed since endpoint_decision, never the bound that tripped">
                   <code className="font-num">failed_after_ms</code>
-                  {/* Trap 7: the elapsed time, never the bound that tripped. */}
-                  <Caveat>elapsed since endpoint_decision, not the bound</Caveat>
                 </Th>
               </tr>
             </thead>
@@ -138,20 +137,16 @@ export default function Outside({
         </TableScroll>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <Caveat>
-          <code className="font-num">failed_after_ms</code> is elapsed since{' '}
-          <code className="font-num">endpoint_decision</code>, never the bound that tripped.
-        </Caveat>
-        {showAll || turns.length <= OUTSIDE_PREVIEW ? null : (
+      {showAll || turns.length <= OUTSIDE_PREVIEW ? null : (
+        <div className="flex justify-end">
           <Link
             href={allHref}
             className="text-[length:var(--size-ui)] font-medium text-text-link hover:underline"
           >
             See all {formatNumber(turns.length)} →
           </Link>
-        )}
-      </div>
+        </div>
+      )}
     </Card>
   );
 }

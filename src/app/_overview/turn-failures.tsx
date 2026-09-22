@@ -35,7 +35,7 @@ export default function TurnFailures({ data }: { data: Dashboard }) {
               {formatNumber(data.failedTurns)}
             </span>
             <Caveat as="span">
-              of {formatNumber(data.turns)} turns
+              of {formatNumber(data.turns)} turns with marks
               {share === null ? '' : ` · ${share.toFixed(1)}%`}
             </Caveat>
           </div>
@@ -73,10 +73,6 @@ export default function TurnFailures({ data }: { data: Dashboard }) {
         </>
       )}
 
-      <Caveat>
-        A leg with no stage is a provider error — it had no deadline to trip. Counted over the
-        turns with marks, the same population every number on this screen stands on.
-      </Caveat>
     </Card>
   );
 }

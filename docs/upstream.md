@@ -51,8 +51,9 @@ median duration = nearest-rank P50 of `ended_at − started_at` over calls with 
 still open has no duration and is left out, said on the card); turns per consented call
 = mean `turn_count` over calls with `isConsentGranted(outcome)` (trap 1: rows written,
 so a granted call with zero rows counts as zero); recordings in the bucket = calls with
-`isFetchable` and their share of the scope — and the hour-of-day histogram, which buckets
-`started_at` by hour in `Asia/Ho_Chi_Minh`. The page is a slice of 100.
+`isFetchable` and their share of the scope — and the calls per bucket, which counts
+`started_at` into the window's own buckets (`bucketUnit`, in `Asia/Ho_Chi_Minh`, the
+Overview's rule); a search has no window, so its buckets run from its oldest call to now. The page is a slice of 100.
 
 The caller's number renders masked, `+84 90 ••• 4417`, through `maskPhone` (ADR 0008);
 the duration track in each row is relative to the longest call of its day band, a

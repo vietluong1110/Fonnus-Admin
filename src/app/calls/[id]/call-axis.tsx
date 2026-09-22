@@ -30,7 +30,7 @@ import {
 } from '@/interval-lane';
 import { TARGETS } from '@/latency';
 import { barScaleMs, type GreetingSpan, type TurnBar, type TurnSpan } from '@/playback';
-import Caveat from '@/ui/caveat';
+import Caveat, { Hint } from '@/ui/caveat';
 import { usePlayback } from './playback-provider';
 
 /** Arrow keys move by five seconds, page keys by fifteen — a review's step sizes. */
@@ -159,12 +159,19 @@ export default function CallAxis({
           columnGap: `${String(COLUMN_GAP)}px`,
         }}
       >
-        <div className="flex flex-col">
-          <span className="text-[length:var(--size-ui)] font-semibold">
-            {intervals === null ? 'Turns' : 'Intervals'}
-          </span>
-          <Caveat as="span">{intervals === null ? 'one block each' : 'who held the line'}</Caveat>
-        </div>
+        {/* What a lane draws and how closely it sits on the audio is read
+            once, so it is the label's tooltip, not a paragraph under the axis. */}
+        <span className="text-[length:var(--size-ui)] font-semibold">
+          {intervals === null ? (
+            <Hint hint={`one block per turn, from speech_start_ms to playback_end, placed to within ~100 ms of the audio and only ever late${greeting === null ? '' : '; the quieter first block is the greeting, which has no turn row and so no bar'}`}>
+              Turns
+            </Hint>
+          ) : (
+            <Hint hint="who held the line: one segment per interval of the event trail, the same rows as the Intervals card, placed to within ~100 ms of the audio and only ever late">
+              Intervals
+            </Hint>
+          )}
+        </span>
 
         <div
           ref={trackRef}
@@ -242,10 +249,11 @@ export default function CallAxis({
           )}
         </div>
 
-        <div className="flex flex-col">
-          <code className="text-[length:var(--size-ui)] font-semibold">pipeline_ms</code>
-          <Caveat as="span">bar height = ms</Caveat>
-        </div>
+        <code className="text-[length:var(--size-ui)] font-semibold">
+          <Hint hint={`one bar per turn, taller is slower; red above the line missed the ${formatNumber(TARGETS.pipelineP95Ms)} ms target, a P95 over many calls, so on one turn a hint and not a verdict; a dashed outline is a reply that never became audible, never a zero`}>
+            pipeline_ms
+          </Hint>
+        </code>
 
         <div className="relative w-full" style={{ height: `${String(BAR_LANE_HEIGHT)}px` }}>
           {/* The target, drawn once across the lane: anything above it missed it. */}
@@ -284,7 +292,7 @@ export default function CallAxis({
                 title={
                   bar.measured && bar.pipelineMs !== null
                     ? `Turn ${formatNumber(bar.idx)} · ${formatNumber(bar.pipelineMs)} ms`
-                    : `Turn ${formatNumber(bar.idx)} · not measured`
+                    : `Turn ${formatNumber(bar.idx)} · not measured — the reply never became audible`
                 }
                 className="absolute bottom-0 flex flex-col justify-end"
                 style={{ left: `${String(left)}%`, width: `${String(width)}%`, height: '100%' }}
@@ -357,42 +365,18 @@ export default function CallAxis({
         />
       </div>
 
-      <Caveat>
-        {intervals === null ? (
-          <>
-            The upper lane is one block per turn, from <code>speech_start_ms</code> to the place
-            of <code>playback_end</code>; blocks are placed to within ~100 ms of the audio and can
-            only drift late.{' '}
-          </>
-        ) : (
-          <>
-            The upper lane is one segment per interval of the call&rsquo;s event trail, from the
-            first record to <code>recorder/finalized</code>; segments are placed to within ~100 ms
-            of the audio and can only drift late. The Intervals card below lists the same
-            intervals.{' '}
-          </>
-        )}
-        The lower lane is one bar per turn: taller is slower, and anything above the dashed line
-        missed the {formatNumber(TARGETS.pipelineP95Ms)} ms target — a P95 target over a call set,
-        so on one turn it is a hint, not a verdict. A dashed outline is a turn with no{' '}
-        <code>pipeline_ms</code>: a reply that never became audible, never a zero.
-      </Caveat>
       {/* The trail drives the lane, so the call has no event trail to draw one
           from: the verdict is `absent`, or there is no `recording_started_at`
           to place the records on (ADR 0010 decision 3). */}
       {intervals === null ? <Caveat>{NO_TRAIL_LANE_CAVEAT}</Caveat> : null}
-      {/* The greeting and the unplaced turns explain the turn blocks; with
-          intervals on the lane there are no turn blocks to explain. */}
-      {intervals !== null ? null : greeting === null ? (
+      {/* A missing greeting and unplaced turns are exceptions of the turn
+          blocks, said only when they happen; with intervals on the lane there
+          are no turn blocks to explain. */}
+      {intervals !== null || greeting !== null ? null : (
         <Caveat>
           no greeting block: the call carries no readable <code>greeting_marks</code> (written
           before the pipeline&rsquo;s migration 0008, never finalized, or ended before the greeting
           was dispatched), or it has no <code>recording_started_at</code>
-        </Caveat>
-      ) : (
-        <Caveat>
-          the first block is the greeting, from <code>answered</code> — it has no{' '}
-          <code>turn</code> row and no <code>pipeline_ms</code> of its own, so it has no bar
         </Caveat>
       )}
       {intervals !== null || unplaced.length === 0 ? null : (
@@ -449,7 +433,7 @@ function TurnBlocks({
             background: 'var(--action-ghost-hover)',
             borderRight: '1px solid var(--border-strong)',
           }}
-          title={`Greeting · ${formatClock(greeting.startMs)} → ${formatClock(greeting.endMs)}`}
+          title={`Greeting · ${formatClock(greeting.startMs)} → ${formatClock(greeting.endMs)} · no turn row, so no bar`}
         />
       )}
       {spans.map((span) => (

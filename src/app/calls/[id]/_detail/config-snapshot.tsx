@@ -76,10 +76,11 @@ export default function ConfigSnapshot({ value }: { value: unknown }) {
         <summary className="cursor-pointer font-medium text-text-link">
           {count} more {count === 1 ? 'key' : 'keys'}
         </summary>
+        {/* Grouped by prefix, a rendering choice only: a key with an unknown
+            prefix falls to Other and none is ever dropped. */}
         <Caveat>
-          grouped by prefix — a rendering choice only; a key with an unknown prefix falls to Other
-          and none is ever dropped. A vendor&rsquo;s keys are present only on a call that ran that
-          vendor, so an absent key means that vendor did not run, never that a default applied.
+          a vendor&rsquo;s keys are present only on a call that ran that vendor — an absent key
+          means it did not run, never that a default applied
         </Caveat>
         <div className="mt-3 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {groups.map((group) => (

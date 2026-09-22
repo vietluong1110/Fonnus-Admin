@@ -224,7 +224,7 @@ export function windowBuckets(window: Window, now: Date, unit: BucketUnit): Wind
  * `YYYY-MM-DD` or `YYYY-MM-DDTHH`, so string order is time order within one
  * unit. Null only when the window has no columns at all.
  */
-function foldKey(key: string, keys: string[]): string | null {
+export function foldKey(key: string, keys: string[]): string | null {
   const first = keys[0];
   const last = keys[keys.length - 1];
   if (first === undefined || last === undefined) return null;

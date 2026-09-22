@@ -18,6 +18,7 @@ import type { MouseEvent } from 'react';
 import {
   DEAF_EXPLANATION,
   EMPTY_CELL,
+  INTERVAL_CAVEATS,
   UNSUPPORTED_OPACITY,
   holderTone,
   rowAtPlayhead,
@@ -67,12 +68,14 @@ export default function IntervalRows({ rows }: { rows: IntervalRow[] }) {
       <Table>
         <thead>
           <tr>
-            <Th align="end">from</Th>
+            <Th align="end" hint={INTERVAL_CAVEATS.trail}>
+              from
+            </Th>
             <Th align="end">to</Th>
             <Th>holder</Th>
             <Th>caller line</Th>
-            <Th>recogniser</Th>
-            <Th>annotation</Th>
+            <Th hint={INTERVAL_CAVEATS.text}>recogniser</Th>
+            <Th hint={INTERVAL_CAVEATS.annotation}>annotation</Th>
           </tr>
         </thead>
         <tbody>

@@ -39,9 +39,9 @@ caveats; the decisions stay with the person reading it.
 1. **Call list** (`/calls`) — the calls of one window (`24h` · `7d` · `30d` or a from–to
    range, shared with the Overview; ADR 0006), headed by four cards over the whole window —
    calls, median duration, turns per consented call, recordings that reached the bucket —
-   and an hour-of-day histogram; then five chips that narrow only the list (failed turn ·
-   not finalized · unconsented · hit a cap · has recording, intersecting, each counting what
-   adding it would leave); then the rows, banded by day: when, the caller's number masked
+   and the calls per bucket across the window (hour, day or week, as the Overview's charts);
+   then five chips that narrow only the list (failed turn · not finalized · unconsented ·
+   hit a cap · has recording, intersecting, each counting what adding it would leave); then the rows, banded by day: when, the caller's number masked
    to its last four digits (ADR 0008), how long, how it ended (consent outcome and end
    reason together — quiet when ordinary, a pill when not), the turns as a tick strip with
    the failed ones marked, whether a recording can be fetched, cost with its floor caveat.

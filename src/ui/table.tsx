@@ -8,6 +8,7 @@
  */
 
 import type { ReactNode } from 'react';
+import { Hint } from './caveat';
 
 /** Lets a wide table scroll sideways inside a card instead of widening it. */
 export function TableScroll({ children }: { children: ReactNode }) {
@@ -22,9 +23,12 @@ export function Table({ children }: { children: ReactNode }) {
 
 export function Th({
   align = 'start',
+  hint,
   children,
 }: {
   align?: 'start' | 'end';
+  /** What the column counts, as the header's tooltip — never a second line. */
+  hint?: string;
   children: ReactNode;
 }) {
   return (
@@ -33,7 +37,7 @@ export function Th({
         align === 'end' ? 'text-right' : 'text-left'
       }`}
     >
-      {children}
+      {hint === undefined ? children : <Hint hint={hint}>{children}</Hint>}
     </th>
   );
 }

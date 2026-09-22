@@ -35,3 +35,20 @@ export default function Caveat({
     </p>
   );
 }
+
+/**
+ * A label whose meaning is read once and then known — what a column counts,
+ * where a span is measured from. It stays out of the layout: the label wears
+ * a dotted underline and the meaning is its tooltip, so a header row or a
+ * stat keeps one line while the fact is still one hover away.
+ */
+export function Hint({ hint, children }: { hint: string; children: ReactNode }) {
+  return (
+    <span
+      title={hint}
+      className="cursor-help underline decoration-border-strong decoration-dotted underline-offset-[3px]"
+    >
+      {children}
+    </span>
+  );
+}

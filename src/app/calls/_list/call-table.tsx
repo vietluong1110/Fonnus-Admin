@@ -35,7 +35,6 @@ import { callCount, callDurationMs, formatDayBand, formatTimeOfDay, type DayBand
 import type { Config } from '@/config';
 import type { CallScopeRow } from '@/queries/calls';
 import CallStateBlock from '@/ui/call-state';
-import Caveat from '@/ui/caveat';
 import HBar from '@/ui/hbar';
 import Icon from '@/ui/icon';
 import LinkRow from '@/ui/link-row';
@@ -85,8 +84,12 @@ function Ending({ call }: { call: CallScopeRow }) {
 
   if (isOrdinaryEnding(outcome, endReason)) {
     // The pipeline's own word, not a translation of it (CONTEXT.md §Language);
-    // the gloss sits once in the column header.
-    return <span className="font-num text-text-muted">caller_hangup</span>;
+    // the gloss is the column header's tooltip, and this cell's.
+    return (
+      <span className="font-num text-text-muted" title="consent granted, then the caller hung up">
+        caller_hangup
+      </span>
+    );
   }
 
   const state = callState(call.ended_at, outcome);
@@ -95,7 +98,7 @@ function Ending({ call }: { call: CallScopeRow }) {
     <div className="flex flex-col items-start gap-1">
       {outcome === null ? (
         // Trap 2: no consent row is a state of the call, never "no consent".
-        <CallStateBlock state={state} />
+        <CallStateBlock state={state} compact />
       ) : isConsentGranted(outcome) ? null : (
         <Vocabulary
           value={outcome}
@@ -171,36 +174,29 @@ export default function CallTable({
     <TableScroll>
       <Table>
         <thead>
+          {/* One line of plain labels; what a column counts is its header's
+              tooltip, read once, never a second line under every header. */}
           <tr>
             <Th>When</Th>
-            <Th>
+            {/* Trap 5: a null number may be the retention sweep's work. */}
+            <Th hint="masked to the last four digits; “not on record” is a number the retention sweep cleared, or one never written">
               Caller
-              {/* Trap 5: a null number may be the retention sweep's work. */}
-              <Caveat>masked; not on record = expired, or never written</Caveat>
             </Th>
-            <Th>
-              Duration
-              <Caveat>track relative to the longest call of its day</Caveat>
-            </Th>
-            <Th>
+            <Th hint="the track is relative to the longest call of its day">Duration</Th>
+            {/* Trap 1: rows written, not turns spoken. */}
+            <Th hint="one tick per turn written, red when it failed; an unconsented call has none">
               Turns
-              {/* Trap 1: rows written, not turns spoken. */}
-              <Caveat>turns written; an unconsented call has none</Caveat>
             </Th>
-            <Th>
+            <Th hint="a quiet caller_hangup is the ordinary ending — consent granted, then the caller hung up; every other ending is marked">
               How it ended
-              {/* The gloss for the quiet default, said once (§Language). */}
-              <Caveat>quiet = granted, then caller_hangup — the caller hung up</Caveat>
             </Th>
-            <Th align="end">
+            {/* ADR 0004: a signal only — the player lives on the detail page. */}
+            <Th align="end" hint="the recording is in the bucket; open the call to play it">
               Rec
-              {/* ADR 0004: a signal only — the player lives on the detail page. */}
-              <Caveat>in the bucket</Caveat>
             </Th>
-            <Th align="end">
+            {/* Trap 3: the column keeps no trace of the unpriced legs. */}
+            <Th align="end" hint="a floor — a model with no price counts 0">
               Cost
-              {/* Trap 3: the column keeps no trace of the unpriced legs. */}
-              <Caveat>floor — unpriced models count 0</Caveat>
             </Th>
             <Th>
               <span className="sr-only">Open</span>
