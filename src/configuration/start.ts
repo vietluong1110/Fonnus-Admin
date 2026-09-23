@@ -8,6 +8,8 @@
  * of by opening the page against a database.
  */
 
+import { parseDocument } from './document';
+
 /** Only the fields the choices read; the query rows carry more. */
 interface HasId {
   id: string;
@@ -54,4 +56,18 @@ export function startDocument(
   }
   if (newest !== undefined) return { document: newest.config, row: null };
   return { document: {}, row: null };
+}
+
+/**
+ * What a review diffs against: the newest row's document as the pipeline parses
+ * it — the one the next call runs on — never the row the form was loaded from,
+ * so restoring a history row shows what it would change (ADR 0012 D7a). Boot
+ * config, `{}`, when there is no row or the newest row is one the copied schema
+ * refuses: the pipeline refuses it too and runs on boot config (trap 6).
+ */
+export function diffBase(rows: readonly ConfigRow[]): Record<string, unknown> {
+  const newest = rows[0];
+  if (newest === undefined) return {};
+  const parsed = parseDocument(newest.config);
+  return parsed.ok ? parsed.document : {};
 }

@@ -559,23 +559,73 @@ export function adviceFor(from: unknown, to: RuntimeConfig): string[] {
  * flat key, or `undefined` when the snapshot does not carry it — which is the
  * usual answer for another vendor's parameter, and never a default (§3.4).
  *
- * A per-vendor path is resolved by the snapshot's OWN `STT_PROVIDER` /
- * `TTS_PROVIDER`, `tts.*` by the TTS one and everything else by the STT one —
- * the rule `flatKeyOf` in `../Fonnus/app/src/config/runtime.ts` applies to a
- * document, applied here to the record that document produced. Both spellings of
- * the three Deepgram keys renamed on 2026-09-17 resolve to one value
- * (`KEY_ALIASES`, ADR 0009).
+ * The key is `flatKeyOf`'s, so the value and the tooltip naming its key come
+ * from one resolution (ADR 0012 D9). Both spellings of the three Deepgram keys
+ * renamed on 2026-09-17 resolve to one value (`KEY_ALIASES`, ADR 0009).
  */
 export function ranOn(snapshot: Record<string, unknown> | null, field: Field): unknown {
   if (snapshot === null) return undefined;
-  let key: string | undefined;
-  if (typeof field.flatKey === 'string') {
-    key = field.flatKey;
-  } else {
-    const provider = lookup(snapshot, field.path.startsWith('tts.') ? 'TTS_PROVIDER' : 'STT_PROVIDER');
-    key = typeof provider === 'string' ? field.flatKey[provider] : undefined;
-  }
+  const key = flatKeyOf(snapshot, field);
   return key === undefined ? undefined : lookup(snapshot, key);
+}
+
+/**
+ * The flat snapshot key `ranOn` reads for this field, resolved from the
+ * snapshot's own STT_PROVIDER / TTS_PROVIDER — undefined when the snapshot names
+ * no vendor for the leg (or is null). ADR 0012 D9.
+ *
+ * A per-vendor path is resolved by the snapshot's OWN `STT_PROVIDER` /
+ * `TTS_PROVIDER`, `tts.*` by the TTS one and everything else by the STT one —
+ * the rule `flatKeyOf` in `../Fonnus/app/src/config/runtime.ts` applies to a
+ * document, applied here to the record that document produced. Never the vendor
+ * the form currently selects: the key names what the call ran on.
+ */
+export function flatKeyOf(
+  snapshot: Record<string, unknown> | null,
+  field: Field,
+): string | undefined {
+  if (snapshot === null) return undefined;
+  if (typeof field.flatKey === 'string') return field.flatKey;
+  const provider = lookup(snapshot, field.path.startsWith('tts.') ? 'TTS_PROVIDER' : 'STT_PROVIDER');
+  return typeof provider === 'string' ? field.flatKey[provider] : undefined;
+}
+
+/**
+ * Which layer a value the last call ran on came from: the `runtime_config` row
+ * whose id the snapshot's `runtime.version` names, or boot config. Console
+ * vocabulary for the caption ("row #N" / "boot", rule 7 of `docs/redesign.md`
+ * §4.2); `version` is text, the digits of `runtime_config.id`.
+ */
+export type Layer = { kind: 'row'; version: string } | { kind: 'boot' };
+
+/**
+ * Which layer the last call's value for `path` came from: 'row' when the path is
+ * present in snapshot.runtime.config (the parsed document the process read,
+ * `../Fonnus/app/src/config/call-config.ts:149`), 'boot' otherwise; a `runtime`
+ * that is not { version, config } is read as absent. ADR 0012 D8.
+ *
+ * The pipeline omits `runtime` on a call that ran on boot config, whether no row
+ * existed or the row was refused (`buildConfigSnapshot`,
+ * `../Fonnus/app/src/config/snapshot.ts`), so every path of such a call is boot.
+ */
+export function layerOf(snapshot: Record<string, unknown>, path: string): Layer {
+  const runtime = snapshot['runtime'];
+  if (typeof runtime !== 'object' || runtime === null || Array.isArray(runtime)) {
+    return { kind: 'boot' };
+  }
+  const { version, config } = runtime as Record<string, unknown>;
+  // `version` is a number in the pipeline's type; a string of digits is read
+  // the same, since `runtime_config.id` is a bigint the console prints as text.
+  const versionText =
+    typeof version === 'number' && Number.isSafeInteger(version)
+      ? String(version)
+      : typeof version === 'string' && /^\d+$/.test(version)
+        ? version
+        : null;
+  if (versionText === null || typeof config !== 'object' || config === null || Array.isArray(config)) {
+    return { kind: 'boot' };
+  }
+  return valueAt(config, path) === undefined ? { kind: 'boot' } : { kind: 'row', version: versionText };
 }
 
 /** One snapshot key's value, under either spelling of a renamed key; own keys only. */

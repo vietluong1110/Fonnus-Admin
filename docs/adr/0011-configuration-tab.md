@@ -96,13 +96,19 @@ reads "—" (that vendor did not run), never a default.
 (`'use server'`, `src/app/configuration/actions.ts`) dispatches on a hidden `intent` field
 and feeds one `useActionState` in the client form. `review`: `documentFromForm` →
 `runtimeConfigSchema.safeParse` → issues mapped to fields by `path.join('.')` (a cross-field
-`superRefine` reports on its leaf path, so it maps too) → the diff against the document the
-form started from, in path order, each leaf `added` / `removed` / `changed` → the advice
+`superRefine` reports on its leaf path, so it maps too) → the diff against the **newest row of
+the tenant** (boot config, `{}`, when there is no row or the newest row is one the copy refuses
+— trap 6), never against the document the form was loaded from, so a restore of a history row
+shows what it would change (amended by ADR 0012 D7; the head still says which row the form
+was loaded from), in path order, each leaf `added` / `removed` / `changed` → the advice
 list: `disclosureAdvice(text.greeting)`, and "`llm.model` changed but `llm.params.reasoning`
 is not set in this row" (the runbook §10 rule the schema does not enforce). Issues block the
 save; advice never does (rule 6). The review renders the proposed document as JSON, the
 diff, the issues, the advice, the note field, and one sentence: *takes effect on the next
-call answered; no call in progress changes*. `edit` returns to the form with the document
+call answered; no call in progress changes*. The review, its diff and its hidden `document`
+carry the **parsed** document when it parses (the raw one, with its issues, when it does not),
+so the row the save inserts is byte for byte what was reviewed — a trimmed `context_text` or
+`tts.voice` is reviewed trimmed (amended by ADR 0012 D7). `edit` returns to the form with the document
 as submitted. `save`: `requireAccount()` (a throw is rendered as the refusal, nothing
 written) → parse the hidden `document` JSON **again** on the server (the client's copy is
 never trusted) → `insertRuntimeConfig` → `revalidatePath` and `redirect` to
@@ -158,9 +164,12 @@ names both possible causes and points at the drift test.
 and no submit; `requireAccount()` throwing → the same form, read-only, with "no account came
 through the reverse proxy; nothing can be written" — never a placeholder name. The footer of
 every screen becomes `console · <account>` / `console · no account` (ADR 0007 D6; the word
-"edits" would overstate D1 — two inserts, not editing). The head carries the fixed caveat of
-rule 4: every vendor is offered; this box refuses a vendor it holds no key for, and
-`/healthz` `vendors` on the box says which — check it before choosing.
+"edits" would overstate D1 — two inserts, not editing). The `stt` and `tts` cards carry the
+"as of boot at `<booted_at>`, build `<build_sha>`" line of the tenant's newest `boot_report`
+row, which is what the vendor and voice selects are drawn from (ADR 0012 D3–D5, rule 4 of
+`docs/redesign.md` §4.2 as rewritten); only without a report does the head fall back to the
+former fixed caveat — every vendor is offered, this box refuses a vendor it holds no key for,
+and `/healthz` `vendors` on the box says which — check it before choosing.
 
 **10. Form controls are new surface, styled by copy.** `src/ui/input.tsx`, `select.tsx`,
 `textarea.tsx`, `checkbox.tsx` take their shell from

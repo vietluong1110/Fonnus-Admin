@@ -100,23 +100,27 @@ describe('callsSinceRow', () => {
 });
 
 describe('lastCallSnapshot', () => {
-  it('reads the newest call’s snapshot alone', async () => {
-    query.mockResolvedValue({ rows: [{ config_snapshot: { STT_PROVIDER: 'deepgram' } }] });
-    const snapshot = await lastCallSnapshot('pilot');
+  const STARTED_AT = new Date('2026-09-20T09:00:00Z');
+
+  it('reads the newest call’s start and snapshot alone', async () => {
+    query.mockResolvedValue({
+      rows: [{ started_at: STARTED_AT, config_snapshot: { STT_PROVIDER: 'deepgram' } }],
+    });
+    const last = await lastCallSnapshot('pilot');
 
     const { sql, values } = lastStatement();
-    expect(sql).toContain('select config_snapshot');
+    expect(sql).toContain('select started_at, config_snapshot');
     expect(sql).toContain('order by started_at desc');
     expect(sql).toContain('limit 1');
     expect(values).toEqual(['pilot']);
-    expect(snapshot).toEqual({ STT_PROVIDER: 'deepgram' });
+    expect(last).toEqual({ started_at: STARTED_AT, snapshot: { STT_PROVIDER: 'deepgram' } });
   });
 
-  it('answers null for a tenant with no call, and for a snapshot that is no object', async () => {
+  it('answers null for a tenant with no call, and a null snapshot for one that is no object', async () => {
     query.mockResolvedValue({ rows: [] });
     expect(await lastCallSnapshot('pilot')).toBeNull();
-    query.mockResolvedValue({ rows: [{ config_snapshot: null }] });
-    expect(await lastCallSnapshot('pilot')).toBeNull();
+    query.mockResolvedValue({ rows: [{ started_at: STARTED_AT, config_snapshot: null }] });
+    expect(await lastCallSnapshot('pilot')).toEqual({ started_at: STARTED_AT, snapshot: null });
   });
 });
 

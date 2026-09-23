@@ -20,7 +20,15 @@
  */
 
 import { useActionState, useState, useSyncExternalStore } from 'react';
-import { mergeBranches, type BranchMerge, type Field } from '@/configuration/document';
+import {
+  mergedVoices,
+  providerOptions,
+  voiceList,
+  voiceUncheckable,
+  type BootReportVoice,
+  type Offered,
+} from '@/boot-report';
+import { mergeBranches, type BranchMerge, type Field, type Layer } from '@/configuration/document';
 import { renderValue } from '@/dashboard';
 import Badge from '@/ui/badge';
 import Button from '@/ui/button';
@@ -48,21 +56,48 @@ const subscribeToNothing = (): (() => void) => () => undefined;
 /** Rule 3 of `docs/redesign.md` §4.2, on the screen beside the Save button. */
 const EFFECT = 'takes effect on the next call answered; no call in progress changes';
 
+/** One leaf's "last call" cell, as the page resolves it from the newest snapshot. */
+export interface LastCall {
+  value: string | null;
+  key: string | null;
+  layer: Layer | null;
+  /** `tts.voice` only: the id's label from the boot report ADR 0012 D6 chose; null when none knows it. */
+  label?: string | null;
+  /** `tts.voice` only: that report's build differs from the call's (D6). */
+  labelCaveat?: string | null;
+}
+
 export interface ConfigurationFormProps {
   tenant: string;
   initial: FormState;
   fields: Field[];
   /**
-   * `renderValue` of the value the last answered call ran on, per leaf path;
-   * `null` where the snapshot carries no such key. Precomputed on the server so
-   * nothing here reaches for a query or a pool.
+   * What the last answered call ran on, per leaf path, precomputed on the server
+   * so nothing here reaches for a query or a pool: `value` is `renderValue` of
+   * it, null where the snapshot carries no such key; `key` is the snapshot key it
+   * was read under, null where the snapshot names no vendor for a per-vendor
+   * leaf (ADR 0012 D9); `layer` is the row or boot config it came from, null
+   * with no snapshot (D8).
    */
-  ranOn: Record<string, string | null>;
+  ranOn: Record<string, LastCall>;
   /** False when the tenant has answered no call: then "—" would be a lie. */
   snapshotRecorded: boolean;
+  /**
+   * The tenant's newest `boot_report` row, as the selects use it: the vendors,
+   * the voice lists, the "as of boot" words and the parse caveats (ADR 0012
+   * D2–D5). Null is the no-report state: every vendor offered, `tts.voice` a
+   * text box.
+   */
+  offered: Offered | null;
   editable: boolean;
-  /** The document the form started from; the diff is taken against it. */
+  /**
+   * The newest row's document — boot config, `{}`, with no row or a refused one
+   * — which the review diffs against, whichever row the form was loaded from
+   * (ADR 0012 D7).
+   */
   from: Record<string, unknown>;
+  /** The id of the row the form was loaded from (`?from=` or the newest); null with none. */
+  fromRow: string | null;
   /** `SHIPPED_TEXT`, keyed by the leaf under `text.`. */
   shippedText: Record<string, string>;
   /**
@@ -86,6 +121,8 @@ export default function ConfigurationForm(props: ConfigurationFormProps) {
         pending={pending}
         editable={props.editable}
         from={props.from}
+        fromRow={props.fromRow}
+        newestRow={props.disclosureRow}
       />
     );
   }
@@ -98,6 +135,7 @@ function EditStep({
   fields,
   ranOn,
   snapshotRecorded,
+  offered,
   editable,
   from,
   shippedText,
@@ -115,7 +153,7 @@ function EditStep({
 
   // Only what script has to own: which leaves are in the row, which vendor
   // branch is chosen, and the texts a restore button has refilled. Every other
-  // control is uncontrolled, so typing in one does not re-render the other 53.
+  // control is uncontrolled, so typing in one does not re-render the other 54.
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set(set));
   const [providers, setProviders] = useState<Record<string, string>>(() => ({
     'stt.provider': set.includes('stt.provider') ? (values['stt.provider'] ?? '') : '',
@@ -213,7 +251,7 @@ function EditStep({
         </p>
       )}
 
-      {/* 54 leaves is more than a screen however dense the rows are, so the five
+      {/* 55 leaves is more than a screen however dense the rows are, so the five
           groups are one click apart from anywhere in the form. Plain anchors:
           no script, and the address bar keeps the group. The count is how many
           of the group's leaves the row sets, so where the row departs from boot
@@ -251,6 +289,7 @@ function EditStep({
           // card's title is not the line the strip covers.
           <div key={group} id={group} className="scroll-mt-[64px]">
             <Card title={group}>
+              <AsOfBoot group={group} offered={offered} />
               <div className="flex flex-col">
                 <HeaderRow />
                 {visible(group).map(({ field, vendorBounds }) => (
@@ -282,6 +321,7 @@ function EditStep({
                     }
                     ranOn={ranOn[field.path] ?? null}
                     snapshotRecorded={snapshotRecorded}
+                    offered={offered}
                     editable={editable}
                   />
                 ))}
@@ -294,7 +334,7 @@ function EditStep({
       {/* "Back to boot config" is a form of its own with no `set:` entry at all,
           so the document it proposes is `{}` — which is a legal row meaning the
           boot value applies to every leaf (contract §3.4). A button inside the
-          form above could not express "nothing ticked" without unticking 54
+          form above could not express "nothing ticked" without unticking 55
           boxes. */}
       <form id={BOOT_FORM_ID} action={formAction} className="contents">
         <input type="hidden" name="tenant" value={tenant} />
@@ -302,7 +342,7 @@ function EditStep({
       </form>
 
       {editable ? (
-        // The way out of a 54-leaf form stays on screen wherever the operator
+        // The way out of a 55-leaf form stays on screen wherever the operator
         // has scrolled to; the buttons are still outside every form and wired
         // by `form=`, because a form inside a form is not a thing.
         <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 border-t border-border-hairline bg-surface-page py-3">
@@ -328,6 +368,32 @@ function EditStep({
   );
 }
 
+/**
+ * The line the `stt` and `tts` cards carry under their title (ADR 0012 D5):
+ * which boot report the selects below are drawn from — a caveat, because it
+ * changes with the data — and one line per part of that report the parse
+ * skipped (D2), on the card of the leg it concerns. Nothing without a report:
+ * the head then carries the fixed caveat instead.
+ */
+function AsOfBoot({ group, offered }: { group: Group; offered: Offered | null }) {
+  if (offered === null || (group !== 'stt' && group !== 'tts')) return null;
+  // A skipped stt vendor is the stt card's; every other skipped part (a tts
+  // vendor, a voice entry, a whole object) is the tts card's.
+  const concernsStt = (line: string): boolean =>
+    line.startsWith('stt ') || line.startsWith('vendors.stt ');
+  const caveats = offered.caveats.filter((line) => concernsStt(line) === (group === 'stt'));
+  return (
+    <div className="flex flex-col gap-1">
+      <Caveat>
+        {group === 'stt' ? 'vendors' : 'vendors and voices'} {offered.asOf}
+      </Caveat>
+      {caveats.map((line) => (
+        <Caveat key={line}>{line}</Caveat>
+      ))}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- one leaf */
 
 /**
@@ -345,7 +411,7 @@ const SET_HINT =
 
 /** Contract §3.4: a key the snapshot lacks is a vendor that did not run, never a default. */
 const LAST_CALL_HINT =
-  'What the most recent answered call ran on, from its config snapshot. "—" means that call carried no such key: its vendor did not run.';
+  'What the most recent answered call ran on, from its config snapshot. "—" means that call carried no such key: its vendor did not run. Beside each value, where it came from: "row #N" when the runtime_config row that call read set this leaf, "boot" when boot config supplied it.';
 
 /** A column head per group card, in the Table's header style. */
 function HeaderRow() {
@@ -377,6 +443,7 @@ function FieldRow({
   shipped,
   ranOn,
   snapshotRecorded,
+  offered,
   editable,
 }: {
   field: Field;
@@ -390,15 +457,16 @@ function FieldRow({
   onProvider: (next: string) => void;
   onRestore: (text: string) => void;
   shipped: string | undefined;
-  ranOn: string | null;
+  ranOn: LastCall | null;
   snapshotRecorded: boolean;
+  offered: Offered | null;
   editable: boolean;
 }) {
   const { path } = field;
   const isProvider = path === 'stt.provider' || path === 'tts.provider';
   // The leaf name alone: the group is the card's title, and the full path, the
   // snapshot key and the bounds are the name's tooltip — read once, so they do
-  // not take a second line on each of 54 rows.
+  // not take a second line on each of 55 rows.
   const leaf = path.slice(path.lastIndexOf('.') + 1);
   const long = isLong(field);
 
@@ -417,7 +485,9 @@ function FieldRow({
 
   const name = (
     <label htmlFor={path} className="min-w-0 truncate text-[length:var(--size-ui)] font-medium">
-      <Hint hint={nameHint({ field, vendorBounds, provider, isProvider })}>{leaf}</Hint>
+      <Hint hint={nameHint({ field, vendorBounds, isProvider, ranOn, snapshotRecorded, offered })}>
+        {leaf}
+      </Hint>
     </label>
   );
 
@@ -450,12 +520,27 @@ function FieldRow({
         isSet={isSet}
         editable={editable}
         isProvider={isProvider}
+        offered={offered}
         width={long ? 'w-full' : controlWidth(field)}
       />
     </div>
   );
 
   const lastCall = lastCallText(ranOn, snapshotRecorded);
+  // The voice label's build caveat (ADR 0012 D6), under the value it qualifies.
+  const labelCaveat =
+    snapshotRecorded && ranOn?.labelCaveat != null ? (
+      <Caveat className="col-start-2 md:col-start-4">{ranOn.labelCaveat}</Caveat>
+    ) : null;
+  // Only beside a value: "—" came from no layer, and "not recorded" has none.
+  const layer = snapshotRecorded && ranOn?.value != null ? layerText(ranOn.layer) : null;
+  const lastCallTitle = layer === null ? lastCall : `${lastCall} · ${layer}`;
+  const layerCaption =
+    layer === null ? null : (
+      <Caveat as="span" className="ml-2 font-ui">
+        {layer}
+      </Caveat>
+    );
 
   if (long) {
     return (
@@ -468,9 +553,10 @@ function FieldRow({
         <div className="col-[2/3] md:col-[2/5]">{control}</div>
         <p
           className="col-[2/3] mb-0 truncate text-[length:var(--size-eyebrow)] text-text-muted md:col-[2/5]"
-          title={lastCall}
+          title={lastCallTitle}
         >
           last call: {lastCall}
+          {layerCaption}
         </p>
       </div>
     );
@@ -483,12 +569,14 @@ function FieldRow({
       <div className="col-start-2 md:col-start-auto">{control}</div>
       <span
         className="col-start-2 truncate font-num text-[length:var(--size-ui)] tabular-nums text-text-muted md:col-start-auto"
-        title={lastCall}
+        title={lastCallTitle}
       >
         {/* The column head is hidden below `md`, so the value names itself. */}
         <span className="font-ui md:hidden">last call: </span>
         {lastCall}
+        {layerCaption}
       </span>
+      {labelCaveat}
     </div>
   );
 }
@@ -507,39 +595,57 @@ function controlWidth(field: Field): string {
   return field.kind === 'integer' || field.kind === 'number' ? 'w-[120px]' : 'w-full';
 }
 
-/** The last-call cell, in words: "not recorded" before any call, "—" for a key it lacked. */
-function lastCallText(ranOn: string | null, snapshotRecorded: boolean): string {
+/**
+ * The last-call cell, in words: "not recorded" before any call, "—" for a key it
+ * lacked, and a voice id as `label (id)` when a boot report knows it (ADR 0012 D6).
+ */
+function lastCallText(ranOn: LastCall | null, snapshotRecorded: boolean): string {
   if (!snapshotRecorded) return 'not recorded';
-  return ranOn ?? '—';
+  const value = ranOn?.value ?? null;
+  if (value === null) return '—';
+  return ranOn?.label != null ? `${ranOn.label} (${value})` : value;
+}
+
+/** The layer caption of rule 7 of `docs/redesign.md` §4.2 (ADR 0012 D8). */
+function layerText(layer: Layer | null): string | null {
+  if (layer === null) return null;
+  return layer.kind === 'row' ? `row #${layer.version}` : 'boot';
 }
 
 /**
  * The name's tooltip, one fact per line: the full path, the snapshot key the
- * leaf becomes on a call, the leaf's own bounds, the per-vendor bounds a merged
+ * last call's value was read under, the leaf's own bounds, the per-vendor bounds a merged
  * control cannot carry, and what the kind of box expects.
  */
 function nameHint({
   field,
   vendorBounds,
-  provider,
   isProvider,
+  ranOn,
+  snapshotRecorded,
+  offered,
 }: {
   field: Field;
   vendorBounds: string | null;
-  provider: string;
   isProvider: boolean;
+  ranOn: LastCall | null;
+  snapshotRecorded: boolean;
+  offered: Offered | null;
 }): string {
   const lines = [field.path];
   if (typeof field.flatKey === 'string') {
     lines.push(`snapshot key ${field.flatKey}`);
+  } else if (ranOn?.key != null) {
+    // The key the value beside it was read under — the last call's vendor, not
+    // the one this form selects (ADR 0012 D9).
+    lines.push(`snapshot key ${ranOn.key}`);
   } else {
-    const own = field.flatKey[provider];
+    const perVendor = `snapshot key per vendor: ${Object.entries(field.flatKey)
+      .map(([vendor, key]) => `${vendor} ${key}`)
+      .join(', ')}`;
+    const leg = field.group === 'tts' ? 'TTS_PROVIDER' : 'STT_PROVIDER';
     lines.push(
-      own === undefined
-        ? `snapshot key per vendor: ${Object.entries(field.flatKey)
-            .map(([vendor, key]) => `${vendor} ${key}`)
-            .join(', ')}`
-        : `snapshot key ${own}`,
+      snapshotRecorded ? `${perVendor} (the last call's snapshot names no ${leg})` : perVendor,
     );
   }
   if (field.min !== null) {
@@ -559,12 +665,20 @@ function nameHint({
     );
   }
   if (field.kind === 'record') lines.push('a JSON object, as stored');
-  // Rule 4 of `docs/redesign.md` §4.2: this container cannot reach the
-  // pipeline's `/healthz`, so it cannot narrow the list itself.
+  // Rule 4 of `docs/redesign.md` §4.2 (ADR 0012 D3): the vendors of the box's
+  // newest boot report when there is one, every vendor when there is none.
   if (isProvider) {
     lines.push(
-      'Every vendor is offered. The box refuses a row naming a vendor it holds no keys for, and those calls run on boot config; its /healthz lists them under vendors.',
+      offered === null
+        ? 'Every vendor is offered. The box refuses a row naming a vendor it holds no keys for, and those calls run on boot config; its /healthz lists them under vendors.'
+        : `Offered: the vendors this box's newest boot report lists, ${offered.asOf}. A row naming another is refused whole, and those calls run on boot config.`,
     );
+  }
+  // D4: why the voice is a text box, when it is one.
+  if (field.path === 'tts.voice') {
+    const vendors = field.vendor === null ? (offered?.vendors.tts ?? []) : [field.vendor];
+    const uncheckable = voiceUncheckable(offered, vendors);
+    if (uncheckable !== null && voiceControl(field, offered) === null) lines.push(uncheckable);
   }
   return lines.join('\n');
 }
@@ -582,6 +696,7 @@ function Control({
   isSet,
   editable,
   isProvider,
+  offered,
   width,
 }: {
   field: Field;
@@ -593,6 +708,7 @@ function Control({
   isSet: boolean;
   editable: boolean;
   isProvider: boolean;
+  offered: Offered | null;
   /** The width class of the box itself: to the kind, or `w-full` on a long row. */
   width: string;
 }) {
@@ -620,6 +736,8 @@ function Control({
   };
 
   if (isProvider) {
+    const schema = field.options ?? [];
+    const options = providerOptions(schema, offered, field.group === 'tts' ? 'tts' : 'stt');
     return (
       <>
         <div className={width}>
@@ -633,7 +751,19 @@ function Control({
             }}
           >
             <option value="">{BOOT_OPTION}</option>
-            {(field.options ?? []).map((option) => (
+            {/* The stored value, kept selectable so the select does not quietly
+                change the row: outside the schema, the schema's words; inside
+                it but outside the report, the report's (ADR 0012 D3). */}
+            <Unknown
+              value={value}
+              options={options}
+              reason={
+                offered !== null && schema.includes(value)
+                  ? `not offered by this box (${offered.asOfAt})`
+                  : undefined
+              }
+            />
+            {options.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
@@ -648,6 +778,48 @@ function Control({
           </Caveat>
         </noscript>
       </>
+    );
+  }
+
+  const voice = voiceControl(field, offered);
+  if (voice !== null) {
+    // D4: labels shown, ids written; "boot value" first, which leaves the leaf
+    // unset and names the voice boot config speaks with when the list marks one.
+    // Keyed by vendor too, so switching the vendor remounts the list on the
+    // stored value rather than keeping a selection of the other vendor's.
+    const ids = voice.groups.flatMap(({ list }) => list.map((entry) => entry.id));
+    // The merged control names no default: which vendor's applies depends on
+    // the provider the row names, which that control cannot know.
+    const defaultLabel = voice.merged
+      ? undefined
+      : voice.groups[0]?.list.find((entry) => entry.is_default)?.label;
+    return (
+      <div className={width}>
+        <Select
+          key={`${key}:${field.vendor ?? 'merged'}`}
+          id={path}
+          name={path}
+          defaultValue={value}
+          disabled={!editable}
+          onChange={(event) => {
+            tickFor(event.target.value);
+          }}
+        >
+          <option value="">{defaultLabel === undefined ? BOOT_OPTION : `${BOOT_OPTION} (${defaultLabel})`}</option>
+          <Unknown value={value} options={ids} reason={voice.unknownReason} />
+          {voice.merged ? (
+            // Without script every vendor's voices at once, one group each
+            // (ADR 0011 D4); `offeredIssues` refuses another vendor's id at review.
+            voice.groups.map(({ vendor, list }) => (
+              <optgroup key={vendor} label={vendor}>
+                <VoiceOptions list={list} />
+              </optgroup>
+            ))
+          ) : (
+            <VoiceOptions list={voice.groups[0]?.list ?? []} />
+          )}
+        </Select>
+      </div>
     );
   }
 
@@ -749,9 +921,59 @@ function Control({
  * option rather than dropped, so the select does not silently change the row's
  * value to the first legal one.
  */
-function Unknown({ value, options }: { value: string; options: readonly string[] }) {
+function Unknown({
+  value,
+  options,
+  reason = 'not a value this build offers',
+}: {
+  value: string;
+  options: readonly string[];
+  /** Why it is not offered; the schema's words unless a boot report is the reason (ADR 0012 D3, D4). */
+  reason?: string | undefined;
+}) {
   if (value === '' || options.includes(value)) return null;
-  return <option value={value}>{value} — not a value this build offers</option>;
+  return (
+    <option value={value}>
+      {value} — {reason}
+    </option>
+  );
+}
+
+/** One voice list as options: the label shown, the id written, `.env` order kept. */
+function VoiceOptions({ list }: { list: readonly BootReportVoice[] }) {
+  return list.map((entry) => (
+    <option key={entry.id} value={entry.id}>
+      {entry.label}
+    </option>
+  ));
+}
+
+/**
+ * Whether `tts.voice` is a select, and of what (ADR 0012 D4): with script, the
+ * field is the chosen vendor's branch and the select is that vendor's list;
+ * without it, the field is the merged one and the select is every offered
+ * vendor's list, one group each. Null — the text box — with no report, or a
+ * vendor whose list the report does not carry.
+ */
+function voiceControl(
+  field: Field,
+  offered: Offered | null,
+): { groups: { vendor: string; list: BootReportVoice[] }[]; merged: boolean; unknownReason: string } | null {
+  if (field.path !== 'tts.voice' || offered === null) return null;
+  if (field.vendor === null) {
+    const groups = mergedVoices(offered);
+    return groups === null
+      ? null
+      : { groups, merged: true, unknownReason: `not in this box's voice lists (${offered.asOfAt})` };
+  }
+  const list = voiceList(offered, field.vendor);
+  return list === null
+    ? null
+    : {
+        groups: [{ vendor: field.vendor, list }],
+        merged: false,
+        unknownReason: `not in this box's ${field.vendor} voice list (${offered.asOfAt})`,
+      };
 }
 
 /* ---------------------------------------------------------------- review */
@@ -768,15 +990,23 @@ function ReviewStep({
   pending,
   editable,
   from,
+  fromRow,
+  newestRow,
 }: {
   state: Extract<FormState, { step: 'review' }>;
   formAction: (formData: FormData) => void;
   pending: boolean;
   editable: boolean;
   from: Record<string, unknown>;
+  fromRow: string | null;
+  /** The newest row's id, the diff's base; null with no row. */
+  newestRow: string | null;
 }) {
   const blocked = state.issues.length > 0;
   const changes = state.diff.length;
+  // The diff's base is the newest row (ADR 0012 D7), which is what the next
+  // call runs on; a form loaded from an older row says so beside it.
+  const loadedFromOlder = fromRow !== null && fromRow !== newestRow;
 
   return (
     <form action={formAction} className="flex flex-col gap-[18px]">
@@ -810,15 +1040,21 @@ function ReviewStep({
       ) : null}
 
       <Card title={changes === 1 ? '1 change' : `${String(changes)} changes`}>
+        {loadedFromOlder ? (
+          <Caveat>
+            the form was loaded from row #{fromRow}; the changes are against the current row
+            {newestRow === null ? null : <> #{newestRow}</>}
+          </Caveat>
+        ) : null}
         {changes === 0 ? (
-          <Caveat>nothing changes: this document is the one the form started from</Caveat>
+          <Caveat>nothing changes: this document is the one the pipeline runs on now</Caveat>
         ) : (
           <TableScroll>
             <Table>
               <thead>
                 <tr>
                   <Th>setting</Th>
-                  <Th hint="The document the form started from: the current row, or the history row it was loaded from.">
+                  <Th hint="What the pipeline runs on now: the newest row, or boot config when there is none or the schema refuses it — whichever row the form was loaded from.">
                     before
                   </Th>
                   <Th>after</Th>

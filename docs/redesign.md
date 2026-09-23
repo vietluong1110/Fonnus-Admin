@@ -97,10 +97,20 @@ pipeline ADRs 0020/0021/0028, and the write posture is ADR 0007 here.
    of the previous one. So the tab shows the row history, and a save is preceded by a diff against
    the current row.
 3. **An edit takes effect on the next call answered**, and on no call in progress.
-4. **Offer every vendor; the box refuses per box.** Whether this box holds a vendor's credentials
-   is visible only on the pipeline's `/healthz` (`vendors: {stt, tts}`), which this container
-   cannot reach. Until it can, the tab says so and the operator checks `/healthz`. A row naming a
-   vendor the box has no keys for is refused **whole**, and that call runs on boot config.
+4. **The box's newest `boot_report` row is what the vendor and voice selects offer.** The
+   process writes one row per boot (pipeline ADR 0029): the vendors it holds keys for
+   (`vendors.stt` / `vendors.tts`, the same value `/healthz` reports) and, per TTS vendor, its
+   voice list (`voices.<vendor>[] = { id, label, is_default }`). `stt.provider` and `tts.provider`
+   offer the row's vendors; `tts.voice` offers the selected vendor's voices by `label` and writes
+   the `id`, with "boot value (`<label of the is_default entry>`)" first. The cards say "as of boot
+   at `<booted_at>`, build `<build_sha>`", because the newest row may describe a process that died
+   without a successor — when the newest call ran a different build after that boot, the tab says
+   so (rendered from the two facts, never inferred). A stored value outside the row's list is an
+   issue that blocks the save: the process refuses such a row **whole** (`reason: provider`) or at
+   the next call (`reason: invalid`), and that call runs on boot config. No `boot_report` row at all
+   (a box before migration 0015, a dev database) is a first-class state: every vendor is offered,
+   `tts.voice` is a text box, and the tab says the id cannot be checked against this box.
+   Rule of ADR 0012.
 5. **Show whether the latest row is actually running.** A call's
    `config_snapshot->'runtime'->>'version'` is the `runtime_config.id` it ran under, and the key
    is absent when it ran on boot config. If recent calls carry no `runtime` block, or an older id
@@ -112,6 +122,14 @@ pipeline ADRs 0020/0021/0028, and the write posture is ADR 0007 here.
    obligation a greeting stops naming (Law 134/2025, pipeline ADR 0021 Decision 5): show them
    before the insert and as a banner while the current row carries such a greeting. The pipeline
    never evaluates them and never refuses a greeting for them.
+7. **Every "last call" value names its layer.** Beside the value the last answered call ran on,
+   the form says "row #`<runtime.version>`" when the leaf's path is present in
+   `config_snapshot.runtime.config` and "boot" otherwise: `runtime.config` is the document the
+   process read for that call, so a path present there came from the row and a path absent from
+   it came from boot config. A snapshot without `runtime` is boot (or a row the process refused —
+   rule 5's warning says which); a null snapshot stays "not recorded". The call detail's snapshot
+   card says the same of the effective voice id ("chosen by row #N" / "boot value"). Rule of
+   ADR 0012 (user decision 2026-09-23).
 
 ### 4.3 The annotation form — specified, not drawn
 

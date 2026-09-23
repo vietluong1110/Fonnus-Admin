@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { cache } from 'react';
 import { annotationHistory } from '@/annotations';
 import { RECORDING_REASON, isKnownArtifactState, recordingAccess } from '@/artifacts';
+import { voiceFact } from '@/boot-report';
 import {
   CALL_STATE_LABEL,
   CALL_STATE_TONE,
@@ -54,6 +55,7 @@ import {
   type CallDetailRow,
   type TurnRow,
 } from '@/queries/calls';
+import { bootReportBefore } from '@/queries/boot-report';
 import Badge from '@/ui/badge';
 import Card from '@/ui/card';
 import EmptyState from '@/ui/empty-state';
@@ -109,15 +111,23 @@ export default async function CallPage({
   const call = await callOnce(id);
   if (call === null) notFound();
 
-  // Three independent statements on the one `console` pool, side by side: the
-  // trail and the annotations need `recording_started_at` and `outcome` from
-  // `getCall`, which has already returned, and nothing else (ADR 0010, "No
-  // shared transaction").
-  const [turns, events, annotations] = await Promise.all([
+  const snapshot = parseSnapshot(call.config_snapshot);
+  // The voice the call spoke with names a key only when the snapshot names its
+  // TTS_PROVIDER (contract §3.4); only then is there an id to label, so only
+  // then is the one `boot_report` read issued (ADR 0012 D6).
+  const hasVoice = voiceFact(snapshot, null) !== null;
+
+  // Up to four independent statements on the one `console` pool, side by side:
+  // the trail and the annotations need `recording_started_at` and `outcome`
+  // from `getCall`, the voice's report its `tenant_id` and `started_at`, all
+  // already returned, and nothing else (ADR 0010, "No shared transaction").
+  const [turns, events, annotations, voiceReport] = await Promise.all([
     getTurns(id),
     getCallEvents(id),
     getCallAnnotations(id),
+    hasVoice ? bootReportBefore(call.tenant_id, call.started_at) : null,
   ]);
+  const voice = voiceFact(snapshot, voiceReport);
   const state = callState(call.ended_at, call.outcome);
   // Read once per render and passed down: the gate is deployment state, not
   // per-turn state (ADR 0005).
@@ -125,7 +135,6 @@ export default async function CallPage({
   const gate = config.consentGate;
   const showCaller = showCallerData(call.outcome, gate);
   const access = recordingAccess(call, config);
-  const snapshot = parseSnapshot(call.config_snapshot);
   const selectedIdx = parseTurnParam((await searchParams).turn, turns);
 
   // The call's event trail, verdict first (ADR 0010 decision 3): a row the
@@ -424,7 +433,7 @@ export default async function CallPage({
             </Card>
 
             <Card title="Config snapshot">
-              <ConfigSnapshot value={call.config_snapshot} />
+              <ConfigSnapshot value={call.config_snapshot} voice={voice} />
             </Card>
 
             <Card title="Consent">

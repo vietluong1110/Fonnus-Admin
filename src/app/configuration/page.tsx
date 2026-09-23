@@ -21,8 +21,17 @@ import { formatWhen } from '@/calls';
 import { currentAccount } from '@/account';
 import { editingConfigured } from '@/db';
 import { renderValue } from '@/dashboard';
-import { fieldsOf, formFromDocument, parseDocument, ranOn } from '@/configuration/document';
-import { chooseTenant, startDocument } from '@/configuration/start';
+import {
+  fieldsOf,
+  flatKeyOf,
+  formFromDocument,
+  layerOf,
+  parseDocument,
+  ranOn,
+} from '@/configuration/document';
+import { chooseTenant, diffBase, startDocument } from '@/configuration/start';
+import { labelVoice, needsReportBefore, offeredOf, staleReport } from '@/boot-report';
+import { bootReportBefore, latestBootReport } from '@/queries/boot-report';
 import {
   callsSinceRow,
   lastCallSnapshot,
@@ -33,7 +42,7 @@ import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 import PageHead from '@/ui/page-head';
-import ConfigurationForm from './configuration-form';
+import ConfigurationForm, { type LastCall } from './configuration-form';
 import History from './history';
 
 // The screen is about the database right now, and it writes: nothing here may
@@ -78,12 +87,19 @@ export default async function ConfigurationPage({
     );
   }
 
-  const [rows, snapshot, account] = await Promise.all([
+  const [rows, lastCall, account, report] = await Promise.all([
     runtimeConfigRows(tenant),
     lastCallSnapshot(tenant),
     currentAccount(),
+    // The tenant's newest boot report, read once: the vendor and voice selects,
+    // their "as of boot" lines and the liveness card all come from it; null is
+    // the no-report state (ADR 0012 D1).
+    latestBootReport(tenant),
   ]);
+  const snapshot = lastCall?.snapshot ?? null;
   const editorConfigured = editingConfigured();
+  const stale = report === null ? null : staleReport(report, lastCall);
+  const offered = offeredOf(report);
 
   const newest = rows[0] ?? null;
   const applied =
@@ -95,17 +111,43 @@ export default async function ConfigurationPage({
   const parsedStart = parseDocument(start.document);
   // A stored document the copy refuses is never pretended to parse (trap 6):
   // the form starts from boot config and the warning below names both causes.
-  const effective = parsedStart.ok ? asRecord(start.document) : {};
+  // When it parses, the form opens on the PARSED document — the one the
+  // process runs (trimmed, ADR 0012 D7) and the one the review and the report
+  // checks compare — so a hand-written row's ` linh ` reads as `linh` here too.
+  const effective = parsedStart.ok ? asRecord(parsedStart.document) : {};
   const { values, set } = formFromDocument(effective);
+  // The row the form was loaded from — `?from=` or the newest — which the head
+  // names; the review diffs against the newest row whatever this is (ADR 0012 D7).
+  const fromRow = start.row?.id ?? newest?.id ?? null;
 
   const fields = fieldsOf();
   // What the last answered call actually ran on, per leaf, resolved here so the
-  // client component never reaches for a pool or a query (contract §3.4).
-  const ranOnByPath: Record<string, string | null> = {};
+  // client component never reaches for a pool or a query (contract §3.4): the
+  // value, the snapshot key it was read under (one resolution, ADR 0012 D9), and
+  // the layer it came from (D8) — null before any call, which is "not recorded".
+  const ranOnByPath: Record<string, LastCall> = {};
   for (const field of fields) {
     if (field.path in ranOnByPath) continue;
     const value = ranOn(snapshot, field);
-    ranOnByPath[field.path] = value === undefined ? null : renderValue(value);
+    ranOnByPath[field.path] = {
+      value: value === undefined ? null : renderValue(value),
+      key: flatKeyOf(snapshot, field) ?? null,
+      layer: snapshot === null ? null : layerOf(snapshot, field.path),
+    };
+  }
+
+  // The last call's voice id, labelled by the newest boot report booted at or
+  // before that call (ADR 0012 D6): the latest report when it already is that
+  // row, else one more point read. The id stays the value; the label and, on a
+  // build mismatch, its caveat ride beside it.
+  const voiceCell = ranOnByPath['tts.voice'];
+  const voiceField = fields.find((field) => field.path === 'tts.voice');
+  const voiceId = voiceField === undefined ? undefined : ranOn(snapshot, voiceField);
+  if (lastCall !== null && snapshot !== null && voiceCell !== undefined && typeof voiceId === 'string') {
+    const labelling = needsReportBefore(report, lastCall.started_at)
+      ? await bootReportBefore(tenant, lastCall.started_at)
+      : report;
+    ranOnByPath['tts.voice'] = { ...voiceCell, ...labelVoice(labelling, snapshot, voiceId) };
   }
 
   // Rule 6 of `docs/redesign.md` §4.2 is about the greeting the pipeline speaks
@@ -189,9 +231,17 @@ export default async function ConfigurationPage({
             </>
           )}
         </p>
-        {start.row === null ? null : (
+        {offered === null ? (
+          // Rule 4 of `docs/redesign.md` §4.2 without a boot report (ADR 0012
+          // D1): nothing to narrow the vendors by, so the former fixed caveat.
           <Caveat>
-            the form below is loaded from row #{start.row.id}; saving still writes a new row
+            every vendor is offered; the box refuses a row naming one it holds no keys for — its{' '}
+            <code>/healthz</code> lists them under <code>vendors</code>
+          </Caveat>
+        ) : null}
+        {fromRow === null || fromRow === newest?.id ? null : (
+          <Caveat>
+            the form below is loaded from row #{fromRow}; saving still writes a new row
           </Caveat>
         )}
       </div>
@@ -209,6 +259,14 @@ export default async function ConfigurationPage({
           </Caveat>
         </Card>
       ) : null}
+
+      {stale === null ? null : (
+        // The liveness trap of contract §2, shown only when both halves of the
+        // contract's own check hold (ADR 0012 D5).
+        <Card tone="warm" title="The boot report may not describe the running process">
+          <Caveat>{stale}</Caveat>
+        </Card>
+      )}
 
       {parsedStart.ok ? null : (
         <Card tone="warm" title="The stored document does not pass the copied schema">
@@ -250,8 +308,10 @@ export default async function ConfigurationPage({
         fields={fields}
         ranOn={ranOnByPath}
         snapshotRecorded={snapshot !== null}
+        offered={offered}
         editable={editable}
-        from={effective}
+        from={diffBase(rows)}
+        fromRow={fromRow}
         shippedText={SHIPPED_TEXT}
         disclosure={disclosure}
         disclosureRow={newest?.id ?? null}

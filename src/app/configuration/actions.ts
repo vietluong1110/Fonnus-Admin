@@ -10,6 +10,12 @@
  * the operator reads, `save` writes it — so both feed the single
  * `useActionState` of `configuration-form.tsx`.
  *
+ * Both `review` and `save` read the tenant's newest `boot_report` row afresh and
+ * hold the document to it (ADR 0012 D3): a provider or voice this box does not
+ * offer is an issue, and an issue blocks the save exactly as the schema's do. A
+ * reboot between the two steps is caught by the save, and a hand-made `save`
+ * POST is held to the same rule as the form.
+ *
  * The trust boundary is the second parse. The proposed document travels back to
  * the browser in a hidden field between the two steps, so what arrives at
  * `save` is client-held text: it is parsed against the copied schema again here
@@ -19,6 +25,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { NoAccountError, requireAccount, type Account } from '@/account';
+import { offeredIssues, type BootReport } from '@/boot-report';
 import {
   adviceFor,
   diffDocuments,
@@ -28,6 +35,7 @@ import {
   type DiffEntry,
   type DocumentIssue,
 } from '@/configuration/document';
+import { latestBootReport } from '@/queries/boot-report';
 import { insertRuntimeConfig } from '@/writes/runtime-config';
 
 /**
@@ -49,7 +57,11 @@ export type FormState =
       tenant: string;
       values: Record<string, string>;
       set: string[];
-      /** The proposed document, as the form built it — never the parsed copy. */
+      /**
+       * The proposed document as the save would insert it: the parsed copy when
+       * it parses (trimmed, as the schema leaves it), the one the form built —
+       * with its issues — when it does not (ADR 0012 D7b).
+       */
       document: Record<string, unknown>;
       issues: DocumentIssue[];
       diff: DiffEntry[];
@@ -64,6 +76,8 @@ type Intent = (typeof INTENTS)[number];
 const NO_ACCOUNT = 'no account came through the reverse proxy; nothing was written';
 const STALE_DOCUMENT =
   'the proposed document no longer passes the copied schema; nothing was written — review the form again';
+const NOT_OFFERED =
+  'the proposed document names a vendor or voice this box does not offer as of its latest boot report; nothing was written — review the form again';
 const MALFORMED =
   'the form did not arrive as this screen sends it; nothing was written — reload the page and try again';
 
@@ -126,7 +140,9 @@ function readText(formData: FormData, name: string): string {
 
 /**
  * What the review step shows: the document, its verdict, the diff against the
- * document the form started from, and the advice. Issues and advice are
+ * newest row of the tenant (`from`, which the page sets — ADR 0012 D7a), and the
+ * advice. The issues are the schema's, then what the boot report refuses
+ * (`offeredIssues`, D3) — both block the save. Issues and advice are
  * separate on purpose — an issue blocks the save, advice never does (ADR 0011
  * decision 5, rule 6 of `docs/redesign.md` §4.2).
  */
@@ -138,16 +154,21 @@ function reviewState(input: {
   document: Record<string, unknown>;
   note: string;
   failure: string | null;
+  report: BootReport | null;
 }): FormState {
   const parsed = parseDocument(input.document);
+  // What the review renders, diffs and carries back in the hidden `document` is
+  // what `save` would insert, so the row is byte for byte the one reviewed and
+  // the save's second parse is idempotent (ADR 0012 D7b).
+  const document = parsed.ok ? parsed.document : input.document;
   return {
     step: 'review',
     tenant: input.tenant,
     values: input.values,
     set: input.set,
-    document: input.document,
-    issues: parsed.ok ? [] : parsed.issues,
-    diff: diffDocuments(input.from, input.document),
+    document,
+    issues: [...(parsed.ok ? [] : parsed.issues), ...offeredIssues(document, input.report)],
+    diff: diffDocuments(input.from, document),
     advice: parsed.ok ? adviceFor(input.from, parsed.document) : [],
     note: input.note,
     failure: input.failure,
@@ -170,9 +191,9 @@ export async function submitConfiguration(
     return { step: 'edit', tenant, values, set, failure: MALFORMED };
   }
 
-  // The diff's starting point only: it is compared against, never written, so
-  // a mangled `from` falls back to the empty document rather than refusing the
-  // whole submission.
+  // The diff's starting point only — the newest row's document, set by the page
+  // (ADR 0012 D7a): it is compared against, never written, so a mangled `from`
+  // falls back to the empty document rather than refusing the whole submission.
   const from = readObject(formData, 'from') ?? {};
   const note = readText(formData, 'note');
 
@@ -182,6 +203,7 @@ export async function submitConfiguration(
 
   if (intent === 'review') {
     return reviewState({
+      report: await latestBootReport(tenant),
       tenant,
       values,
       set,
@@ -201,6 +223,10 @@ export async function submitConfiguration(
     return { step: 'edit', tenant, values, set, failure: MALFORMED };
   }
 
+  // Read afresh, never carried from the review: the box may have rebooted
+  // between the two steps (ADR 0012 D3).
+  const report = await latestBootReport(tenant);
+
   // The account next: without it nothing is written and nothing else about the
   // request matters.
   let account: Account;
@@ -218,12 +244,25 @@ export async function submitConfiguration(
       document,
       note,
       failure: NO_ACCOUNT,
+      report,
     });
   }
 
   const parsed = parseDocument(document);
   if (!parsed.ok) {
-    return reviewState({ tenant, values, set, from, document, note, failure: STALE_DOCUMENT });
+    return reviewState({
+      tenant,
+      values,
+      set,
+      from,
+      document,
+      note,
+      failure: STALE_DOCUMENT,
+      report,
+    });
+  }
+  if (offeredIssues(parsed.document, report).length > 0) {
+    return reviewState({ tenant, values, set, from, document, note, failure: NOT_OFFERED, report });
   }
 
   const result = await insertRuntimeConfig({
@@ -235,7 +274,16 @@ export async function submitConfiguration(
     by: account,
   });
   if (!result.ok) {
-    return reviewState({ tenant, values, set, from, document, note, failure: result.reason });
+    return reviewState({
+      tenant,
+      values,
+      set,
+      from,
+      document,
+      note,
+      failure: result.reason,
+      report,
+    });
   }
 
   revalidatePath('/configuration');

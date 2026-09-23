@@ -32,13 +32,14 @@ describe('the flat-key table against the schema it labels', () => {
     }
   });
 
-  it('is the four per-vendor paths and nothing else', () => {
+  it('is the five per-vendor paths and nothing else', () => {
     const perVendor = Object.entries(FLAT_KEYS)
       .filter(([, entry]) => typeof entry !== 'string')
       .map(([path]) => path);
     expect(perVendor).toEqual([
       'stt.model',
       'tts.model',
+      'tts.voice',
       'tts.params.speed',
       'tts.params.pronunciation_dict_id',
     ]);

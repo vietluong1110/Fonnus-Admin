@@ -13,9 +13,15 @@
  *   - a key this console does not know is shown, never dropped (trap 6), and a
  *     value is not always a scalar: `runtime` and `SPEECHMATICS_SOUNDS_LIKE`
  *     are objects and four keys are arrays.
+ *
+ * One value the card explains (ADR 0012 D6, D8): the effective voice id — the
+ * `*_VOICE_ID` key of the call's own `TTS_PROVIDER` — reads `label (id)` when
+ * the boot report booted before the call lists it, and says which layer chose
+ * it, because the snapshot's flat key alone cannot say.
  */
 
 import { parseSnapshot, renderValue } from '@/dashboard';
+import type { VoiceFact } from '@/boot-report';
 import { shortSha } from '@/calls';
 import { groupSnapshot } from '@/snapshot-groups';
 import Caveat from '@/ui/caveat';
@@ -37,7 +43,14 @@ function providersLine(value: string): string {
   return value;
 }
 
-export default function ConfigSnapshot({ value }: { value: unknown }) {
+export default function ConfigSnapshot({
+  value,
+  voice,
+}: {
+  value: unknown;
+  /** `voiceFact` of this snapshot; null when it names no voice, and then no row changes. */
+  voice: VoiceFact | null;
+}) {
   // `parseSnapshot` is the column's one trust boundary (`src/dashboard.ts`), so
   // the dashboard and this card agree on what counts as a snapshot at all.
   const snapshot = parseSnapshot(value);
@@ -94,7 +107,11 @@ export default function ConfigSnapshot({ value }: { value: unknown }) {
                     <dt className="font-num text-[length:var(--size-eyebrow)] break-all text-text-muted">
                       {entry.key}
                     </dt>
-                    <ConfigValue value={entry.value} />
+                    {voice !== null && entry.key === voice.key ? (
+                      <VoiceValue voice={voice} />
+                    ) : (
+                      <ConfigValue value={entry.value} />
+                    )}
                   </div>
                 ))}
               </dl>
@@ -126,6 +143,32 @@ function ConfigValue({ value }: { value: unknown }) {
   return (
     <dd className="max-w-[60%] font-num text-[length:var(--size-eyebrow)] break-all whitespace-pre-wrap">
       {JSON.stringify(value, null, 2)}
+    </dd>
+  );
+}
+
+/**
+ * The effective voice id: `label (id)` when a report knows it, else the bare
+ * id; beside it the layer that chose it — "chosen by row #N" when the call's
+ * `runtime.config` carries `tts.voice`, "boot value" otherwise (rule 7 of
+ * `docs/redesign.md` §4.2, the form select's words); under it the D6 build
+ * caveat, which never withholds the label.
+ */
+function VoiceValue({ voice }: { voice: VoiceFact }) {
+  const layer = voice.layer.kind === 'row' ? `chosen by row #${voice.layer.version}` : 'boot value';
+  return (
+    <dd className="text-right text-[length:var(--size-eyebrow)]">
+      {voice.label === null ? (
+        <span className="font-num break-all">{voice.id}</span>
+      ) : (
+        <>
+          {voice.label} (<span className="font-num break-all">{voice.id}</span>)
+        </>
+      )}
+      <Caveat as="span" className="ml-2">
+        {layer}
+      </Caveat>
+      {voice.note !== null && <Caveat>{voice.note}</Caveat>}
     </dd>
   );
 }

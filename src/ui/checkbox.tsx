@@ -24,7 +24,7 @@ export default function Checkbox({
   /**
    * The label still names the box for a screen reader, but nothing is drawn:
    * for a row where the box sits in a column of its own and the text beside it
-   * would be 54 repetitions of the same word.
+   * would be 55 repetitions of the same word.
    */
   labelHidden?: boolean;
 }) {

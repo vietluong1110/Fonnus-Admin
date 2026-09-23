@@ -1,6 +1,6 @@
 /**
  * The document path → flat key table, copied entry for entry from
- * `RUNTIME_KEY_MAP` at `../Fonnus/app/src/config/runtime.ts:164` with its own
+ * `RUNTIME_KEY_MAP` at `../Fonnus/app/src/config/runtime.ts:170` with its own
  * comments (ADR 0011 decision 3). It is what the pipeline writes each leaf of a
  * `runtime_config` row into before it parses the merged flat record, so it is
  * also the key a call's `config_snapshot` carries that leaf under — which is how
@@ -80,6 +80,13 @@ export const FLAT_KEYS: Readonly<Record<string, string | Readonly<Record<string,
   'tts.model': {
     cartesia: 'CARTESIA_TTS_MODEL',
     elevenlabs: 'ELEVENLABS_TTS_MODEL',
+  },
+  // Which voice, resolved by `tts.provider` the same way (ADR 0029
+  // Decision 3): the row's voice becomes the merged default-voice key, so the
+  // flat schema's voice-list refine refuses an id the box's list does not name.
+  'tts.voice': {
+    cartesia: 'CARTESIA_VOICE_ID',
+    elevenlabs: 'ELEVENLABS_VOICE_ID',
   },
   'tts.params.flush_ms': 'TTS_FLUSH_MS',
   'tts.params.min_sentence_chars': 'TTS_MIN_SENTENCE_CHARS',

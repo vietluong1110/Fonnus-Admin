@@ -99,8 +99,14 @@ caveats; the decisions stay with the person reading it.
    the latest row not applied (counted from `config_snapshot->'runtime'->>'version'` on
    the calls since the row, the reason pointed at the pipeline's log and
    `fonnus_runtime_config_fallbacks_total`, never inferred), the disclosure advice on the
-   greeting (advice, never a refusal), and every vendor offered while the box refuses the
-   ones it holds no keys for (`/healthz vendors` is unreachable from the container).
+   greeting (advice, never a refusal), and the vendor and voice selects drawn from the
+   tenant's newest `boot_report` row — the vendors the box holds keys for and, per TTS
+   vendor, its voice list by label — said "as of boot at <time>, build <sha>", with a
+   warning when the newest call ran a different build after that boot; without a row (a
+   box before migration 0015, the dev database) every vendor is offered and `tts.voice` is
+   a text box the box cannot check. Beside every "last call" value the form says which
+   layer it came from: "row #N" when the leaf is in the call's `runtime.config`, "boot"
+   otherwise (ADR 0012).
 
 Not here: any write beyond the two the read contract's §7 allows — a configuration edit
 (row A9, shipped) and an annotation on a call (row A10), both appended as rows under the account

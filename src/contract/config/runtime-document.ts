@@ -326,7 +326,12 @@ export const LEAF = {
        */
       language: z.string().min(1),
       endpointing_ms: z.int().positive(),
-      utterance_end_ms: z.int().positive(),
+      /**
+       * Deepgram documents 1000–5000 ms and ignores a value under 1000
+       * (verified 2026-09-23, ADR 0029 Decision 7): a smaller one would be
+       * recorded in the snapshot as a setting the call never ran on.
+       */
+      utterance_end_ms: z.int().min(1000).max(5000),
       /**
        * Deepgram's own parameter, not a turn-engine setting: it names which of
        * Deepgram's two end-of-speech frames becomes the turn-end signal, and
@@ -480,6 +485,16 @@ export const LEAF = {
     },
   },
   tts: {
+    /**
+     * Which voice the vendor speaks in (ADR 0029 Decision 3): one id of that
+     * vendor's **voice list** in the box `.env`. Bounded here only as a
+     * string — Cartesia's ids are UUIDs and ElevenLabs' 20-character tokens,
+     * and the list, not a pattern, is the real bound: the flat schema refuses
+     * an id the list does not name, at boot and on every merged row. The
+     * allowed ids are per box, so a form takes them from the latest
+     * `boot_report` row rather than from this file.
+     */
+    voice: z.string().trim().min(1).max(128),
     params: {
       flush_ms: z.int().positive(),
       min_sentence_chars: z.int().positive(),
@@ -761,6 +776,9 @@ export const runtimeConfigSchema = z.strictObject({
         // build has an adapter for, checked by `pnpm typecheck`.
         provider: z.literal('cartesia' satisfies TtsProviderValue),
         model: z.enum(MODEL_CATALOGUE.cartesia).optional(),
+        // Which voice, like `model` names which model — beside it, not in
+        // `params`, which are the vendor's request knobs (ADR 0029).
+        voice: LEAF.tts.voice.optional(),
         params: z
           .strictObject({
             flush_ms: LEAF.tts.params.flush_ms.optional(),
@@ -775,6 +793,7 @@ export const runtimeConfigSchema = z.strictObject({
       z.strictObject({
         provider: z.literal('elevenlabs' satisfies TtsProviderValue),
         model: z.enum(MODEL_CATALOGUE.elevenlabs).optional(),
+        voice: LEAF.tts.voice.optional(),
         params: z
           .strictObject({
             // The two pipeline knobs every TTS branch shares: how much audio is

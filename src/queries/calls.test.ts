@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 const query = vi.fn();
 vi.mock('@/db', () => ({ getPool: () => ({ query }) }));
 
-const { callsInScope, getCallAnnotations, getCallEvents } = await import('./calls');
+const { callsInScope, getCall, getCallAnnotations, getCallEvents } = await import('./calls');
 const { parseScope } = await import('@/calls-scope');
 
 const NOW = new Date('2026-09-07T10:00:00Z');
@@ -87,6 +87,51 @@ describe('callsInScope', () => {
 
     expect(rows).toEqual([]);
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('getCall', () => {
+  it('reads exactly the call_log and consent_record columns the detail renders', async () => {
+    query.mockResolvedValue({ rows: [] });
+    await getCall('330052e1-0000-4000-8000-000000000000');
+
+    const { sql, values } = lastCall();
+    const selected = /select([\s\S]*?)\bfrom call_log/.exec(sql)?.[1] ?? '';
+    const columns = selected.split(',').map((column) => column.trim());
+    expect(columns).toEqual([
+      'call_log.id',
+      'call_log.started_at',
+      'call_log.ended_at',
+      'call_log.end_reason',
+      'call_log.turn_count',
+      'call_log.total_cost_vnd',
+      'call_log.caller_phone_e164',
+      'call_log.artifact_state',
+      'call_log.artifact_key_prefix',
+      'call_log.did',
+      // Scopes the one `boot_report` read that labels the call's voice (ADR 0012 D6).
+      'call_log.tenant_id',
+      'call_log.stt_model',
+      'call_log.tts_model',
+      'call_log.recording_started_at',
+      'call_log.disclosure_completed_at',
+      'call_log.stt_audio_ms',
+      'call_log.tts_chars',
+      'call_log.tts_bytes',
+      'call_log.artifact_dir',
+      'call_log.config_snapshot',
+      'call_log.greeting_first_audio_ms',
+      'call_log.greeting_marks',
+      'consent_record.consent_mode',
+      'consent_record.disclosure_completed_at as consent_disclosure_completed_at',
+      'consent_record.granted_at',
+      'consent_record.outcome',
+      'consent_record.disclosure_text',
+    ]);
+    expect(sql).toContain('left join consent_record on consent_record.call_id = call_log.id');
+    expect(sql).toContain('where call_log.id = $1');
+    expect(sql).not.toMatch(/insert|update|delete/i);
+    expect(values).toEqual(['330052e1-0000-4000-8000-000000000000']);
   });
 });
 

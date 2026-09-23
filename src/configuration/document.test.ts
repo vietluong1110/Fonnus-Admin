@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   adviceFor,
@@ -7,6 +9,8 @@ import {
   formFromDocument,
   leafPaths,
   mergeBranches,
+  flatKeyOf,
+  layerOf,
   parseDocument,
   ranOn,
   type Field,
@@ -35,15 +39,15 @@ describe('fieldsOf', () => {
     const byGroup = (group: string) => fields.filter((f) => f.group === group);
     // 11 turn leaves; stt = the discriminator plus the three branches' leaves
     // (8 deepgram, 7 soniox, 6 speechmatics); llm = model, fallback and five
-    // params; tts = the discriminator plus 7 cartesia and 10 elevenlabs; the
+    // params; tts = the discriminator plus 8 cartesia and 11 elevenlabs; the
     // five texts. A leaf the pipeline adds moves one of these numbers.
     expect(byGroup('turn')).toHaveLength(11);
     expect(byGroup('stt')).toHaveLength(22);
     expect(byGroup('llm')).toHaveLength(7);
-    expect(byGroup('tts')).toHaveLength(18);
+    expect(byGroup('tts')).toHaveLength(20);
     expect(byGroup('text')).toHaveLength(5);
     // The shared paths are one path with one field per branch.
-    expect(leafPaths()).toHaveLength(54);
+    expect(leafPaths()).toHaveLength(55);
     expect(fields.filter((f) => f.path === 'stt.params.language').map((f) => f.vendor)).toEqual([
       'deepgram',
       'soniox',
@@ -348,5 +352,109 @@ describe('ranOn', () => {
     expect(ranOn({ STT_PROVIDER: 'deepgram' }, field('stt.params.punctuate'))).toBeUndefined();
     expect(ranOn({}, field('stt.model', 'deepgram'))).toBeUndefined();
     expect(ranOn(null, field('turn.max_reprompts'))).toBeUndefined();
+  });
+});
+
+describe('flatKeyOf', () => {
+  it('resolves a per-vendor key by the snapshot’s own provider, never the form’s', () => {
+    // The field is the cartesia branch's; the snapshot's vendor decides.
+    expect(flatKeyOf({ TTS_PROVIDER: 'elevenlabs' }, field('tts.voice', 'cartesia'))).toBe(
+      'ELEVENLABS_VOICE_ID',
+    );
+    expect(flatKeyOf({ STT_PROVIDER: 'soniox' }, field('stt.model', 'deepgram'))).toBe('SONIOX_MODEL');
+  });
+
+  it('answers undefined when the snapshot names no vendor for the leg', () => {
+    // An STT_PROVIDER says nothing about the TTS leg.
+    expect(flatKeyOf({ STT_PROVIDER: 'deepgram' }, field('tts.voice', 'cartesia'))).toBeUndefined();
+  });
+
+  it('answers a single-key field’s one key whatever the snapshot carries', () => {
+    expect(flatKeyOf({}, field('turn.max_reprompts'))).toBe('MAX_REPROMPTS');
+  });
+
+  it('answers undefined for no snapshot', () => {
+    expect(flatKeyOf(null, field('turn.max_reprompts'))).toBeUndefined();
+    expect(flatKeyOf(null, field('tts.voice', 'cartesia'))).toBeUndefined();
+  });
+});
+
+describe('layerOf', () => {
+  // The shape `buildConfigSnapshot` writes (`../Fonnus/app/src/config/snapshot.ts`):
+  // `runtime` is `{ version: runtime_config.id, config: the parsed document }`.
+  const snapshot = {
+    TTS_PROVIDER: 'cartesia',
+    CARTESIA_VOICE_ID: 'a0e99841',
+    MAX_REPROMPTS: 2,
+    runtime: { version: 12, config: { tts: { provider: 'cartesia', voice: 'a0e99841' } } },
+  };
+
+  it('is the row, its version as text, for a path the row set', () => {
+    expect(layerOf(snapshot, 'tts.voice')).toEqual({ kind: 'row', version: '12' });
+  });
+
+  it('is boot for a path the row left out', () => {
+    expect(layerOf(snapshot, 'turn.max_reprompts')).toEqual({ kind: 'boot' });
+  });
+
+  it('is boot for a snapshot without runtime: the call ran on boot config', () => {
+    expect(layerOf({ MAX_REPROMPTS: 2 }, 'turn.max_reprompts')).toEqual({ kind: 'boot' });
+  });
+
+  it('reads a runtime that is not { version, config } as absent', () => {
+    expect(layerOf({ runtime: { version: 12 } }, 'tts.voice')).toEqual({ kind: 'boot' });
+    expect(layerOf({ runtime: { version: 12, config: 'x' } }, 'tts.voice')).toEqual({ kind: 'boot' });
+    expect(layerOf({ runtime: { config: { tts: { voice: 'a' } } } }, 'tts.voice')).toEqual({
+      kind: 'boot',
+    });
+    expect(layerOf({ runtime: [] }, 'tts.voice')).toEqual({ kind: 'boot' });
+  });
+
+  /*
+   * The rule `layerOf` copies — "a path present in `runtime.config` came from
+   * the row, one absent came from boot config" — holds only while the pipeline
+   * writes `runtime` as `{ version: row.id, config: <the parsed document> }`.
+   * No hash line pins that, so this block reads the two pipeline sources as
+   * TEXT (never as an import — the sibling repo is not a dependency) and fails
+   * when the shape or the document it carries is spelled differently. Skipped
+   * whole when `../Fonnus` is not checked out beside this repo, like
+   * `flat-keys.test.ts`.
+   */
+  const pipelineConfig = new URL('../../../Fonnus/app/src/config/', import.meta.url);
+  const snapshotPath = fileURLToPath(new URL('snapshot.ts', pipelineConfig));
+  const callConfigPath = fileURLToPath(new URL('call-config.ts', pipelineConfig));
+  describe.skipIf(!existsSync(snapshotPath) || !existsSync(callConfigPath))(
+    'against the pipeline’s buildConfigSnapshot (skipped whole when ../Fonnus is not checked out beside this repo)',
+    () => {
+      it('writes runtime as { version, config } and nothing else under that key', () => {
+        const source = readFileSync(snapshotPath, 'utf8');
+        expect(source).toContain('runtime?: { version: number; config: RuntimeConfig }');
+        expect(source).toContain("if (runtime !== undefined) snapshot['runtime'] = runtime;");
+      });
+
+      it('carries the parsed document, so a path present there is one the row set', () => {
+        const source = readFileSync(callConfigPath, 'utf8');
+        expect(source).toContain('const doc = parsed.data;');
+        expect(source).toContain('buildConfigSnapshot(config, { version: row.id, config: doc })');
+      });
+    },
+  );
+});
+
+describe('tts.voice', () => {
+  it('is a one-line text leaf on both tts branches, with its own key per vendor', () => {
+    const voices = fieldsOf().filter((f) => f.path === 'tts.voice');
+    expect(voices.map((f) => [f.vendor, f.kind])).toEqual([
+      ['cartesia', 'text'],
+      ['elevenlabs', 'text'],
+    ]);
+    expect(voices[0]?.flatKey).toEqual({ cartesia: 'CARTESIA_VOICE_ID', elevenlabs: 'ELEVENLABS_VOICE_ID' });
+  });
+
+  it('is trimmed and bounded 1–128 by the copied schema', () => {
+    const parsed = parseDocument({ tts: { provider: 'cartesia', voice: ' a0e99841 ' } });
+    expect(parsed.ok && parsed.document.tts?.voice).toBe('a0e99841');
+    expect(parseDocument({ tts: { provider: 'cartesia', voice: '  ' } }).ok).toBe(false);
+    expect(parseDocument({ tts: { provider: 'elevenlabs', voice: 'x'.repeat(129) } }).ok).toBe(false);
   });
 });

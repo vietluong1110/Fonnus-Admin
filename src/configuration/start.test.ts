@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseTenant, startDocument } from './start';
+import { chooseTenant, diffBase, startDocument } from './start';
 
 /*
  * The two URL choices of ADR 0011 decision 8. Each case here is a screen the
@@ -56,5 +56,28 @@ describe('startDocument', () => {
 
   it('opens on the empty document when the tenant has no row — boot config', () => {
     expect(startDocument([], undefined)).toEqual({ document: {}, row: null });
+  });
+});
+
+describe('diffBase', () => {
+  const NEWEST = { id: '9', config: { turn: { max_reprompts: 3 } } };
+  const OLDER = { id: '7', config: { turn: { max_reprompts: 1 } } };
+
+  it('is the newest row’s document, whichever row the form was loaded from', () => {
+    expect(diffBase([NEWEST, OLDER])).toEqual({ turn: { max_reprompts: 3 } });
+  });
+
+  it('is boot config with no row', () => {
+    expect(diffBase([])).toEqual({});
+  });
+
+  it('is boot config when the newest row fails the copied schema (trap 6)', () => {
+    expect(diffBase([{ id: '9', config: { turn: { max_reprompts: 'three' } } }, OLDER])).toEqual({});
+  });
+
+  it('is the document as parsed, so a stored untrimmed value diffs as the pipeline reads it', () => {
+    expect(diffBase([{ id: '9', config: { tts: { provider: 'cartesia', voice: ' v1 ' } } }])).toEqual({
+      tts: { provider: 'cartesia', voice: 'v1' },
+    });
   });
 });

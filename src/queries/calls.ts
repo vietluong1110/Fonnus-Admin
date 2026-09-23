@@ -118,6 +118,8 @@ export async function callsInScope(scope: Scope): Promise<CallScopeRow[]> {
 export interface CallDetailRow extends CallListRow {
   /** Identical on every row today, so they are the detail's alone, not the list's. */
   did: string | null;
+  /** Contract §3, `not null`: scopes the call's `boot_report` read (ADR 0012 D6). */
+  tenant_id: string;
   stt_model: string | null;
   tts_model: string | null;
   recording_started_at: Date | null;
@@ -156,6 +158,7 @@ export async function getCall(id: string): Promise<CallDetailRow | null> {
             call_log.artifact_state,
             call_log.artifact_key_prefix,
             call_log.did,
+            call_log.tenant_id,
             call_log.stt_model,
             call_log.tts_model,
             call_log.recording_started_at,
