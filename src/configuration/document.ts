@@ -633,10 +633,22 @@ export type Layer = { kind: 'row'; version: string } | { kind: 'boot' };
  * `../Fonnus/app/src/config/snapshot.ts`), so every path of such a call is boot.
  */
 export function layerOf(snapshot: Record<string, unknown>, path: string): Layer {
+  const row = runtimeRow(snapshot);
+  if (row === null) return { kind: 'boot' };
+  return valueAt(row.config, path) === undefined ? { kind: 'boot' } : { kind: 'row', version: row.version };
+}
+
+/**
+ * The `runtime_config` row a call ran under, from its snapshot's `runtime`:
+ * the row's id as text and the document the process read. Null when the call
+ * ran on boot config, or when `runtime` is not { version, config } — the same
+ * reading `layerOf` gives every path of such a call.
+ */
+export function runtimeRow(
+  snapshot: Record<string, unknown>,
+): { version: string; config: object } | null {
   const runtime = snapshot['runtime'];
-  if (typeof runtime !== 'object' || runtime === null || Array.isArray(runtime)) {
-    return { kind: 'boot' };
-  }
+  if (typeof runtime !== 'object' || runtime === null || Array.isArray(runtime)) return null;
   const { version, config } = runtime as Record<string, unknown>;
   // `version` is a number in the pipeline's type; a string of digits is read
   // the same, since `runtime_config.id` is a bigint the console prints as text.
@@ -647,9 +659,9 @@ export function layerOf(snapshot: Record<string, unknown>, path: string): Layer 
         ? version
         : null;
   if (versionText === null || typeof config !== 'object' || config === null || Array.isArray(config)) {
-    return { kind: 'boot' };
+    return null;
   }
-  return valueAt(config, path) === undefined ? { kind: 'boot' } : { kind: 'row', version: versionText };
+  return { version: versionText, config };
 }
 
 /** One snapshot key's value, under either spelling of a renamed key; own keys only. */

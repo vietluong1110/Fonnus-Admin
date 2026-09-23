@@ -1,6 +1,9 @@
 /*
- * The exact configuration the call ran under: the three identity keys, then
- * every other key grouped by prefix for reading (`src/snapshot-groups.ts`).
+ * The exact configuration the call ran under, every key grouped by prefix for
+ * reading (`src/snapshot-groups.ts`), each value that came from the call's
+ * `runtime_config` row tagged "row" (`keysFromRow`). The row itself, the
+ * nested `runtime` key, is folded under the groups as raw JSON: its values are
+ * the tagged keys above, so it is there to be checked, not read.
  *
  * Three rules of contract §3.4 the card carries on screen, because none of them
  * can be read off the values:
@@ -20,27 +23,39 @@
  * says which layer chose it, because the snapshot's flat key alone cannot say.
  */
 
-import { parseSnapshot, renderValue } from '@/dashboard';
+import { Fragment } from 'react';
 import type { VoiceFact } from '@/boot-report';
-import { shortSha } from '@/calls';
+import { keysFromRow } from '@/call-config';
+import { runtimeRow } from '@/configuration/document';
+import { parseSnapshot, renderValue } from '@/dashboard';
 import { groupSnapshot } from '@/snapshot-groups';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
-import Field from '@/ui/field';
+import ClampedText from './clamped-text';
 
-/** The keys the identity row renders; they are not repeated in the groups. */
-const IDENTITY_KEYS = ['FONNUS_BUILD_SHA', 'PROVIDERS', 'FONNUS_ENV'];
-
-/** A key the process had no value for is absent, never null (contract §3.4). */
-function identityValue(snapshot: Record<string, unknown>, key: string): string {
-  return Object.hasOwn(snapshot, key) ? renderValue(snapshot[key]) : 'not configured';
-}
+/** Past this many characters a value gets a line of its own under its key. */
+const INLINE_MAX = 48;
 
 /** `PROVIDERS` is `real` or `fake` and says only whether real vendors answered. */
 function providersLine(value: string): string {
   if (value === 'real') return 'real — real vendors answered';
   if (value === 'fake') return 'fake — no vendor was called';
   return value;
+}
+
+/**
+ * A value as the card prints it. An empty string is drawn as `""`, never blank,
+ * so it cannot be mistaken for a key the process had no value for — that key
+ * would be absent from the object entirely. An array reads as one line of JSON,
+ * an object as indented JSON, so the operator can see which leaf changed.
+ */
+function valueText(key: string, value: unknown): string {
+  if (value === '') return '""';
+  if (key === 'PROVIDERS' && typeof value === 'string') return providersLine(value);
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return JSON.stringify(value, null, 2);
+  }
+  return renderValue(value);
 }
 
 export default function ConfigSnapshot({
@@ -63,87 +78,167 @@ export default function ConfigSnapshot({
     );
   }
 
-  const buildSha = identityValue(snapshot, 'FONNUS_BUILD_SHA');
-  const rest = Object.fromEntries(
-    Object.entries(snapshot).filter(([key]) => !IDENTITY_KEYS.includes(key)),
-  );
-  const groups = groupSnapshot(rest);
-  const count = Object.keys(rest).length;
+  const row = runtimeRow(snapshot);
+  const fromRow = keysFromRow(snapshot);
+  const flat = Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'runtime'));
+  const groups = groupSnapshot(flat);
 
   return (
     <>
-      {/* Each identity key stands on its own: a snapshot that carries no
-          FONNUS_BUILD_SHA still says which environment ran the call, and the
-          missing key reads as "not configured" like any other. */}
-      <dl className="m-0 grid grid-cols-2 gap-4 border-b border-border-hairline pb-4 md:grid-cols-3">
-        <Field label="FONNUS_BUILD_SHA">
-          <span className="font-num" title={buildSha}>
-            {shortSha(buildSha)}
-          </span>
-        </Field>
-        <Field label="PROVIDERS">{providersLine(identityValue(snapshot, 'PROVIDERS'))}</Field>
-        <Field label="FONNUS_ENV">{identityValue(snapshot, 'FONNUS_ENV')}</Field>
-      </dl>
-
-      <details className="text-[length:var(--size-ui)]">
-        <summary className="cursor-pointer font-medium text-text-link">
-          {count} more {count === 1 ? 'key' : 'keys'}
-        </summary>
-        {/* Grouped by prefix, a rendering choice only: a key with an unknown
-            prefix falls to Other and none is ever dropped. */}
+      <div>
+        <p className="m-0 text-[length:var(--size-ui)]">
+          {row === null ? (
+            <>No runtime_config row applied: every value below is boot config.</>
+          ) : (
+            <>
+              Values tagged <RowTag /> came from runtime_config row #{row.version}; the rest
+              are boot config.
+            </>
+          )}
+        </p>
         <Caveat>
           a vendor&rsquo;s keys are present only on a call that ran that vendor — an absent key
           means it did not run, never that a default applied
         </Caveat>
-        <div className="mt-3 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {groups.map((group) => (
-            <div key={group.name} className="min-w-0">
-              <div className="border-b border-border-hairline pb-1 text-[length:var(--size-eyebrow)] font-semibold tracking-[.1em] text-text-accent uppercase">
-                {group.name}
-              </div>
-              <dl className="m-0 mt-1 flex flex-col gap-0.5">
-                {group.entries.map((entry) => (
-                  <div key={entry.key} className="flex justify-between gap-2.5 py-0.5">
-                    <dt className="font-num text-[length:var(--size-eyebrow)] break-all text-text-muted">
-                      {entry.key}
-                    </dt>
-                    {voice !== null && entry.key === voice.key ? (
-                      <VoiceValue voice={voice} />
-                    ) : (
-                      <ConfigValue value={entry.value} />
-                    )}
-                  </div>
-                ))}
-              </dl>
-            </div>
-          ))}
-        </div>
-      </details>
+      </div>
+
+      {/* Grouped by prefix, a rendering choice only: a key with an unknown
+          prefix falls to Other and none is ever dropped. Texts are prose, so
+          they take the whole width. */}
+      <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
+        {groups.map((group) => (
+          <div key={group.name} className={`min-w-0 ${group.name === 'Texts' ? 'md:col-span-2' : ''}`}>
+            <h3 className="m-0 border-b border-border-hairline pb-1 text-[length:var(--size-eyebrow)] font-semibold tracking-[.1em] text-text-accent uppercase">
+              {group.name}
+            </h3>
+            <dl className="m-0 mt-1 flex flex-col">
+              {group.entries.map((entry) => (
+                <Entry
+                  key={entry.key}
+                  name={entry.key}
+                  value={entry.value}
+                  fromRow={fromRow.has(entry.key)}
+                  stacked={group.name === 'Texts'}
+                  voice={voice !== null && entry.key === voice.key ? voice : null}
+                />
+              ))}
+            </dl>
+          </div>
+        ))}
+      </div>
+
+      {Object.hasOwn(snapshot, 'runtime') ? (
+        <details className="text-[length:var(--size-ui)]">
+          <summary className="cursor-pointer font-medium text-text-link">
+            Raw runtime row (JSON)
+          </summary>
+          <pre className="mt-2 mb-0 font-num text-[length:var(--size-eyebrow)] whitespace-pre-wrap [overflow-wrap:anywhere]">
+            {JSON.stringify(snapshot['runtime'], null, 2)}
+          </pre>
+        </details>
+      ) : null}
     </>
   );
 }
 
 /**
- * A snapshot value. A scalar reads as one line; an object or an array —
- * `runtime`, `SPEECHMATICS_SOUNDS_LIKE`, the four term lists (§3.4) — reads as
- * indented JSON, because the whole point of the row is that the operator can
- * see which leaf changed. An empty string is drawn as `""`, never blank, so it
- * cannot be mistaken for a key the process had no value for — that key would be
- * absent from the object entirely.
+ * One key and its value. A short value sits beside its key, left-aligned, so
+ * the eye does not cross the column to find it; a long one — prose, JSON — or
+ * any value of a `stacked` group takes a line of its own under the key and is
+ * cut to three lines.
  */
-function ConfigValue({ value }: { value: unknown }) {
-  const scalar = typeof value !== 'object' || value === null;
-  if (scalar) {
+function Entry({
+  name,
+  value,
+  fromRow,
+  stacked,
+  voice,
+}: {
+  name: string;
+  value: unknown;
+  fromRow: boolean;
+  stacked: boolean;
+  voice: VoiceFact | null;
+}) {
+  const keyCell = (
+    <dt className="font-num text-[length:var(--size-eyebrow)] [overflow-wrap:anywhere] text-text-muted">
+      <KeyName name={name} />
+    </dt>
+  );
+  const tag = fromRow ? <RowTag /> : null;
+
+  if (voice !== null) {
     return (
-      <dd className="font-num text-[length:var(--size-eyebrow)] break-all">
-        {value === '' ? '""' : renderValue(value)}
-      </dd>
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 py-0.5">
+        {keyCell}
+        <VoiceValue voice={voice} />
+      </div>
     );
   }
+
+  const text = valueText(name, value);
+  if (!stacked && text.length <= INLINE_MAX && !text.includes('\n')) {
+    return (
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 py-0.5">
+        {keyCell}
+        <dd className="m-0 font-num text-[length:var(--size-eyebrow)] [overflow-wrap:anywhere]">
+          {text} {tag}
+        </dd>
+      </div>
+    );
+  }
+
+  const prose = typeof value === 'string';
   return (
-    <dd className="max-w-[60%] font-num text-[length:var(--size-eyebrow)] break-all whitespace-pre-wrap">
-      {JSON.stringify(value, null, 2)}
-    </dd>
+    <div className="py-1">
+      <dt className="flex items-baseline gap-2 font-num text-[length:var(--size-eyebrow)] [overflow-wrap:anywhere] text-text-muted">
+        <span>
+          <KeyName name={name} />
+        </span>
+        {tag}
+      </dt>
+      <dd className="m-0 mt-0.5">
+        <ClampedText
+          text={text}
+          className={
+            prose
+              ? 'text-[length:var(--size-ui)] leading-[1.5]'
+              : 'font-num text-[length:var(--size-eyebrow)]'
+          }
+        />
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * A snapshot key that may wrap after any underscore rather than mid-word;
+ * `<wbr>` adds no character, so a copied key is still the key.
+ */
+function KeyName({ name }: { name: string }) {
+  const parts = name.split('_');
+  return (
+    <>
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {part}
+          {index < parts.length - 1 ? (
+            <>
+              _<wbr />
+            </>
+          ) : null}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/** The mark on a value that came from the call's `runtime_config` row. */
+function RowTag() {
+  return (
+    <span className="rounded-pill bg-[rgba(184,92,43,.12)] px-1.5 py-px font-ui text-[length:var(--size-eyebrow)] font-medium whitespace-nowrap text-text-accent">
+      row
+    </span>
   );
 }
 
@@ -158,7 +253,7 @@ function ConfigValue({ value }: { value: unknown }) {
 function VoiceValue({ voice }: { voice: VoiceFact }) {
   const layer = voice.layer.kind === 'row' ? `chosen by row #${voice.layer.version}` : 'boot value';
   return (
-    <dd className="text-right text-[length:var(--size-eyebrow)]">
+    <dd className="m-0 text-[length:var(--size-eyebrow)]">
       <span title={voice.id}>{voice.label ?? 'unlisted voice'}</span>
       <Caveat as="span" className="ml-2">
         {layer}

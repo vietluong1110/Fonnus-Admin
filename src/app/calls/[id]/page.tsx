@@ -4,6 +4,7 @@ import { cache } from 'react';
 import { annotationHistory } from '@/annotations';
 import { RECORDING_REASON, isKnownArtifactState, recordingAccess } from '@/artifacts';
 import { voiceFact } from '@/boot-report';
+import { ranOnOf } from '@/call-config';
 import {
   CALL_STATE_LABEL,
   CALL_STATE_TONE,
@@ -21,7 +22,6 @@ import {
   isUuid,
   maskPhone,
   parseCostVnd,
-  shortSha,
   showCallerData,
 } from '@/calls';
 import { getConfig } from '@/config';
@@ -58,6 +58,7 @@ import {
 import { bootReportBefore } from '@/queries/boot-report';
 import Badge from '@/ui/badge';
 import Card from '@/ui/card';
+import CopyButton from '@/ui/copy-button';
 import EmptyState from '@/ui/empty-state';
 import PageHead from '@/ui/page-head';
 import Stat from '@/ui/stat';
@@ -65,6 +66,7 @@ import Vocabulary from '@/ui/vocabulary';
 import CallCard from './_detail/call-card';
 import ConfigSnapshot from './_detail/config-snapshot';
 import ConsentCard from './_detail/consent-card';
+import RanOnStrip from './_detail/ran-on';
 import TurnTable, { type TurnTableRow } from './_detail/turn-table';
 import type { IntervalRow } from './interval-rows';
 import IntervalsCard from './intervals-card';
@@ -128,6 +130,11 @@ export default async function CallPage({
     hasVoice ? bootReportBefore(call.tenant_id, call.started_at) : null,
   ]);
   const voice = voiceFact(snapshot, voiceReport);
+  const ran = ranOnOf(
+    snapshot,
+    call,
+    turns.map((turn) => turn.llm_model),
+  );
   const state = callState(call.ended_at, call.outcome);
   // Read once per render and passed down: the gate is deployment state, not
   // per-turn state (ADR 0005).
@@ -297,6 +304,11 @@ export default async function CallPage({
             tone={endReasonTone(call.end_reason)}
           />
         )}
+        {/* The id is pasted into a log search or a chat, never read, so it is
+            one click here rather than a string to select in the Call card. */}
+        <div className="ml-auto">
+          <CopyButton value={call.id} label="Copy call id" />
+        </div>
       </PageHead>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[length:var(--size-ui)] text-text-muted">
@@ -318,11 +330,6 @@ export default async function CallPage({
             />
           )}
         </span>
-        {/* The configured model and the image that answered, each omitted when
-            the snapshot lacks it. A turn's own `llm_model` can differ on a
-            fallback, which is why this is the snapshot's key and not a turn's. */}
-        <SnapshotFact snapshot={snapshot} name="OPENROUTER_MODEL" />
-        <SnapshotFact snapshot={snapshot} name="FONNUS_BUILD_SHA" label="build" short />
         {/* `maskPhone` returns null only for a null column, so this is the
             caller number the row never carried or the sweep took (trap 5). */}
         {maskedPhone === null ? (
@@ -332,6 +339,8 @@ export default async function CallPage({
           </>
         ) : null}
       </div>
+
+      <RanOnStrip ran={ran} voice={voice} tenantId={call.tenant_id} />
 
       {/* One playhead for the player, the axis, the waterfall, the transcript
           and the turn table; everything inside is rendered here and handed down
@@ -350,8 +359,7 @@ export default async function CallPage({
             fallbackEndMs={fallbackEndMs}
           />
 
-          <div className="grid grid-cols-2 gap-5 border-t border-border-hairline pt-4 md:grid-cols-4">
-            <Stat label="Duration" value={formatDuration(call.started_at, call.ended_at)} />
+          <div className="grid grid-cols-2 gap-5 border-t border-border-hairline pt-4 md:grid-cols-3">
             <Stat
               label="Turns on record"
               value={formatCount(call.turn_count)}
@@ -476,35 +484,6 @@ function hasNoMarksStored(turn: TurnRow): boolean {
   return (
     turn.marks === null ||
     (typeof turn.marks === 'object' && Object.keys(turn.marks).length === 0)
-  );
-}
-
-/**
- * One fact from the snapshot in the lede, omitted entirely when the snapshot
- * lacks it — a key the process had no value for is absent, never null (§3.4),
- * and an absent key is not a fact to state.
- */
-function SnapshotFact({
-  snapshot,
-  name,
-  label,
-  short = false,
-}: {
-  snapshot: Record<string, unknown> | null;
-  name: string;
-  label?: string;
-  short?: boolean;
-}) {
-  if (snapshot === null || !Object.hasOwn(snapshot, name)) return null;
-  const value = renderValue(snapshot[name]);
-  return (
-    <>
-      <span aria-hidden="true">·</span>
-      <span>
-        {label === undefined ? null : `${label} `}
-        <code title={value}>{short ? shortSha(value) : value}</code>
-      </span>
-    </>
   );
 }
 

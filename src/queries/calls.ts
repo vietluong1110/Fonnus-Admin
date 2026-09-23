@@ -123,11 +123,9 @@ export interface CallDetailRow extends CallListRow {
   stt_model: string | null;
   tts_model: string | null;
   recording_started_at: Date | null;
-  disclosure_completed_at: Date | null;
   stt_audio_ms: number | null;
   tts_chars: number | null;
   tts_bytes: number | null;
-  artifact_dir: string | null;
   /** jsonb, validated where it is rendered — never trusted by shape here. */
   config_snapshot: unknown;
   consent_mode: string | null;
@@ -162,11 +160,9 @@ export async function getCall(id: string): Promise<CallDetailRow | null> {
             call_log.stt_model,
             call_log.tts_model,
             call_log.recording_started_at,
-            call_log.disclosure_completed_at,
             call_log.stt_audio_ms,
             call_log.tts_chars,
             call_log.tts_bytes,
-            call_log.artifact_dir,
             call_log.config_snapshot,
             call_log.greeting_first_audio_ms,
             call_log.greeting_marks,
