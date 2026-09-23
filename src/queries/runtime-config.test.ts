@@ -47,7 +47,12 @@ describe('runtimeConfigRows', () => {
     expect(sql).toContain('select id::text as id, tenant_id, config, created_at, created_by, note');
     expect(sql).toContain('from runtime_config');
     expect(sql).toContain('where tenant_id = $1');
-    expect(sql).toContain('order by id desc');
+    // Qualified: a bare `id` resolves to the `id::text` output column and sorts
+    // as text, so row 9 came before row 10. The mocked pool cannot show that
+    // ordering — this repo has no Postgres test harness — so the statement is
+    // pinned here and the ordering itself was checked by hand against Postgres.
+    expect(sql).toContain('order by runtime_config.id desc');
+    expect(sql).not.toMatch(/order by id\b/);
     // ADR 0011 §Why: a bounded read would hide the row an operator came for.
     expect(sql).not.toMatch(/limit/i);
     expect(values).toEqual(['pilot']);

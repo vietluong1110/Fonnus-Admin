@@ -49,15 +49,18 @@ export interface RuntimeConfigRow {
  * A tenant's whole history, newest first, with no LIMIT (ADR 0011 §Why): the
  * newest row is "current" and pre-fills the form, and a bounded read would hide
  * the row an operator came to look for. Rows are written one per edit, by hand.
- * `order by id desc` rather than by `created_at`: the id is the version a
+ * Ordered by the id rather than by `created_at`: the id is the version a
  * snapshot names, and it is monotonic where two rows can share a timestamp.
+ * The column is qualified because a bare `id` in ORDER BY resolves to the
+ * output column first — here the `id::text` alias — and would sort as text,
+ * putting row 9 above row 10.
  */
 export async function runtimeConfigRows(tenantId: string): Promise<RuntimeConfigRow[]> {
   const { rows } = await getPool().query<RuntimeConfigRow>(
     `select id::text as id, tenant_id, config, created_at, created_by, note
        from runtime_config
       where tenant_id = $1
-      order by id desc`,
+      order by runtime_config.id desc`,
     [tenantId],
   );
   return rows;
