@@ -17,7 +17,9 @@ export default function Select({
 }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`${CONTROL} appearance-none bg-[right_14px_center] bg-no-repeat pr-9${
+      // `pr-9!`: CONTROL's `px-[14px]` otherwise wins, and a long option runs
+      // under the chevron.
+      className={`${CONTROL} appearance-none truncate bg-[right_14px_center] bg-no-repeat pr-9!${
         className === undefined ? '' : ` ${className}`
       }`}
       style={{

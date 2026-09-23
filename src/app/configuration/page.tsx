@@ -189,6 +189,16 @@ export default async function ConfigurationPage({
       : `${tenantRow.clinic_name} (${tenant})`;
 
   const saved = first(params['saved']);
+  // No call answered since the newest row was saved: the value column shows
+  // that row, the last-call column the row (or boot config) the call before it
+  // ran — two different documents with nothing pending, which the head says.
+  const lastCallRow = Object.values(ranOnByPath).find((cell) => cell.layer?.kind === 'row')?.layer;
+  const notYetRun =
+    newest !== null && applied?.total === 0 && snapshot !== null
+      ? lastCallRow?.kind === 'row'
+        ? `row #${lastCallRow.version}`
+        : 'boot config'
+      : null;
 
   return (
     <>
@@ -266,6 +276,12 @@ export default async function ConfigurationPage({
             <code>/healthz</code> lists them under <code>vendors</code>
           </Caveat>
         ) : null}
+        {notYetRun === null || newest === null ? null : (
+          <Caveat>
+            no call has been answered since row #{newest.id} was saved, so “last call” still shows{' '}
+            {notYetRun} until the next one; a pending mark is only an unsaved edit in this form
+          </Caveat>
+        )}
         {fromRow === null || fromRow === newest?.id ? null : (
           <Caveat>
             the form below is loaded from row #{fromRow}; saving still writes a new row
@@ -330,6 +346,10 @@ export default async function ConfigurationPage({
       )}
 
       <ConfigurationForm
+        // A soft navigation to this page — the redirect after a save, a history
+        // row's "load into form" — keeps a client component's state; the key
+        // makes a new row or a new `?from=` a fresh form, not the old review.
+        key={`${tenant}:${newest?.id ?? ''}:${fromRow ?? ''}`}
         tenant={tenant}
         initial={{ step: 'edit', tenant, group: groupOf(first(params['group'])), values, failure: null }}
         base={formFromDocument(base)}

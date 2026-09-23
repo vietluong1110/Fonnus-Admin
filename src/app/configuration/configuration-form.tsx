@@ -74,6 +74,9 @@ const subscribeToNothing = (): (() => void) => () => undefined;
 /** The option an unset select shows: the leaf is left out and the boot value applies. */
 const BOOT_OPTION = 'boot value';
 
+/** A voice id no boot report lists: named by what it is, since the id means nothing to read. */
+const UNLISTED_VOICE = 'unlisted voice';
+
 /** Rule 3 of `docs/redesign.md` §4.2, on the screen beside the Save button. */
 const EFFECT = 'takes effect on the next call answered; no call in progress changes';
 
@@ -159,6 +162,7 @@ export default function ConfigurationForm(props: ConfigurationFormProps) {
         newestRow={props.disclosureRow}
         fields={props.fields}
         ranOn={props.ranOn}
+        offered={props.offered}
       />
     );
   }
@@ -669,7 +673,9 @@ function FieldRow({
     ) : null;
   // Only beside a value: "—" came from no layer, and "not recorded" has none.
   const layer = snapshotRecorded && ranOn?.value != null ? layerText(ranOn.layer) : null;
-  const lastCallTitle = layer === null ? lastCall : `${lastCall} · ${layer}`;
+  // The voice id stays reachable on hover, for whoever has to look it up.
+  const voiceId = ranOn?.label !== undefined && ranOn.value !== null ? ` (${ranOn.value})` : '';
+  const lastCallTitle = `${lastCall}${voiceId}${layer === null ? '' : ` · ${layer}`}`;
   const layerCaption =
     layer === null ? null : (
       <Caveat as="span" className="ml-2 font-ui">
@@ -750,13 +756,26 @@ function controlWidth(field: Field): string {
 
 /**
  * The last-call cell, in words: "not recorded" before any call, "—" for a key it
- * lacked, and a voice id as `label (id)` when a boot report knows it (ADR 0012 D6).
+ * lacked, and a voice by its label (ADR 0012 D6) — an id is a string no operator
+ * tells apart, so it is only in the tooltip, and a voice no boot report knows
+ * reads `UNLISTED_VOICE`.
  */
 function lastCallText(ranOn: LastCall | null, snapshotRecorded: boolean): string {
   if (!snapshotRecorded) return 'not recorded';
   const value = ranOn?.value ?? null;
   if (value === null) return '—';
-  return ranOn?.label != null ? `${ranOn.label} (${value})` : value;
+  // `label` is present, null or not, exactly on the voice cell (the page's `labelVoice`).
+  if (ranOn?.label !== undefined) return ranOn.label ?? UNLISTED_VOICE;
+  return value;
+}
+
+/** A voice id as the operator reads it: its label in any vendor's list the box reported. */
+function voiceName(offered: Offered | null, id: string): string {
+  for (const list of Object.values(offered?.voices ?? {})) {
+    const entry = list.find((voice) => voice.id === id);
+    if (entry !== undefined) return entry.label;
+  }
+  return UNLISTED_VOICE;
 }
 
 /** The layer caption of rule 7 of `docs/redesign.md` §4.2 (ADR 0012 D8). */
@@ -939,7 +958,12 @@ function Control({
           <option value="">
             {defaultLabel === undefined ? bootText : `${BOOT_OPTION} (${defaultLabel})`}
           </option>
-          <Unknown value={value} options={ids} reason={voice.unknownReason} />
+          <Unknown
+            value={value}
+            options={ids}
+            reason={voice.unknownReason}
+            name={voiceName(offered, value)}
+          />
           {voice.merged ? (
             // Without script every vendor's voices at once, one group each
             // (ADR 0011 D4); `offeredIssues` refuses another vendor's id at review.
@@ -1143,16 +1167,19 @@ function Unknown({
   value,
   options,
   reason = 'not a value this build offers',
+  name = value,
 }: {
   value: string;
   options: readonly string[];
   /** Why it is not offered; the schema's words unless a boot report is the reason (ADR 0012 D3, D4). */
   reason?: string | undefined;
+  /** What the option shows for the value; the value itself unless it is an id no one reads. */
+  name?: string;
 }) {
   if (value === '' || options.includes(value)) return null;
   return (
     <option value={value}>
-      {value} — {reason}
+      {name} — {reason}
     </option>
   );
 }
@@ -1243,6 +1270,7 @@ function ReviewStep({
   newestRow,
   fields,
   ranOn,
+  offered,
 }: {
   state: Extract<FormState, { step: 'review' }>;
   formAction: (formData: FormData) => void;
@@ -1254,6 +1282,8 @@ function ReviewStep({
   newestRow: string | null;
   fields: Field[];
   ranOn: Record<string, LastCall>;
+  /** The box's voice lists, so a voice in the diff reads by its label. */
+  offered: Offered | null;
 }) {
   const blocked = state.issues.length > 0;
   const changes = state.diff.length;
@@ -1327,8 +1357,14 @@ function ReviewStep({
             </thead>
             <tbody>
               {state.diff.map((entry) => {
-                const before = entry.from === undefined ? null : renderValue(entry.from);
-                const after = entry.to === undefined ? null : renderValue(entry.to);
+                const shown = (value: unknown): string | null =>
+                  value === undefined
+                    ? null
+                    : entry.path === 'tts.voice' && typeof value === 'string'
+                      ? voiceName(offered, value)
+                      : renderValue(value);
+                const before = shown(entry.from);
+                const after = shown(entry.to);
                 const beforeAbsent = absentWords(entry.path, from, fields, ranOn);
                 const afterAbsent = absentWords(entry.path, state.document, fields, ranOn);
                 const long = [before, after].some(

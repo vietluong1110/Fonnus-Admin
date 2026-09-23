@@ -15,9 +15,9 @@
  *     are objects and four keys are arrays.
  *
  * One value the card explains (ADR 0012 D6, D8): the effective voice id — the
- * `*_VOICE_ID` key of the call's own `TTS_PROVIDER` — reads `label (id)` when
- * the boot report booted before the call lists it, and says which layer chose
- * it, because the snapshot's flat key alone cannot say.
+ * `*_VOICE_ID` key of the call's own `TTS_PROVIDER` — reads by its label when
+ * the boot report booted before the call lists it, the id only on hover, and
+ * says which layer chose it, because the snapshot's flat key alone cannot say.
  */
 
 import { parseSnapshot, renderValue } from '@/dashboard';
@@ -148,8 +148,9 @@ function ConfigValue({ value }: { value: unknown }) {
 }
 
 /**
- * The effective voice id: `label (id)` when a report knows it, else the bare
- * id; beside it the layer that chose it — "chosen by row #N" when the call's
+ * The effective voice: its label when a report knows it, else "unlisted voice"
+ * — an id is a string no operator tells apart, so it is only in the tooltip;
+ * beside it the layer that chose it — "chosen by row #N" when the call's
  * `runtime.config` carries `tts.voice`, "boot value" otherwise (rule 7 of
  * `docs/redesign.md` §4.2, the form select's words); under it the D6 build
  * caveat, which never withholds the label.
@@ -158,13 +159,7 @@ function VoiceValue({ voice }: { voice: VoiceFact }) {
   const layer = voice.layer.kind === 'row' ? `chosen by row #${voice.layer.version}` : 'boot value';
   return (
     <dd className="text-right text-[length:var(--size-eyebrow)]">
-      {voice.label === null ? (
-        <span className="font-num break-all">{voice.id}</span>
-      ) : (
-        <>
-          {voice.label} (<span className="font-num break-all">{voice.id}</span>)
-        </>
-      )}
+      <span title={voice.id}>{voice.label ?? 'unlisted voice'}</span>
       <Caveat as="span" className="ml-2">
         {layer}
       </Caveat>

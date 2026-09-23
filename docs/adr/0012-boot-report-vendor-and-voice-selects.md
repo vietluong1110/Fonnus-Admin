@@ -112,7 +112,11 @@ voice is a restart, not a build). The console-own rule: **the label comes from t
 `boot_report` row of the tenant with `booted_at <= started_at`**, which is always one row;
 when that row's `build_sha` differs from the call's `FONNUS_BUILD_SHA`, the label is shown
 with a caveat ("label from the boot report of build `<sha>`, booted `<booted_at>`; the call
-ran build `<sha2>`"), not withheld; an id that no report knows renders as the bare id. The
+ran build `<sha2>`"), not withheld; an id that no report knows reads "unlisted voice". The
+id itself is never the text — a 36-character string no operator tells apart or remembers —
+only the tooltip, for whoever has to look it up. The select's `Unknown` option and the
+review's before and after columns name a voice the same way, by its label in any vendor's
+list of the latest report. The
 same rule labels the tab's "last call" value of `tts.voice` and the call detail's
 `CARTESIA_VOICE_ID` / `ELEVENLABS_VOICE_ID`. The read is `bootReportBefore(tenantId,
 at: Date)` — one statement, `where tenant_id = $1 and booted_at <= $2 order by id desc
@@ -123,7 +127,7 @@ text like every query here. On the tab the second read is skipped when the lates
 already satisfies `booted_at <= started_at` (then it *is* the newest row before the call).
 The call detail reads it once per page, on the `console` pool, with `call_log.tenant_id`
 added to `getCall`'s select list (a contract column, §3, already read by `callsSinceRow`).
-On the detail, the value cell reads `label (id)` and says "chosen by row #`<runtime.version>`"
+On the detail, the value cell reads the label and says "chosen by row #`<runtime.version>`"
 when `runtime.config.tts.voice` is present in the snapshot, else "boot value" (the A14 idiom, the same words as the form's select) — the layer
 rule of decision 8.
 
