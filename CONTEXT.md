@@ -94,7 +94,7 @@ caveats; the decisions stay with the person reading it.
    actually ran on, a review step that shows the proposed document and its diff against the
    current row before anything is written, then a new row appended as a whole-document
    replace under `console:<account>` — it takes effect on the next call answered, no call
-   in progress changes. The row history sits under the form; any row can be loaded back into
+   in progress changes. The row history opens from the head; any row can be loaded back into
    the form, so a restore is a new row too. Three warnings travel with what they qualify:
    the latest row not applied (counted from `config_snapshot->'runtime'->>'version'` on
    the calls since the row, the reason pointed at the pipeline's log and

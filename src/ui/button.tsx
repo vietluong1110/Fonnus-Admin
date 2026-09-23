@@ -13,7 +13,7 @@ export type ButtonVariant = 'primary' | 'secondary';
 
 /** Same box in both variants: the primary's border is transparent, not absent. */
 const BASE =
-  'rounded-sm border px-4 py-2 text-[length:var(--size-ui)] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]';
+  'rounded-sm border px-4 py-2 text-[length:var(--size-ui)] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50';
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary: 'border-transparent bg-action-primary text-text-on-accent hover:bg-action-primary-hover',

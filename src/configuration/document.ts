@@ -21,6 +21,7 @@ import {
 } from '@/contract/config/runtime-document';
 import { FLAT_KEYS } from './flat-keys';
 import { KEY_ALIASES, canonicalKey } from '@/dashboard';
+import { GROUPS, type Group } from './groups';
 
 /**
  * How one leaf is rendered. This console's own rendering vocabulary, not a
@@ -133,8 +134,6 @@ function isInteger(schema: unknown): boolean {
   return (schema as { isInt?: boolean }).isInt === true;
 }
 
-const GROUPS = ['turn', 'stt', 'llm', 'tts', 'text'] as const;
-type Group = (typeof GROUPS)[number];
 
 function flatKeyFor(path: string): string | Readonly<Record<string, string>> {
   const entry = FLAT_KEYS[path];
@@ -329,8 +328,21 @@ export function leafPaths(): string[] {
   return [...new Set(fieldsOf().map((field) => field.path))];
 }
 
+/**
+ * The vendors whose branch carries a path, or null for a path outside every
+ * vendor branch (every `turn`, `llm` and `text` leaf, and the two providers).
+ * A path of the branch not chosen is no setting of the chosen vendor at all,
+ * which the review says instead of "boot value".
+ */
+export function vendorsOf(fields: readonly Field[], path: string): string[] | null {
+  const vendors = fields.flatMap((field) =>
+    field.path === path && field.vendor !== null ? [field.vendor] : [],
+  );
+  return vendors.length === 0 ? null : vendors;
+}
+
 /** The value at a dotted path, or `undefined` when any step of it is absent. */
-function valueAt(document: unknown, path: string): unknown {
+export function valueAt(document: unknown, path: string): unknown {
   let node: unknown = document;
   for (const segment of path.split('.')) {
     if (typeof node !== 'object' || node === null || Array.isArray(node)) return undefined;
@@ -341,30 +353,43 @@ function valueAt(document: unknown, path: string): unknown {
 }
 
 /**
- * The form's starting state: the string every control shows, and the paths whose
- * `set:` checkbox starts ticked. Keyed on the stored value's own type rather
- * than on the field's kind, because a stored document may carry a leaf of
- * another branch — this fills the control, the schema judges it.
+ * The string every control shows for a document: a leaf the document leaves out
+ * has no entry, which the form renders as "boot value". Keyed on the stored
+ * value's own type rather than on the field's kind, because a stored document
+ * may carry a leaf of another branch — this fills the control, the schema
+ * judges it.
  */
-export function formFromDocument(doc: unknown): { values: Record<string, string>; set: string[] } {
+export function formFromDocument(doc: unknown): Record<string, string> {
   const values: Record<string, string> = {};
-  const set: string[] = [];
   for (const path of leafPaths()) {
     const value = valueAt(doc, path);
     if (value === undefined) continue;
-    set.push(path);
     if (typeof value === 'string') values[path] = value;
     else if (typeof value === 'number' || typeof value === 'boolean') values[path] = String(value);
     else if (Array.isArray(value)) values[path] = value.map(String).join('\n');
     else values[path] = JSON.stringify(value, null, 2);
   }
-  return { values, set };
+  return values;
 }
 
 /**
- * The document one submission means. Only a leaf whose `set:<path>` entry is
- * present is in it — an absent leaf is the boot value (contract §3.4), which is
- * a different fact from an empty one.
+ * Whether a control's text puts its leaf in the row: anything but blank. A
+ * blank control is the boot value (contract §3.4) — the one spelling of "leave
+ * this leaf out" every kind of control has, a select's "boot value" option
+ * included. The form's "pending" mark and `documentFromForm` both read it, so
+ * what the screen marks and what the review diffs cannot disagree.
+ *
+ * The one value this cannot write is an empty string: every string leaf but
+ * `llm.fallback_model` refuses it anyway, and there it would mean "no
+ * fallback", which a row therefore cannot say from this form.
+ */
+export function isSetText(raw: string | undefined): boolean {
+  return raw !== undefined && raw.trim() !== '';
+}
+
+/**
+ * The document one submission means. Only a leaf whose control is not blank
+ * (`isSetText`) is in it — an absent leaf is the boot value (contract §3.4).
  *
  * Coercion never repairs: a number that does not parse and a record whose JSON
  * does not parse stay the raw string, so `parseDocument` reports the issue on
@@ -383,8 +408,8 @@ export function documentFromForm(entries: Iterable<[string, string]>): Record<st
   }
   const document: Record<string, unknown> = {};
   for (const [path, fields] of byPath) {
-    if (!form.has(`set:${path}`)) continue;
-    const raw = form.get(path) ?? '';
+    const raw = form.get(path);
+    if (raw === undefined || !isSetText(raw)) continue;
     const kind = fields[0]?.kind ?? 'text';
     write(document, path, coerce(raw, kind));
   }
@@ -396,9 +421,8 @@ function coerce(raw: string, kind: ControlKind): unknown {
     case 'integer':
     case 'number': {
       const value = Number(raw.trim());
-      // The raw string when it is not a number — including the empty string,
-      // which `Number` reads as 0.
-      return raw.trim() === '' || Number.isNaN(value) ? raw : value;
+      // The raw string when it is not a number. A blank never reaches here.
+      return Number.isNaN(value) ? raw : value;
     }
     case 'boolean':
       return raw === 'true' ? true : raw === 'false' ? false : raw;

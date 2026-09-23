@@ -35,28 +35,30 @@ import {
   type DiffEntry,
   type DocumentIssue,
 } from '@/configuration/document';
+import { groupOf, type Group } from '@/configuration/groups';
 import { latestBootReport } from '@/queries/boot-report';
 import { insertRuntimeConfig } from '@/writes/runtime-config';
 
 /**
- * The whole state of the screen's form, in both of its steps. `values` and
- * `set` travel through every step, because "Edit" must give the operator back
- * the form exactly as they left it — including a leaf whose value the schema
- * refused.
+ * The whole state of the screen's form, in both of its steps. `values` travels
+ * through every step, because "Edit" must give the operator back the form
+ * exactly as they left it — including a leaf whose value the schema refused. A
+ * blank value is a leaf left out (`isSetText`). `group` is the tab the form was
+ * on, so "Edit" and the page after a save open on it again.
  */
 export type FormState =
   | {
       step: 'edit';
       tenant: string;
+      group: Group;
       values: Record<string, string>;
-      set: string[];
       failure: string | null;
     }
   | {
       step: 'review';
       tenant: string;
+      group: Group;
       values: Record<string, string>;
-      set: string[];
       /**
        * The proposed document as the save would insert it: the parsed copy when
        * it parses (trimmed, as the schema leaves it), the one the form built —
@@ -91,27 +93,17 @@ function stringEntries(formData: FormData): [string, string][] {
 }
 
 /**
- * The form as submitted, restricted to the leaves the schema names: the control
- * values and the paths whose `set:` box was ticked. Anything else on the form
- * (`intent`, `tenant`, `from`, `note`, `document`) is the action's own
- * plumbing, never part of the document.
+ * The form as submitted, restricted to the leaves the schema names. Anything
+ * else on the form (`intent`, `tenant`, `group`, `from`, `note`, `document`) is
+ * the action's own plumbing, never part of the document.
  */
-function submitted(entries: readonly [string, string][]): {
-  values: Record<string, string>;
-  set: string[];
-} {
+function submitted(entries: readonly [string, string][]): Record<string, string> {
   const known = new Set(leafPaths());
   const values: Record<string, string> = {};
-  const set: string[] = [];
   for (const [key, value] of entries) {
-    if (key.startsWith('set:')) {
-      const path = key.slice('set:'.length);
-      if (known.has(path)) set.push(path);
-    } else if (known.has(key)) {
-      values[key] = value;
-    }
+    if (known.has(key)) values[key] = value;
   }
-  return { values, set };
+  return values;
 }
 
 /**
@@ -148,8 +140,8 @@ function readText(formData: FormData, name: string): string {
  */
 function reviewState(input: {
   tenant: string;
+  group: Group;
   values: Record<string, string>;
-  set: string[];
   from: Record<string, unknown>;
   document: Record<string, unknown>;
   note: string;
@@ -164,8 +156,8 @@ function reviewState(input: {
   return {
     step: 'review',
     tenant: input.tenant,
+    group: input.group,
     values: input.values,
-    set: input.set,
     document,
     issues: [...(parsed.ok ? [] : parsed.issues), ...offeredIssues(document, input.report)],
     diff: diffDocuments(input.from, document),
@@ -180,15 +172,17 @@ export async function submitConfiguration(
   formData: FormData,
 ): Promise<FormState> {
   const entries = stringEntries(formData);
-  const { values, set } = submitted(entries);
+  const values = submitted(entries);
   const tenant = readText(formData, 'tenant');
   const intent = readText(formData, 'intent');
+  // Which tab the form was on: navigation only, so anything unknown is the first.
+  const group = groupOf(readText(formData, 'group'));
 
   // Neither can come from an operator's typing: both are hidden fields this
   // screen writes. A missing one is a mangled request, answered with the form
   // and a sentence rather than with a thrown error page.
   if (tenant === '' || !INTENTS.includes(intent as Intent)) {
-    return { step: 'edit', tenant, values, set, failure: MALFORMED };
+    return { step: 'edit', tenant, group, values, failure: MALFORMED };
   }
 
   // The diff's starting point only — the newest row's document, set by the page
@@ -198,15 +192,15 @@ export async function submitConfiguration(
   const note = readText(formData, 'note');
 
   if (intent === 'edit') {
-    return { step: 'edit', tenant, values, set, failure: null };
+    return { step: 'edit', tenant, group, values, failure: null };
   }
 
   if (intent === 'review') {
     return reviewState({
       report: await latestBootReport(tenant),
       tenant,
+      group,
       values,
-      set,
       from,
       document: documentFromForm(entries),
       note,
@@ -220,7 +214,7 @@ export async function submitConfiguration(
   // legal document ("back to boot config") and goes on.
   const document = readObject(formData, 'document');
   if (document === null) {
-    return { step: 'edit', tenant, values, set, failure: MALFORMED };
+    return { step: 'edit', tenant, group, values, failure: MALFORMED };
   }
 
   // Read afresh, never carried from the review: the box may have rebooted
@@ -238,8 +232,8 @@ export async function submitConfiguration(
     if (!(err instanceof NoAccountError)) throw err;
     return reviewState({
       tenant,
+      group,
       values,
-      set,
       from,
       document,
       note,
@@ -252,8 +246,8 @@ export async function submitConfiguration(
   if (!parsed.ok) {
     return reviewState({
       tenant,
+      group,
       values,
-      set,
       from,
       document,
       note,
@@ -262,7 +256,7 @@ export async function submitConfiguration(
     });
   }
   if (offeredIssues(parsed.document, report).length > 0) {
-    return reviewState({ tenant, values, set, from, document, note, failure: NOT_OFFERED, report });
+    return reviewState({ tenant, group, values, from, document, note, failure: NOT_OFFERED, report });
   }
 
   const result = await insertRuntimeConfig({
@@ -276,8 +270,8 @@ export async function submitConfiguration(
   if (!result.ok) {
     return reviewState({
       tenant,
+      group,
       values,
-      set,
       from,
       document,
       note,
@@ -289,5 +283,7 @@ export async function submitConfiguration(
   revalidatePath('/configuration');
   // Outside every `try`: `redirect` works by throwing, and a catch would turn
   // a successful save into a failure message (Next.js 16 redirecting guide).
-  redirect(`/configuration?tenant=${encodeURIComponent(tenant)}#row-${result.id}`);
+  // `saved` is what lets the page confirm the new row, on the tab it left.
+  const search = new URLSearchParams({ tenant, group, saved: result.id });
+  redirect(`/configuration?${search.toString()}`);
 }

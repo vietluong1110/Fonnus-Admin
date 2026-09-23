@@ -10,7 +10,9 @@
  * row).
  *
  * The URL is the whole input (ADR 0006): `?tenant=` picks the tenant, `?from=`
- * opens the form on a history row. Nothing here is client state.
+ * opens the form on a history row, `?group=` the tab, and `?saved=` is the row
+ * a save just wrote, confirmed in the head. The history is an overlay opened
+ * from the head, so the form is the whole page.
  */
 
 import {
@@ -29,6 +31,7 @@ import {
   parseDocument,
   ranOn,
 } from '@/configuration/document';
+import { groupOf } from '@/configuration/groups';
 import { chooseTenant, diffBase, startDocument } from '@/configuration/start';
 import { labelVoice, needsReportBefore, offeredOf, staleReport } from '@/boot-report';
 import { bootReportBefore, latestBootReport } from '@/queries/boot-report';
@@ -38,9 +41,12 @@ import {
   runtimeConfigRows,
   tenants,
 } from '@/queries/runtime-config';
+import Badge from '@/ui/badge';
+import Button from '@/ui/button';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
+import Overlay from '@/ui/overlay';
 import PageHead from '@/ui/page-head';
 import ConfigurationForm, { type LastCall } from './configuration-form';
 import History from './history';
@@ -50,6 +56,7 @@ import History from './history';
 export const dynamic = 'force-dynamic';
 
 const BASE = '/configuration';
+const HISTORY_ID = 'configuration-history';
 
 type Params = Record<string, string | string[] | undefined>;
 
@@ -115,7 +122,10 @@ export default async function ConfigurationPage({
   // process runs (trimmed, ADR 0012 D7) and the one the review and the report
   // checks compare — so a hand-written row's ` linh ` reads as `linh` here too.
   const effective = parsedStart.ok ? asRecord(parsedStart.document) : {};
-  const { values, set } = formFromDocument(effective);
+  const values = formFromDocument(effective);
+  // What "pending" is measured against: the newest row, the one the next call
+  // runs on — so a row loaded from history is pending wherever it differs.
+  const base = diffBase(rows);
   // The row the form was loaded from — `?from=` or the newest — which the head
   // names; the review diffs against the newest row whatever this is (ADR 0012 D7).
   const fromRow = start.row?.id ?? newest?.id ?? null;
@@ -178,11 +188,22 @@ export default async function ConfigurationPage({
       ? tenant
       : `${tenantRow.clinic_name} (${tenant})`;
 
+  const saved = first(params['saved']);
+
   return (
     <>
       <PageHead title="Configuration">
         <Caveat as="span">{tenantLabel}</Caveat>
+        <Button variant="secondary" popoverTarget={HISTORY_ID} className="ml-auto">
+          History
+          {rows.length === 0 ? null : (
+            <span className="ml-2 font-num tabular-nums text-text-muted">{rows.length}</span>
+          )}
+        </Button>
       </PageHead>
+      <Overlay id={HISTORY_ID} side="right" title={`History — ${String(rows.length)} rows`}>
+        <History rows={rows} tenant={tenant} />
+      </Overlay>
 
       {tenantRows.length > 1 ? (
         <form method="get" action={BASE} className="flex flex-wrap items-center gap-2">
@@ -222,6 +243,12 @@ export default async function ConfigurationPage({
             'No row yet: every call runs on boot config.'
           ) : (
             <>
+              {saved === newest.id ? (
+                // The redirect after a save lands here: the new row is current.
+                <>
+                  <Badge tone="success">saved</Badge>{' '}
+                </>
+              ) : null}
               Current row <span className="font-num tabular-nums font-medium">#{newest.id}</span>
               <span className="text-text-muted">
                 {' '}
@@ -304,20 +331,19 @@ export default async function ConfigurationPage({
 
       <ConfigurationForm
         tenant={tenant}
-        initial={{ step: 'edit', tenant, values, set, failure: null }}
+        initial={{ step: 'edit', tenant, group: groupOf(first(params['group'])), values, failure: null }}
+        base={formFromDocument(base)}
         fields={fields}
         ranOn={ranOnByPath}
         snapshotRecorded={snapshot !== null}
         offered={offered}
         editable={editable}
-        from={diffBase(rows)}
+        from={base}
         fromRow={fromRow}
         shippedText={SHIPPED_TEXT}
         disclosure={disclosure}
         disclosureRow={newest?.id ?? null}
       />
-
-      <History rows={rows} tenant={tenant} />
     </>
   );
 }

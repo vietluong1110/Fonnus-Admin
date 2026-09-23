@@ -56,7 +56,7 @@ const REPORT = parseBootReport({
 
 type State = Awaited<ReturnType<typeof submitConfiguration>>;
 
-const EDIT: State = { step: 'edit', tenant: 'pilot', values: {}, set: [], failure: null };
+const EDIT: State = { step: 'edit', tenant: 'pilot', group: 'turn', values: {}, failure: null };
 
 function form(entries: Record<string, string>): FormData {
   const data = new FormData();
@@ -81,9 +81,7 @@ describe('review', () => {
       tenant: 'pilot',
       intent: 'review',
       from: '{}',
-      'set:turn.max_reprompts': 'on',
       'turn.max_reprompts': '3',
-      'set:llm.model': 'on',
       'llm.model': 'openai/gpt-oss-120b',
     });
 
@@ -108,14 +106,12 @@ describe('review', () => {
       tenant: 'pilot',
       intent: 'review',
       from: '{}',
-      'set:turn.max_reprompts': 'on',
       'turn.max_reprompts': '3',
       // Plumbing, never part of the document or of the form's values.
       note: 'shorter reprompts',
     });
 
     if (state.step !== 'review') throw new Error('expected the review step');
-    expect(state.set).toEqual(['turn.max_reprompts']);
     expect(state.values).toEqual({ 'turn.max_reprompts': '3' });
     expect(state.note).toBe('shorter reprompts');
   });
@@ -125,11 +121,9 @@ describe('review', () => {
       tenant: 'pilot',
       intent: 'review',
       from: '{}',
-      'set:turn.max_reprompts': 'on',
       // A number that does not parse stays the raw string, so the schema
       // reports on the leaf rather than the form sending something else.
       'turn.max_reprompts': 'three',
-      'set:text.greeting': 'on',
       'text.greeting': 'Xin chào.',
     });
 
@@ -156,13 +150,9 @@ describe('review carries what the save would insert (ADR 0012 D7)', () => {
     tenant: 'pilot',
     intent: 'review',
     from: '{}',
-    'set:stt.provider': 'on',
     'stt.provider': 'soniox',
-    'set:stt.params.context_text': 'on',
     'stt.params.context_text': 'dental clinic ',
-    'set:tts.provider': 'on',
     'tts.provider': 'cartesia',
-    'set:tts.voice': 'on',
     'tts.voice': ' a0e99841 ',
   };
 
@@ -190,10 +180,10 @@ describe('review carries what the save would insert (ADR 0012 D7)', () => {
   });
 
   it('keeps the document as the form built it when it does not parse, beside its issues', async () => {
-    const state = await submit({ ...TRIMMED, 'tts.voice': '   ' });
+    const state = await submit({ ...TRIMMED, 'turn.max_reprompts': 'three' });
     if (state.step !== 'review') throw new Error('expected the review step');
-    expect(state.issues.map((issue) => issue.path)).toContain('tts.voice');
-    expect(state.document).toMatchObject({ tts: { voice: '   ' } });
+    expect(state.issues.map((issue) => issue.path)).toContain('turn.max_reprompts');
+    expect(state.document).toMatchObject({ turn: { max_reprompts: 'three' } });
   });
 
   it('diffs against the `from` the page sets — the newest row — not the document loaded', async () => {
@@ -203,7 +193,6 @@ describe('review carries what the save would insert (ADR 0012 D7)', () => {
       tenant: 'pilot',
       intent: 'review',
       from: '{"turn":{"max_reprompts":3}}',
-      'set:turn.max_reprompts': 'on',
       'turn.max_reprompts': '1',
     });
     if (state.step !== 'review') throw new Error('expected the review step');
@@ -214,21 +203,26 @@ describe('review carries what the save would insert (ADR 0012 D7)', () => {
 });
 
 describe('edit', () => {
-  it('returns the form as submitted, with no failure', async () => {
+  it('returns the form as submitted, on the tab it was left on, with no failure', async () => {
     const state = await submit({
       tenant: 'pilot',
       intent: 'edit',
-      'set:turn.max_reprompts': 'on',
+      group: 'stt',
       'turn.max_reprompts': '3',
     });
 
     expect(state).toEqual({
       step: 'edit',
       tenant: 'pilot',
+      group: 'stt',
       values: { 'turn.max_reprompts': '3' },
-      set: ['turn.max_reprompts'],
       failure: null,
     });
+  });
+
+  it('reads a tab it does not know as the first one', async () => {
+    const state = await submit({ tenant: 'pilot', intent: 'edit', group: 'billing' });
+    expect(state.group).toBe('turn');
   });
 });
 
@@ -290,8 +284,14 @@ describe('save', () => {
     expect(insertRuntimeConfig).toHaveBeenCalledWith(expect.objectContaining({ config: {} }));
   });
 
-  it('inserts the parsed document and lands on the new row', async () => {
-    await submit({ tenant: 'pilot', intent: 'save', document: OK_DOCUMENT, note: 'shorter' });
+  it('inserts the parsed document and lands on the new row, on the tab it left', async () => {
+    await submit({
+      tenant: 'pilot',
+      intent: 'save',
+      group: 'llm',
+      document: OK_DOCUMENT,
+      note: 'shorter',
+    });
 
     expect(insertRuntimeConfig).toHaveBeenCalledWith({
       tenantId: 'pilot',
@@ -300,7 +300,7 @@ describe('save', () => {
       by: 'lesky',
     });
     expect(revalidatePath).toHaveBeenCalledWith('/configuration');
-    expect(redirect).toHaveBeenCalledWith('/configuration?tenant=pilot#row-42');
+    expect(redirect).toHaveBeenCalledWith('/configuration?tenant=pilot&group=llm&saved=42');
     // The cache is dropped before the navigation, or the new row would not be
     // on the page the redirect lands on.
     expect(revalidatePath.mock.invocationCallOrder[0]).toBeLessThan(
@@ -353,11 +353,8 @@ describe('the boot report holds the document to what this box offers (ADR 0012 D
     tenant: 'pilot',
     intent: 'review',
     from: '{}',
-    'set:stt.provider': 'on',
     'stt.provider': 'soniox',
-    'set:tts.provider': 'on',
     'tts.provider': 'cartesia',
-    'set:tts.voice': 'on',
     'tts.voice': 'ngoc',
   };
 

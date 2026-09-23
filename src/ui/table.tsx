@@ -17,8 +17,17 @@ export function TableScroll({ children }: { children: ReactNode }) {
   );
 }
 
-export function Table({ children }: { children: ReactNode }) {
-  return <table className="w-full min-w-0 border-collapse">{children}</table>;
+export function Table({
+  fixed = false,
+  children,
+}: {
+  /** Column widths from the first row (a `<colgroup>`), never from the content. */
+  fixed?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <table className={`w-full min-w-0 border-collapse${fixed ? ' table-fixed' : ''}`}>{children}</table>
+  );
 }
 
 export function Th({

@@ -7,12 +7,14 @@ import {
   documentFromForm,
   fieldsOf,
   formFromDocument,
+  isSetText,
   leafPaths,
   mergeBranches,
   flatKeyOf,
   layerOf,
   parseDocument,
   ranOn,
+  vendorsOf,
   type Field,
 } from './document';
 import { SHIPPED_TEXT } from '@/contract/config/runtime-document';
@@ -146,13 +148,13 @@ describe('mergeBranches — the control a shared path renders without JavaScript
 });
 
 describe('formFromDocument', () => {
-  it('ticks the leaves the document carries and renders each as its control shows it', () => {
-    const { values, set } = formFromDocument({
+  it('fills the leaves the document carries, each as its control shows it, in path order', () => {
+    const values = formFromDocument({
       turn: { max_turns_per_call: 12, barge_in_enabled: false },
       stt: { provider: 'speechmatics', params: { sounds_like: { amoxicillin: ['a mốc'] } } },
       llm: { params: { stop: ['Người gọi:', 'Khách:'] } },
     });
-    expect(set).toEqual([
+    expect(Object.keys(values)).toEqual([
       'turn.max_turns_per_call',
       'turn.barge_in_enabled',
       'stt.provider',
@@ -173,32 +175,28 @@ describe('formFromDocument', () => {
     // comes back as nothing. Pinned so the limitation is a known one; the fix,
     // if an operator ever needs that stop sequence, is a decision about the
     // control, not about this function.
-    const { values } = formFromDocument({ llm: { params: { stop: ['\n\n'] } } });
+    const values = formFromDocument({ llm: { params: { stop: ['\n\n'] } } });
     expect(values['llm.params.stop']).toBe('\n\n');
-    expect(documentFromForm([['set:llm.params.stop', 'on'], ['llm.params.stop', '\n\n']])).toEqual({
-      llm: { params: { stop: [] } },
-    });
+    // Blank to the eye and to `isSetText`, so the leaf is left out.
+    expect(documentFromForm([['llm.params.stop', '\n\n']])).toEqual({});
   });
 
-  it('ticks nothing for the empty document — every leaf is the boot value', () => {
-    expect(formFromDocument({})).toEqual({ values: {}, set: [] });
+  it('fills nothing for the empty document — every leaf is the boot value', () => {
+    expect(formFromDocument({})).toEqual({});
   });
 });
 
 describe('documentFromForm', () => {
-  it('takes only the ticked leaves, nested into their groups', () => {
+  it('takes only the leaves whose control is not blank, nested into their groups', () => {
     expect(
       form({
-        'set:turn.max_reprompts': 'on',
         'turn.max_reprompts': '2',
-        // Present in the submission but not ticked: absent from the document,
-        // which is what "the boot value applies" is written as (§3.4).
-        'turn.max_turns_per_call': '20',
-        'set:stt.provider': 'on',
+        // Blank, or only whitespace: absent from the document, which is what
+        // "the boot value applies" is written as (§3.4).
+        'turn.max_turns_per_call': '',
+        'llm.model': '  ',
         'stt.provider': 'deepgram',
-        'set:stt.params.keyterms': 'on',
         'stt.params.keyterms': ' nhi khoa \n\n tai mũi họng \n',
-        'set:turn.barge_in_enabled': 'on',
         'turn.barge_in_enabled': 'false',
       }),
     ).toEqual({
@@ -209,11 +207,8 @@ describe('documentFromForm', () => {
 
   it('keeps a value it cannot coerce as the raw string, so the schema reports it on its path', () => {
     const document = form({
-      'set:turn.max_reprompts': 'on',
       'turn.max_reprompts': 'two',
-      'set:stt.provider': 'on',
       'stt.provider': 'speechmatics',
-      'set:stt.params.sounds_like': 'on',
       'stt.params.sounds_like': '{not json',
     });
     expect(document).toMatchObject({ turn: { max_reprompts: 'two' } });
@@ -224,14 +219,12 @@ describe('documentFromForm', () => {
     expect(parsed.issues.map((issue) => issue.path)).toContain('stt.params.sounds_like');
   });
 
-  it('keeps a ticked leaf of another vendor, which the schema then refuses by name', () => {
+  it('keeps a filled leaf of another vendor, which the schema then refuses by name', () => {
     // ADR 0011 decision 4: with JavaScript off every branch renders, and the
     // schema — `strictObject` at every level — is what refuses the wrong one.
     // A silent drop would lose the edit without telling the operator.
     const document = form({
-      'set:tts.provider': 'on',
       'tts.provider': 'cartesia',
-      'set:tts.params.stability': 'on',
       'tts.params.stability': '0.5',
     });
     expect(document).toEqual({ tts: { provider: 'cartesia', params: { stability: 0.5 } } });
@@ -456,5 +449,25 @@ describe('tts.voice', () => {
     expect(parsed.ok && parsed.document.tts?.voice).toBe('a0e99841');
     expect(parseDocument({ tts: { provider: 'cartesia', voice: '  ' } }).ok).toBe(false);
     expect(parseDocument({ tts: { provider: 'elevenlabs', voice: 'x'.repeat(129) } }).ok).toBe(false);
+  });
+});
+
+describe('isSetText', () => {
+  it('reads blank and whitespace-only as the leaf left out, anything else as set', () => {
+    expect(isSetText(undefined)).toBe(false);
+    expect(isSetText('')).toBe(false);
+    expect(isSetText(' \n\t')).toBe(false);
+    expect(isSetText('0')).toBe(true);
+    expect(isSetText('false')).toBe(true);
+  });
+});
+
+describe('vendorsOf', () => {
+  it('names the branches that carry a path, and null outside every branch', () => {
+    const fields = fieldsOf();
+    expect(vendorsOf(fields, 'turn.max_reprompts')).toBeNull();
+    expect(vendorsOf(fields, 'stt.provider')).toBeNull();
+    expect(vendorsOf(fields, 'stt.params.endpointing_ms')).toHaveLength(1);
+    expect(vendorsOf(fields, 'stt.model')?.length).toBeGreaterThan(1);
   });
 });

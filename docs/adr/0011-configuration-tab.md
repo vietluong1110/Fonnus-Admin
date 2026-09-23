@@ -72,13 +72,14 @@ per line) for the string arrays; `record` (a JSON textarea) for `sounds_like`. T
 control kinds are the console's rendering vocabulary, not pipeline terms. The walk is also
 what rule 3's totality test runs.
 
-The form encodes one document: every field carries a `set:<path>` checkbox and a value
-control named `<path>`. `documentFromForm(entries)` builds the nested plain object from the
-checked leaves only — an unchecked leaf is absent, and absent means the boot value applies
-(contract §3.4) — coercing by control kind (a number that does not parse stays the raw
+The form encodes one document: every field is one value control named `<path>`, and
+there is no tick. `documentFromForm(entries)` builds the nested plain object from the
+leaves whose control carries text (`isSetText`) — a blank or whitespace-only control is
+absent, and absent means the boot value applies (contract §3.4), so an unset leaf reads
+"boot value", with the value when the last call ran it from boot config — coercing by control kind (a number that does not parse stays the raw
 string, so the schema reports the issue on that path; a list is split on newlines and
 trimmed; a record is `JSON.parse`d and a parse failure stays the raw string). `stt.provider`
-and `tts.provider` are selects with a "not set" option; the branch leaves under a provider
+and `tts.provider` are selects with a "boot value" option; the branch leaves under a provider
 render only while it is chosen (a client component flips them; with JavaScript off a leaf
 every branch shares — `stt.model`, `tts.model`, `tts.params.speed`,
 `tts.params.pronunciation_dict_id` — renders once with the union of every branch's options
@@ -86,7 +87,13 @@ and no `min` / `max` attribute, the per-vendor bounds in its hint, and the schem
 wrong value at review). `llm.model` is free text,
 `stt.model` / `tts.model` are `MODEL_CATALOGUE[provider]`. Each text field offers "restore
 shipped text" (fills `SHIPPED_TEXT.<leaf>`); "back to boot config" submits the empty
-document. Beside each field the value the **last answered call actually ran on**: its
+document. The groups are tabs over the one `<form>` (`?group=`, ADR 0006), so an edit on
+one tab is submitted with the others; with JavaScript off every group shows at once. A leaf
+whose control differs from the newest row is marked pending, with a rollback to the newest
+row's value. The `textarea`, `list` and `record` controls edit in a popover opened from a
+two-line preview. The one thing the blank rule cannot write is an empty string: a stored
+`llm.fallback_model = ""` ("no fallback") loads as blank, and a save from the form leaves
+the leaf out. Beside each field the value the **last answered call actually ran on**: its
 `config_snapshot`'s flat key, resolved per vendor from the snapshot's own `STT_PROVIDER` /
 `TTS_PROVIDER` first, both spellings of the three renamed Deepgram keys read through
 `canonicalKey` / `KEY_ALIASES` of `src/dashboard.ts` (ADR 0009); a key the snapshot lacks
@@ -112,7 +119,9 @@ so the row the save inserts is byte for byte what was reviewed — a trimmed `co
 as submitted. `save`: `requireAccount()` (a throw is rendered as the refusal, nothing
 written) → parse the hidden `document` JSON **again** on the server (the client's copy is
 never trusted) → `insertRuntimeConfig` → `revalidatePath` and `redirect` to
-`/configuration?tenant=<id>#row-<new id>` — the new row, marked current, in history. The
+`/configuration?tenant=<id>&group=<tab>&saved=<new id>` — the same tab, the head marking
+the new row current. The review offers Save only when the diff has at least one entry: a
+save that changes nothing is not a row worth writing. The
 document, the diff and the advice are pure functions in `src/configuration/document.ts`;
 the action is a thin dispatcher and the only file that touches `FormData`.
 
@@ -150,7 +159,8 @@ while the tenant has no row.
 **8. Tenant, empty states and a document the copy refuses.** `tenant_config` is read
 (`id`, `clinic_name`, ordered by `id`); with one row the head names it and there is no
 picker; with more, a select in the head (a GET form, ADR 0006: `?tenant=<id>`), and the
-history, the warning and the form are scoped to it. No row yet → every leaf "not set", the
+history (an overlay opened from the head's History button), the warning and the form
+are scoped to it. No row yet → every leaf "boot value", the
 head reads "boot config — no row yet", history is the empty state. A `{}` row → the same
 form, the head names the row. "Load into form" on a history row is a link
 (`?from=<row id>`): the form starts from that row's document and the head says which row it
@@ -172,13 +182,15 @@ former fixed caveat — every vendor is offered, this box refuses a vendor it ho
 and `/healthz` `vendors` on the box says which — check it before choosing.
 
 **10. Form controls are new surface, styled by copy.** `src/ui/input.tsx`, `select.tsx`,
-`textarea.tsx`, `checkbox.tsx` take their shell from
+`textarea.tsx` take their shell from
 `../Fonnus-Web-UI/src/app/ui/Field.module.css` `.control` / `.input` / `.textarea` @ 302e3e8
 (the 1px inset ring, `--surface-card`, `--radius-md`, the focus ring on the shell) — the
 same source `src/ui/window-control.tsx`'s `FIELD` string already abbreviates, which moves
 into the new primitives. Native `<select>` is used, not the Web-UI's drawn listbox: nothing
 here needs type-ahead, and a native control works with JavaScript off. The nav glyph is the
-Web-UI's `settings` (`icons.ts:113`), copied unchanged as the third sidebar glyph.
+Web-UI's `settings` (`icons.ts:113`), copied unchanged as the third sidebar glyph. `src/ui/overlay.tsx` is a native
+`popover="auto"` panel (centred, or a right-hand sheet): it opens with `popovertarget` and
+no script, and the controls inside it are still submitted with their form.
 
 ## Why
 

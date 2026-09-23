@@ -1,7 +1,9 @@
 /**
  * The tenant's whole `runtime_config` history, newest first, no `LIMIT`
  * (ADR 0011 §Why): the newest row is "current", a restore is "load into form",
- * and a bounded read would hide the row an operator came here to find.
+ * and a bounded read would hide the row an operator came here to find. It is
+ * the body of the overlay the page's History button opens, which carries the
+ * title.
  *
  * Each row's document is shown **as stored** — never re-serialised through the
  * copied schema. A row written by hand may carry a key the schema refuses
@@ -15,7 +17,6 @@ import { formatWhen } from '@/calls';
 import { parseDocument } from '@/configuration/document';
 import type { RuntimeConfigRow } from '@/queries/runtime-config';
 import Badge from '@/ui/badge';
-import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 
@@ -28,25 +29,22 @@ export default function History({
 }) {
   if (rows.length === 0) {
     return (
-      <Card title="History">
-        <EmptyState title="No runtime config row yet — the pipeline runs on boot config.">
-          Every call answers on the values this build shipped with. The first save here writes
-          row #1 for this tenant, and the next call answered runs on it.
-        </EmptyState>
-      </Card>
+      <EmptyState title="No runtime config row yet — the pipeline runs on boot config.">
+        Every call answers on the values this build shipped with. The first save here writes
+        row #1 for this tenant, and the next call answered runs on it.
+      </EmptyState>
     );
   }
 
   return (
-    <Card title={`History — ${String(rows.length)} rows`}>
+    <>
       <div className="flex flex-col">
         {rows.map((row, index) => {
           const parsed = parseDocument(row.config);
           return (
             <div
               key={row.id}
-              id={`row-${row.id}`}
-              className="flex flex-col gap-1.5 border-t border-border-hairline py-3 first:border-t-0 first:pt-0 target:bg-surface-warm"
+              className="flex flex-col gap-1.5 border-t border-border-hairline py-3 first:border-t-0 first:pt-0"
             >
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="font-num tabular-nums font-medium">#{row.id}</span>
@@ -95,6 +93,6 @@ export default function History({
       <Caveat>
         a row is never edited or deleted: a correction or a restore is a new row
       </Caveat>
-    </Card>
+    </>
   );
 }
