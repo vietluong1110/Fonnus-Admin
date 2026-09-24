@@ -94,15 +94,17 @@ inferred.** The `stt` card carries "vendors as of boot at `<booted_at>`, build
 `Caveat`, because it changes with the data (the A13 rule), placed on the two cards that hold
 the three selects rather than once in the head, so it stays beside the select it qualifies
 on a long form. The trap of contract §2 (the newest row may describe a process that died
-without a successor) is shown as a warm card above the form only when the console holds
-both halves of the contract's own check: the tenant's newest call has `started_at >
-booted_at` **and** its `config_snapshot->>'FONNUS_BUILD_SHA'` is present and differs from
-the report's `build_sha` — "The newest call (`<started_at>`) ran build `<sha>`, not this
-report's `<build_sha>`: the report may describe a process that is no longer answering
-calls. `/healthz` on the box is the live signal." Before any call after the boot, or when the
-snapshot carries no `FONNUS_BUILD_SHA`, nothing is said. For this `lastCallSnapshot`
-returns the newest call's `started_at` beside its snapshot (`{ started_at, snapshot }`, both
-columns the contract names).
+after writing it, whether nothing replaced it or what replaced it writes no row — an image
+older than the pipeline's migration 0015, which a rollback can bring back) is shown as a
+warm card above the form only when the console holds both halves of the contract's own
+check: the tenant's newest call has `started_at > booted_at` **and** its
+`config_snapshot->>'FONNUS_BUILD_SHA'` is present and differs from the report's
+`build_sha` — "The newest call (`<started_at>`) ran build `<sha>`, not this report's
+`<build_sha>`: the report may describe a process that is no longer answering calls.
+`/healthz` on the box is the live signal." Before any call after the boot, or when the
+snapshot carries no `FONNUS_BUILD_SHA`, nothing is said. For this `lastCallSnapshot` returns
+the newest call's `started_at` beside its snapshot (`{ started_at, snapshot }`, both columns
+the contract names).
 
 **6. A voice id gets its label from the newest report booted before the call — never
 withheld, sometimes caveated.** The contract's own rule for the label (§3.4: the report
@@ -125,6 +127,16 @@ limit 1` — rather than the tenant's whole table: the table is append-only and 
 while a `limit 1` read stays one row, and the statement is the rule itself, testable by its
 text like every query here. On the tab the second read is skipped when the latest report
 already satisfies `booted_at <= started_at` (then it *is* the newest row before the call).
+A known edge, accepted: the process writes its row only after it has bound its HTTP and
+media ports (contract §2, pipeline ADR 0029 D6 as amended 2026-09-24), so a call whose
+media stream opened between that bind and the row's insert — the duration of one statement —
+has a `started_at` earlier than its own process's `booted_at`, and this rule labels it from
+the previous boot's report. When the two builds differ, the caveat above already says so;
+when they share a build (a restart to change `.env`), the label comes from the older voice
+list without a caveat, and an id added by that restart reads "unlisted voice". The
+alternative — preferring a report whose `build_sha` equals the call's — is the ambiguity
+this decision exists to avoid, since two boots can share a build; a tolerance window on
+`booted_at` would guess where this rule reads a fact.
 The call detail reads it once per page, on the `console` pool, with `call_log.tenant_id`
 added to `getCall`'s select list (a contract column, §3, already read by `callsSinceRow`).
 On the detail, the value cell reads the label and says "chosen by row #`<runtime.version>`"
@@ -245,6 +257,15 @@ gate is added (audit finding 4).
   `tenant_id` FK, `booted_at timestamptz default now()`, `build_sha`, `fonnus_env`,
   `providers`, `vendors jsonb` and `voices jsonb` each `CHECK (jsonb_typeof(…) = 'object')`,
   no other index. The row's shape in prose: contract §2 `boot_report` and ADR 0029 D6.
+- The row is inserted in `startApp` once the media WebSocket and then the HTTP port are
+  bound (`../Fonnus/app/src/main.ts:430–454`), and `call_log.started_at` is when the media
+  stream opened (contract §3), so a call can start before its own process's row exists;
+  `booted_at` is the database's `now()` at the insert (checked 2026-09-24).
+- A `fake` row may have no `is_default` entry for a vendor; the "exactly one default" promise
+  holds for `providers = 'real'` rows only (contract §2, `providers` and `voices`). Nothing
+  in the console assumes one: the only read of `is_default` is
+  `src/app/configuration/configuration-form.tsx:946`, whose `find(…)?.label` falls back to
+  plain "boot value".
 - `tts.voice` is optional on both `tts` branches of a `discriminatedUnion('provider', …)`
   (`../Fonnus/app/src/config/runtime-document.ts:772–796`); `LEAF.tts.voice` is
   `z.string().trim().min(1).max(128)` (:497).

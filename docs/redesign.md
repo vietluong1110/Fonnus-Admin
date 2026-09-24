@@ -104,11 +104,12 @@ pipeline ADRs 0020/0021/0028, and the write posture is ADR 0007 here.
    offer the row's vendors; `tts.voice` offers the selected vendor's voices by `label` and writes
    the `id`, with "boot value (`<label of the is_default entry>`)" first. The cards say "as of boot
    at `<booted_at>`, build `<build_sha>`", because the newest row may describe a process that died
-   without a successor — when the newest call ran a different build after that boot, the tab says
-   so (rendered from the two facts, never inferred). A stored value outside the row's list is an
-   issue that blocks the save: the process refuses such a row **whole** (`reason: provider`) or at
-   the next call (`reason: invalid`), and that call runs on boot config. No `boot_report` row at all
-   (a box before migration 0015, a dev database) is a first-class state: every vendor is offered,
+   after writing it, with no successor or with one that writes no row — when the newest call
+   ran a different build after that boot, the tab says so (rendered from the two facts, never
+   inferred). A stored value outside the row's list is an issue that blocks the save: the
+   process refuses such a row **whole** (`reason: provider`) or at the next call
+   (`reason: invalid`), and that call runs on boot config. No `boot_report` row at all (a box
+   before migration 0015, a dev database) is a first-class state: every vendor is offered,
    `tts.voice` is a text box, and the tab says the id cannot be checked against this box.
    Rule of ADR 0012.
 5. **Show whether the latest row is actually running.** A call's
