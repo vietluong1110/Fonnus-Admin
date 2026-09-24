@@ -18,7 +18,6 @@ import {
   CALL_STATE_LABEL,
   failureLine,
   isKnownConsentOutcome,
-  isKnownTurnSource,
   showCallerData,
   type CallState,
 } from './calls';
@@ -225,7 +224,6 @@ export interface TurnBubbleView {
   /** `failureLine(...)`, or null when `failed_leg` is null (trap 7). */
   failure: string | null;
   source: string | null;
-  sourceKnown: boolean;
 }
 
 /**
@@ -271,7 +269,6 @@ export function bubbleView(
     interrupted: turn.interrupted,
     failure: failureLine(turn.failed_leg, turn.failed_stage, turn.failed_after_ms),
     source: turn.source,
-    sourceKnown: turn.source === null || isKnownTurnSource(turn.source),
   };
 }
 

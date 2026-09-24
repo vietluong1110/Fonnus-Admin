@@ -13,8 +13,15 @@ services:
   admin:
     image: ${ADMIN_IMAGE:-ghcr.io/voidkeishi/fonnus-admin}:${ADMIN_IMAGE_TAG:-local}
     restart: unless-stopped
-    # No `ports:` — Caddy reaches admin:3000 over this project's default network,
-    # and nothing else may. No `build:` either: the box has no source, so a
+    # No `ports:` — Caddy reaches admin:3000 over this project's default network.
+    # Three other things can reach it without Caddy, so without basic_auth and
+    # with any X-Console-Account they like (src/account.ts): postgres on
+    # `fonnus_default`, the box's own host, and the pipeline's `app` and
+    # `freeswitch`, which run with host networking. Each of them already holds
+    # more than a forged console write would give (the pipeline's owner role, or
+    # the box itself). A bridge container that joins `fonnus_default` joins this
+    # list, so adding one is a reason to revisit the header's trust.
+    # No `build:` either: the box has no source, so a
     # forgotten tag must fail at `pull` naming `:local` rather than build something.
     # Every command on the box names the tag:
     #   ADMIN_IMAGE_TAG=$(cat .admin-last-good) docker compose up -d admin

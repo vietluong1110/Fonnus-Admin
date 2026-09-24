@@ -38,9 +38,7 @@ export default function Transcript({
         <div key={turn.idx} className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-2 text-[length:var(--size-eyebrow)] text-text-muted">
             <span>Turn {formatNumber(turn.idx)}</span>
-            {turn.source === null ? null : (
-              <Vocabulary value={turn.source} known={turn.sourceKnown} />
-            )}
+            {turn.source === null ? null : <span>{turn.source}</span>}
           </div>
 
           <Bubble

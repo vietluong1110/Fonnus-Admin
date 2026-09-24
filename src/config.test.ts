@@ -136,6 +136,15 @@ describe('readConfig — the editor credential (ADR 0007)', () => {
     ).toThrow(/"console"/);
   });
 
+  it('judges the role pg logs in as, where a ?user= parameter beats the username', () => {
+    expect(() =>
+      readConfig({ ...DB, EDITOR_DATABASE_URL: `${EDITOR}?user=fonnus` }),
+    ).toThrow(/"fonnus"/);
+    expect(() =>
+      readConfig({ ...DB, EDITOR_DATABASE_URL: 'postgres://fonnus:pw@postgres:5432/fonnus?user=console_editor' }),
+    ).not.toThrow();
+  });
+
   it('refuses to start when the value is not a URL', () => {
     expect(() => readConfig({ ...DB, EDITOR_DATABASE_URL: 'not a url' })).toThrow(
       /EDITOR_DATABASE_URL/,

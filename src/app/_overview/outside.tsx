@@ -15,7 +15,6 @@ import {
   formatWhen,
   isKnownFailedLeg,
   isKnownFailedStage,
-  isKnownTurnSource,
 } from '@/calls';
 import type { DashboardCall, DashboardTurn } from '@/queries/dashboard';
 import Badge from '@/ui/badge';
@@ -123,10 +122,7 @@ export default function Outside({
                       </span>
                     </Td>
                     <Td>
-                      <Vocabulary
-                        value={turn.source}
-                        known={turn.source !== null && isKnownTurnSource(turn.source)}
-                      />
+                      {turn.source ?? '—'}
                     </Td>
                     <Td num>{turn.failed_after_ms === null ? '—' : formatMs(turn.failed_after_ms)}</Td>
                   </LinkRow>

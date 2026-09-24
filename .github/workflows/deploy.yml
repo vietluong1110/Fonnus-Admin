@@ -8,9 +8,11 @@ on:
   push:
     branches: [main]
 
+# Read-only by default. Only build-admin may push to GHCR: the test job runs
+# every dependency's install scripts, and a token that can overwrite an image tag
+# the box rolls back to must not be in reach of them.
 permissions:
   contents: read
-  packages: write
 
 # One deploy at a time, and never cancel one in flight: a cancelled run can leave
 # the box mid-swap.
@@ -44,6 +46,9 @@ jobs:
   build-admin:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -112,13 +117,17 @@ jobs:
           test -n "$VPS_HOST" || { echo "::error::variable VPS_HOST is unset in the production environment"; exit 1; }
       # Compose file, deploy script and Caddyfile only. The live .env and
       # caddy/users are hand-maintained on the box and never travel through CI.
+      # The target reaches the scripts as environment, never as `${{ }}` spliced
+      # into the script text, so a variable's value is data and not shell.
       - name: Copy compose file, deploy script and Caddyfile
+        env:
+          TARGET: ${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}
         run: |
-          scp -i ~/.ssh/deploy_key compose.yml ops/deploy.sh \
-            "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}:~/fonnus-admin/"
-          scp -i ~/.ssh/deploy_key caddy/Caddyfile \
-            "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}:~/fonnus-admin/caddy/"
+          scp -i ~/.ssh/deploy_key compose.yml ops/deploy.sh "$TARGET:~/fonnus-admin/"
+          scp -i ~/.ssh/deploy_key caddy/Caddyfile "$TARGET:~/fonnus-admin/caddy/"
       - name: Deploy
+        env:
+          TARGET: ${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}" \
-            "cd ~/fonnus-admin && ADMIN_IMAGE_TAG=${{ github.sha }} bash deploy.sh"
+          ssh -i ~/.ssh/deploy_key "$TARGET" \
+            "cd ~/fonnus-admin && ADMIN_IMAGE_TAG=$GITHUB_SHA bash deploy.sh"

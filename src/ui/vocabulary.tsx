@@ -17,7 +17,7 @@ export default function Vocabulary({
 }: {
   value: string | null;
   known: boolean;
-  /** Omitted (or undefined) renders the value as plain text, as `turn.source` does. */
+  /** Omitted (or undefined) renders the value as plain text. */
   tone?: BadgeTone | undefined;
 }) {
   if (value === null) return <>—</>;

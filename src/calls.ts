@@ -76,8 +76,13 @@ export const ANNOTATION_LABELS = [
   'other',
 ] as const;
 
-/** Contract §3.1 — `turn.source`. */
-export const TURN_SOURCES = ['speech_final', 'utterance_end', 'carry_over', 'reopen'] as const;
+/*
+ * Contract §3.1 — `turn.source` has no list here on purpose. Its vocabulary is
+ * open: `carry_over` and `reopen` are fixed, but a turn-end signal is whatever
+ * the speech-to-text vendor named its frame (`speech_final`, `end`,
+ * `end_of_utterance`, …), so a new vendor adds values without a migration. The
+ * value is printed as-is, never checked against a list.
+ */
 
 /**
  * A value outside a fixed vocabulary is rendered as-is with a warning, never
@@ -131,10 +136,6 @@ export function isKnownEndReason(value: string): boolean {
 
 export function isKnownConsentOutcome(value: string): boolean {
   return (CONSENT_OUTCOMES as readonly string[]).includes(value);
-}
-
-export function isKnownTurnSource(value: string): boolean {
-  return (TURN_SOURCES as readonly string[]).includes(value);
 }
 
 export function isKnownFailedLeg(value: string): boolean {

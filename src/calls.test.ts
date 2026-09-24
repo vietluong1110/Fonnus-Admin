@@ -24,7 +24,6 @@ import {
   isKnownAnnotationLabel,
   isKnownFailedLeg,
   isKnownFailedStage,
-  isKnownTurnSource,
   isOrdinaryEnding,
   isCapEndReason,
   isUnconsentedOutcome,
@@ -243,9 +242,6 @@ describe('fixed vocabularies — contract §3.1', () => {
     expect(isKnownEndReason('sip_bye')).toBe(false);
     expect(isKnownConsentOutcome('hung_up_before_disclosure')).toBe(true);
     expect(isKnownConsentOutcome('denied')).toBe(false);
-    expect(isKnownTurnSource('utterance_end')).toBe(true);
-    expect(isKnownTurnSource('carry_over')).toBe(true);
-    expect(isKnownTurnSource('barge_in')).toBe(false);
     expect(isKnownFailedLeg('llm')).toBe(true);
     expect(isKnownFailedLeg('tts')).toBe(true);
     // The speech-to-text leg never fails a reply (contract §3.1).

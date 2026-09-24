@@ -18,7 +18,6 @@ import {
   formatWhen,
   isKnownConsentOutcome,
   isKnownEndReason,
-  isKnownTurnSource,
   isUuid,
   maskPhone,
   parseCostVnd,
@@ -262,7 +261,6 @@ export default async function CallPage({
     return {
       idx: turn.idx,
       source: turn.source,
-      sourceKnown: turn.source === null || isKnownTurnSource(turn.source),
       interrupted: turn.interrupted,
       failure: failureLine(turn.failed_leg, turn.failed_stage, turn.failed_after_ms),
       preview: preview(bubble?.callerText ?? null, turn.assistant_text),

@@ -105,9 +105,13 @@ function readEditorDatabaseUrl(env: Partial<NodeJS.ProcessEnv>): string | undefi
         'string, in the same form as DATABASE_URL (see .env.example).',
     );
   }
-  if (url.username !== EDITOR_ROLE) {
+  // The role pg will actually log in as: pg-connection-string lets a `?user=`
+  // query parameter win over the URL's username, so reading the username alone
+  // would pass `console_editor:x@…?user=fonnus`.
+  const role = url.searchParams.get('user') || decodeURIComponent(url.username);
+  if (role !== EDITOR_ROLE) {
     throw new Error(
-      `EDITOR_DATABASE_URL must connect as role ${EDITOR_ROLE} — it names "${url.username}" (read contract §2)`,
+      `EDITOR_DATABASE_URL must connect as role ${EDITOR_ROLE} — it names "${role}" (read contract §2)`,
     );
   }
   return value;

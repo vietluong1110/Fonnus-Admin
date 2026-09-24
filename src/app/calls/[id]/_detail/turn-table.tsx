@@ -23,7 +23,6 @@ import { usePlayback } from '../playback-provider';
 export interface TurnTableRow {
   idx: number;
   source: string | null;
-  sourceKnown: boolean;
   interrupted: boolean;
   /** `failureLine(...)`, or null when `failed_leg` is null (trap 7). */
   failure: string | null;
@@ -102,11 +101,7 @@ export default function TurnTable({
             >
               <span className="text-right font-num tabular-nums">{formatNumber(row.idx)}</span>
               <span className="truncate text-[length:var(--size-eyebrow)] text-text-muted">
-                {row.source === null ? (
-                  '—'
-                ) : (
-                  <Vocabulary value={row.source} known={row.sourceKnown} />
-                )}
+                {row.source ?? '—'}
               </span>
               <span className="flex flex-wrap items-center gap-1.5">
                 {row.interrupted ? <Badge tone="terracotta">interrupted</Badge> : null}
