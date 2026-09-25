@@ -8,8 +8,15 @@
  * The partition is the pipeline's (`../Fonnus/PIPELINE_ARCHITECTURE.md` §6,
  * copied into `src/latency.ts`): `endpoint_wait + llm_ttft + tts_ttfb + send`
  * tile `caller_perceived_ms` and the last three tile `pipeline_ms`, while
- * `stt_emit` overlaps `endpoint_wait` and `playback` is advisory — so those two
- * are drawn outlined, as a measurement that is not a share of the whole.
+ * `stt_emit` overlaps `endpoint_wait`, `playback` is advisory and
+ * `holding_line` runs inside the pipeline span — so those three are drawn
+ * outlined, as a measurement that is not a share of the whole.
+ *
+ * On a turn that spoke a holding line (ADR 0030) the four legs tile the wait
+ * for the answer, not `caller_perceived_ms`, which ends at the line. The bar
+ * stays the answer's four legs — P50s over different turn sets do not add, so
+ * `holding_line` is never laid into it — and the card says how many turns in
+ * the window heard a line first.
  */
 
 import { formatMs, formatNumber } from '@/calls';
@@ -33,6 +40,7 @@ const TONE: Record<LegName, string> = {
   tts_ttfb: 'var(--chart-2)',
   send: 'var(--info)',
   playback: 'var(--chart-3)',
+  holding_line: 'var(--chart-3)',
 };
 
 const IN_PARTITION: readonly string[] = PARTITION_LEGS;
@@ -132,6 +140,17 @@ export default function ReplyComposition({ data }: { data: Dashboard }) {
             })}
           </div>
 
+          {data.holdingLineTurns === 0 ? null : (
+            // The glossary's name opens the sentence: `Term` renders it as
+            // written, capitalised, and the screen writes no name of its own.
+            <Caveat className="mt-2">
+              <HoldingLine />: on {formatNumber(data.holdingLineTurns)} turn
+              {data.holdingLineTurns === 1 ? '' : 's'} the caller heard it first — before the
+              answer, or instead of one that never became audible; this bar is the answer&apos;s
+              four legs.
+            </Caveat>
+          )}
+
           {/* Only what changes with the window is written; what the legs mean
               is on each name's tooltip. */}
           {missing.length === 0 ? null : (
@@ -206,6 +225,12 @@ export default function ReplyComposition({ data }: { data: Dashboard }) {
       </Table>
     </Card>
   );
+}
+
+/** The leg's glossary name, inline in a sentence — the screen writes no name of its own. */
+function HoldingLine() {
+  const term = termFor('leg', 'holding_line');
+  return term === null ? null : <Term term={term} layout="inline" />;
 }
 
 function Legend({ outlined, label }: { outlined: boolean; label: string }) {

@@ -306,6 +306,15 @@ export function bubbleLengthMs(turn: TurnRow): { caller: number | null; assistan
  * "bubble length and where a bubble seeks to"; `../Fonnus/docs/runbook.md` §2.5
  * row 10). FreeSWITCH's `playback_start` is advisory and later, and stands in
  * only when `first_audio_out` was never stamped.
+ *
+ * Both are the answer's marks on a turn that spoke a holding line first (ADR
+ * 0030 decision 4): `playback_start` is stamped only for the generation whose
+ * answer became audible, on the first `chunk_played` past the line's bytes
+ * (`../Fonnus/app/src/session/effect-runner.ts:568-586`, `answerGen` set at
+ * :660), so the fallback never lands on the line — though it can read up to
+ * ~250 ms late after a line that failed mid-way. The line itself
+ * (`holding_line_out`) is not the assistant bubble's start: `assistant_text`
+ * never contains it.
  */
 export function assistantStartWallMs(
   marks: Partial<Record<Stage, number>>,

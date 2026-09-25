@@ -478,6 +478,21 @@ describe('differingKeys', () => {
     );
     expect(differingKeys([{ A: 1 }, { A: 1, B: null }])).toEqual(['B']);
   });
+
+  it('never names faq, and faq alone does not split the config grouping (contract §3.4)', () => {
+    // `config_snapshot.faq` is the tenant's FAQ entries as read, ~8 KB a call.
+    const faqA = { ...SNAPSHOT_A, faq: { count: 1, entries: [{ key: 'gio_mo_cua', question: 'q', answer: 'a', description: 'd' }] } };
+    const faqB = { ...SNAPSHOT_A, faq: { count: 1, entries: [{ key: 'gio_mo_cua', question: 'q', answer: 'b', description: 'd' }] } };
+    expect(differingKeys([faqA, faqB])).toEqual([]);
+    // Present on one, absent on the other: still no column, still one group.
+    expect(differingKeys([faqA, SNAPSHOT_A])).toEqual([]);
+    expect(differingKeys([faqA, { ...SNAPSHOT_B, faq: faqA.faq }])).toEqual(['TTS_FLUSH_MS']);
+    const group = (snapshot: Record<string, unknown>) =>
+      groupKey(call({ config_snapshot: snapshot }), turn(), 'config');
+    expect(group(faqA)).toBe(group(faqB));
+    expect(group(faqA)).toBe(group(SNAPSHOT_A));
+    expect(group(faqA)).not.toBe(group(SNAPSHOT_B));
+  });
 });
 
 describe('aggregate', () => {
@@ -874,6 +889,68 @@ describe('aggregate', () => {
       { leg: 'llm', stage: null, turns: 1 },
       { leg: 'tts', stage: 'total', turns: 1 },
     ]);
+  });
+
+  describe('the holding line (ADR 0030)', () => {
+    const withLine = [
+      ...turns,
+      // The line played, then the answer: inside every percentile.
+      turn({
+        call_id: 'c1',
+        idx: 3,
+        caller_perceived_ms: 600,
+        pipeline_ms: 1_900,
+        marks: {
+          speech_end: 20_000,
+          endpoint_decision: 20_200,
+          holding_line_out: 20_600,
+          llm_first_token: 21_800,
+          tts_first_byte: 21_950,
+          first_audio_out: 22_100,
+        },
+      }),
+      // The line played and the answer never became audible.
+      turn({
+        call_id: 'c1',
+        idx: 4,
+        caller_perceived_ms: 700,
+        failed_leg: 'llm',
+        failed_stage: 'total',
+        marks: { speech_end: 30_000, endpoint_decision: 30_200, holding_line_out: 30_700 },
+      }),
+    ];
+
+    it('lists a line-only turn as never audible, saying the line played', () => {
+      const d = aggregate(calls, withLine, 'none', WINDOW, NOW);
+      expect(d.outside.map((t) => [t.call_id, t.idx, t.holdingLine])).toEqual([
+        ['c2', 1, false],
+        ['c1', 4, true],
+      ]);
+      // It still has a caller_perceived_ms, which is in that percentile.
+      expect(d.perceived.count).toBe(4);
+      expect(d.pipeline.count).toBe(3);
+    });
+
+    it('aggregates holding_line over the turns carrying both of its marks', () => {
+      const d = aggregate(calls, withLine, 'none', WINDOW, NOW);
+      expect(d.legs.holding_line).toEqual({ count: 2, p50: 400, p95: 500, max: 500 });
+      expect(aggregate(calls, turns, 'none', WINDOW, NOW).legs.holding_line).toEqual({
+        count: 0,
+        p50: null,
+        p95: null,
+        max: null,
+      });
+    });
+
+    it('counts the turns that heard a line, for the reply-composition caveat', () => {
+      expect(aggregate(calls, withLine, 'none', WINDOW, NOW).holdingLineTurns).toBe(2);
+      expect(aggregate(calls, turns, 'none', WINDOW, NOW).holdingLineTurns).toBe(0);
+    });
+
+    it('keeps the median reply to the four partition legs', () => {
+      const d = aggregate(calls, withLine, 'none', WINDOW, NOW);
+      expect(d.medianReply.map((leg) => leg.leg)).toEqual(['endpoint_wait', 'llm_ttft', 'tts_ttfb', 'send']);
+    });
   });
 
   it('lays the four partition legs out as the composition of a median reply', () => {

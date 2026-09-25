@@ -1,7 +1,8 @@
 /**
  * The **contract file** (ADR 0021 Decision 2): everything a console needs to
- * render, validate and restore a `runtime_config` document, in one file that
- * can be copied into another repo as it stands.
+ * render, validate and restore the documents it edits — a `runtime_config`
+ * document and, since ADR 0031, one `faq_entry` row — in one file that can be
+ * copied into another repo as it stands.
  *
  * It imports `zod` and `../domain/speakable.js` — nothing else, ever. That is
  * the whole point: the admin console copies this file and `domain/speakable.ts`
@@ -109,7 +110,7 @@ export type TtsProviderValue = (typeof TTS_PROVIDER_VALUES)[number];
 
 /**
  * The texts this build ships with (ADR 0021 Decision 4): the default of each
- * of the five text keys, and the target of the console's "restore" — a new row
+ * of the six text keys, and the target of the console's "restore" — a new row
  * carrying one of these strings. They are no longer "in code on purpose": a
  * tenant's row may replace any of them, effective on the next call, under the
  * mechanical rules of `LEAF.text` below.
@@ -153,7 +154,7 @@ export const SHIPPED_TEXT = {
     // "anh chị", never "anh/chị": VERIFIED on the box 2026-09-05 — Cartesia
     // Sonic treats the slash as a token boundary and spells the word before it
     // out letter by letter ("A N H chị"). The same reason the system prompt
-    // forbids the character in the model's own replies, and the reason the four
+    // forbids the character in the model's own replies, and the reason the five
     // spoken texts refuse one below.
     'Cuộc gọi được ghi âm để xử lý yêu cầu của anh, chị và lưu hồ sơ. ' +
     'Em có thể giúp gì cho mình ạ?',
@@ -170,6 +171,16 @@ export const SHIPPED_TEXT = {
   canned_farewell:
     'Dạ, em xin phép kết thúc cuộc gọi tại đây. ' +
     'Anh chị vui lòng gọi lại nếu cần thêm hỗ trợ ạ. Em cảm ơn anh chị.',
+
+  // The holding line (ADR 0030): what the caller hears when the answer is
+  // slow, rotated by turn index so a long call does not repeat one phrase.
+  // A promise to answer, never an answer — none of them says anything the
+  // reply could contradict.
+  holding_lines: [
+    'Dạ, anh chị chờ em một lát ạ.',
+    'Dạ, em xem giúp anh chị ngay ạ.',
+    'Dạ, anh chị đợi em một chút nhé.',
+  ],
 } as const;
 
 /**
@@ -229,7 +240,8 @@ function nameIfInvisible(ch: string): string {
 }
 
 /**
- * One of the four **spoken texts** — the greeting and the three canned lines.
+ * One of the **spoken texts** — the greeting, the three canned lines, each
+ * holding line and, since ADR 0031, a FAQ entry's answer.
  * Beyond being a non-empty text of sane length, two mechanical rules
  * (ADR 0021 Decision 4), both refusals rather than repairs:
  *
@@ -309,6 +321,8 @@ export const LEAF = {
     max_turn_reopens: z.int().nonnegative(),
     no_input_timeout_ms: z.int().positive(),
     farewell_grace_ms: z.int().positive(),
+    /** How long a committed turn waits for its answer before the holding line (ADR 0030); 0 = at once. */
+    holding_line_after_ms: z.int().nonnegative(),
     stt_mute_on_first_audio: z.boolean(),
     barge_in_enabled: z.boolean(),
     barge_in_min_words: z.int().positive(),
@@ -573,6 +587,8 @@ export const LEAF = {
     canned_reprompt: spokenText('text.canned_reprompt'),
     canned_degraded: spokenText('text.canned_degraded'),
     canned_farewell: spokenText('text.canned_farewell'),
+    /** One to four, rotated by turn index (ADR 0030). */
+    holding_lines: z.array(spokenText('text.holding_lines')).min(1).max(4),
   },
 } as const;
 
@@ -686,6 +702,7 @@ export const runtimeConfigSchema = z.strictObject({
       max_turn_reopens: LEAF.turn.max_turn_reopens.optional(),
       no_input_timeout_ms: LEAF.turn.no_input_timeout_ms.optional(),
       farewell_grace_ms: LEAF.turn.farewell_grace_ms.optional(),
+      holding_line_after_ms: LEAF.turn.holding_line_after_ms.optional(),
       stt_mute_on_first_audio: LEAF.turn.stt_mute_on_first_audio.optional(),
       barge_in_enabled: LEAF.turn.barge_in_enabled.optional(),
       barge_in_min_words: LEAF.turn.barge_in_min_words.optional(),
@@ -823,7 +840,7 @@ export const runtimeConfigSchema = z.strictObject({
     ])
     .optional(),
   /**
-   * The four spoken texts and the system prompt (ADR 0021 Decision 4). A leaf
+   * The five spoken texts and the system prompt (ADR 0021 Decision 4). A leaf
    * left out is the shipped text, like every other leaf left out is the boot
    * value.
    */
@@ -834,11 +851,50 @@ export const runtimeConfigSchema = z.strictObject({
       canned_reprompt: LEAF.text.canned_reprompt.optional(),
       canned_degraded: LEAF.text.canned_degraded.optional(),
       canned_farewell: LEAF.text.canned_farewell.optional(),
+      holding_lines: LEAF.text.holding_lines.optional(),
     })
     .optional(),
 });
 
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
+
+/**
+ * The most FAQ entries a tenant may have enabled (ADR 0031 Decision 4): the
+ * router's vendor takes 255 choices, and one of them is `other`. The console
+ * counts the enabled rows before it enables one more; the process reads at most
+ * this many and drops the rest in key order.
+ */
+export const FAQ_MAX_ENTRIES = 254;
+
+/** The router's own answer — "none of the entries" — so never an entry's key. */
+export const FAQ_RESERVED_KEY = 'other';
+
+/**
+ * One FAQ entry as a call sees it (ADR 0031 Decision 2): what the console
+ * validates before it inserts or updates a `faq_entry` row, and what the
+ * process runs on every row it reads. `enabled` is a column, not a field here —
+ * a call only ever reads enabled rows. The table's CHECKs guard the same bounds
+ * and are never stricter; `answer` is a spoken text, so it also holds the two
+ * rules no CHECK can.
+ */
+export const faqEntrySchema = z.strictObject({
+  /** Immutable once written: the router, the snapshot and the trail name the entry by it. */
+  key: z
+    .string()
+    .regex(/^[a-z][a-z0-9_]{0,63}$/, {
+      message: 'key must start with a lowercase letter and hold only a-z, 0-9 and _, at most 64 characters',
+    })
+    .refine((k) => k !== FAQ_RESERVED_KEY, {
+      message: `key must not be '${FAQ_RESERVED_KEY}' — that is the router's answer when no entry fits`,
+    }),
+  /** The clinic's example question. Never spoken. */
+  question: z.string().trim().min(1, { message: 'question must not be empty' }).max(300),
+  answer: spokenText('answer'),
+  /** What the router matches on: when this entry is the answer. */
+  description: z.string().trim().min(1, { message: 'description must not be empty' }).max(200),
+});
+
+export type FaqEntry = z.infer<typeof faqEntrySchema>;
 
 /** The AI disclosure and the recording notice, as the shipped greeting words them. */
 const AI_DISCLOSURE_PHRASE = 'trợ lý AI';

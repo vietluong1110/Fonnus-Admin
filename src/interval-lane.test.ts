@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { HolderKind, TrailVerdict } from './intervals';
+import { HOLDER_KINDS, type HolderKind, type TrailVerdict } from './intervals';
 import {
   anyWithheld,
   DEAF_EXPLANATION,
@@ -23,15 +23,8 @@ import {
   verdictNote,
 } from './interval-lane';
 
-const KINDS: HolderKind[] = [
-  'greeting',
-  'canned',
-  'waiting',
-  'reply',
-  'caller',
-  'silence',
-  'deaf',
-];
+/** Every holder kind, so a kind added upstream is covered by every loop below. */
+const KINDS: readonly HolderKind[] = HOLDER_KINDS;
 
 function segment(over: Partial<Parameters<typeof segmentLabel>[0]> = {}) {
   return {
@@ -76,12 +69,25 @@ describe('segmentStyle — the lane draws the holder (ADR 0003 point 1)', () => 
     expect(segmentStyle('deaf', false).background).toContain('var(--chart-3)');
   });
 
-  it('gives a reply and its wait on a failed turn the error tone, and no other kind (trap 7)', () => {
+  it('draws a holding line in the bot voice, distinct from its reply and its wait (ADR 0030)', () => {
+    const line = segmentStyle('holding', false);
+    expect(line.background).toContain('var(--chart-1)');
+    expect(line.background).not.toContain('repeating-linear-gradient');
+    expect(line).not.toEqual(segmentStyle('reply', false));
+    expect(line).not.toEqual(segmentStyle('waiting', false));
+    expect(line.border).toContain('var(--chart-1)');
+    // Dashed is the lower lane's "a reply never audible"; the line is audible.
+    expect(line.border).not.toContain('dashed');
+  });
+
+  it('gives a failed turn\'s reply, wait and holding line the error tone, and no other kind (trap 7)', () => {
     expect(segmentStyle('reply', true).background).toBe('var(--error)');
+    expect(segmentStyle('holding', true).background).toContain('var(--error)');
+    expect(segmentStyle('holding', true).background).not.toContain('var(--chart-1)');
     expect(segmentStyle('waiting', true).background).toContain('repeating-linear-gradient');
     expect(segmentStyle('waiting', true).background).toContain('var(--error)');
     expect(segmentStyle('waiting', true).background).not.toContain('var(--chart-1)');
-    for (const kind of KINDS.filter((each) => each !== 'reply' && each !== 'waiting')) {
+    for (const kind of KINDS.filter((each) => each !== 'reply' && each !== 'waiting' && each !== 'holding')) {
       expect(segmentStyle(kind, true)).toEqual(segmentStyle(kind, false));
     }
   });
@@ -124,6 +130,7 @@ describe('holderTone \u2014 the holder\u2019s pill', () => {
     for (const kind of KINDS) expect(typeof holderTone(kind)).toBe('string');
     expect(holderTone('greeting')).toBe(holderTone('reply'));
     expect(holderTone('canned')).toBe(holderTone('waiting'));
+    expect(holderTone('holding')).toBe(holderTone('reply'));
     expect(holderTone('caller')).not.toBe(holderTone('reply'));
     expect(holderTone('silence')).toBe('neutral');
     expect(holderTone('deaf')).toBe('neutral');
@@ -240,6 +247,18 @@ describe('laneLegend — one swatch per holder kind the call has', () => {
     expect(legend.hatch).toBe(false);
   });
 
+  it('lists a holding line between the wait and the reply, named by the glossary', () => {
+    const legend = laneLegend([{ kind: 'reply' }, { kind: 'holding' }, { kind: 'waiting' }]);
+    expect(legend.swatches.map((swatch) => swatch.term.name)).toEqual([
+      'Fonnus · preparing reply',
+      'Fonnus · holding line',
+      'Fonnus · reply',
+    ]);
+    expect(legend.swatches[1]?.style).toEqual(segmentStyle('holding', false));
+    // The line is audible: it wears no hatch of its own.
+    expect(laneLegend([{ kind: 'holding' }]).hatch).toBe(false);
+  });
+
   it('keys the hatch only when a waiting or deaf segment wears it', () => {
     expect(laneLegend([{ kind: 'waiting' }]).hatch).toBe(true);
     expect(laneLegend([{ kind: 'deaf' }]).hatch).toBe(true);
@@ -253,7 +272,7 @@ describe('laneLegend — one swatch per holder kind the call has', () => {
 
 describe('rowTint — the Intervals row ground by side', () => {
   it('puts every bot kind on the card ground, the caller on a wash, silence and deaf neutral', () => {
-    for (const kind of ['greeting', 'canned', 'waiting', 'reply'] as const) {
+    for (const kind of ['greeting', 'canned', 'waiting', 'holding', 'reply'] as const) {
       expect(rowTint(kind)).toBe('var(--surface-card)');
     }
     expect(rowTint('caller')).toContain('var(--chart-2)');

@@ -10,9 +10,17 @@
  * what places the playhead on the same scale (`recordingOffsetMs`).
  */
 
-import { costCell, turnCost, type TurnCostInput } from '@/cost';
+import { costCell, PRICE_SOURCE_TIP, turnCost, type TurnCostInput } from '@/cost';
 import { CALL_STATE_LABEL, formatMs, formatNumber, type CallState } from '@/calls';
-import { endOfTurnRows, headPairRows, LEGS, PARTITION_LEGS, TARGETS, type Stage } from '@/latency';
+import {
+  callerPerceivedEnd,
+  endOfTurnRows,
+  headPairRows,
+  LEGS,
+  PARTITION_LEGS,
+  TARGETS,
+  type Stage,
+} from '@/latency';
 import { recordingOffsetMs } from '@/playback';
 import { termFor, type Term } from '@/ui/glossary';
 
@@ -26,7 +34,7 @@ export interface TrackRowView {
   /** Where the dashed target mark sits on the scale, when it falls inside it. */
   target?: number;
   tone: string;
-  /** A measurement outside the partition — `stt_emit` and `playback` (PARTITION_LEGS). */
+  /** A measurement outside the partition — `stt_emit`, `playback`, `holding_line` (PARTITION_LEGS). */
   outlined: boolean;
 }
 
@@ -90,20 +98,24 @@ function markSpan(
  * stored column — the pipeline's own figure — and the target as a dashed mark
  * from the span's start, drawn only when it falls on the scale. A negative
  * stored value is "not measured" and draws no bar; a null one leaves the
- * number to the marks, and the tooltip says so.
+ * number to the marks, and the tooltip says so. `to` is the mark the stored
+ * column ends at: `first_audio_out` for `pipeline_ms`, the earlier of
+ * `holding_line_out` and `first_audio_out` for `caller_perceived_ms`
+ * (`callerPerceivedTo`), so the bar and the number describe one span.
  */
 function headline(
   code: 'pipeline_ms' | 'caller_perceived_ms',
   stored: number | null,
   marks: Partial<Record<Stage, number>>,
   from: Stage,
+  to: Stage,
   earliest: number,
   scaleMax: number,
   targetMs: number,
   targetNote: string,
 ): TrackRowView {
   const base = termFor('span', code) as Term;
-  const drawn = markSpan(marks, from, 'first_audio_out', earliest);
+  const drawn = markSpan(marks, from, to, earliest);
   let value = drawn.value;
   let note = drawn.note;
   let span = drawn.span;
@@ -134,8 +146,19 @@ function headline(
 }
 
 /**
+ * The mark `caller_perceived_ms` ends at (contract §3 `turn`, ADR 0030): the
+ * holding line when it played before the answer — or when the answer never
+ * became audible — else the answer. With neither stamped the row names
+ * `first_audio_out` as missing, the mark every reply is due.
+ */
+function callerPerceivedTo(marks: Partial<Record<Stage, number>>): Stage {
+  const end = callerPerceivedEnd(marks);
+  return end !== undefined && end === marks.holding_line_out ? 'holding_line_out' : 'first_audio_out';
+}
+
+/**
  * The capsule stack of one turn, in the order the screen reads it: the two
- * headline spans, the six legs, model reasoning when the turn has it, and the
+ * headline spans, the legs (six, or seven on a turn that spoke a holding line), model reasoning when the turn has it, and the
  * three end-of-turn spans. Null when the turn has no readable mark at all —
  * there is no scale to draw on.
  */
@@ -156,6 +179,7 @@ export function selectedTurnView(
       turn.pipeline_ms,
       marks,
       'endpoint_decision',
+      'first_audio_out',
       earliest,
       scaleMax,
       TARGETS.pipelineP95Ms,
@@ -166,6 +190,7 @@ export function selectedTurnView(
       turn.caller_perceived_ms,
       marks,
       'speech_end',
+      callerPerceivedTo(marks),
       earliest,
       scaleMax,
       TARGETS.perceivedP95AlarmMs,
@@ -175,6 +200,10 @@ export function selectedTurnView(
 
   const partition: readonly string[] = PARTITION_LEGS;
   for (const leg of LEGS) {
+    // `holding_line` is drawn only on a turn that spoke one: an ordinary turn
+    // was never due a `holding_line_out`, and "—" there would claim a
+    // measurement failed (the `headPairRows` rule).
+    if (leg.name === 'holding_line' && marks.holding_line_out === undefined) continue;
     const drawn = markSpan(marks, leg.from, leg.to, earliest);
     rows.push({
       key: leg.name,
@@ -266,6 +295,13 @@ export function turnCountView(
 ): { note: string | null } {
   return { note: turnCount === 0 && rowsOnRecord > 0 ? CALL_STATE_LABEL[state] : null };
 }
+
+/**
+ * The per-turn TTS cost's tooltip: the price source, and what `turn.tts_chars`
+ * counts — the holding line's characters too when one played (contract §3.1,
+ * ADR 0030), though the transcript shows the answer only.
+ */
+export const TTS_PER_TURN_TIP = `${PRICE_SOURCE_TIP}; the character count includes the holding line when one played, not only the answer`;
 
 /** A turn's three cost cells (ADR 0015 decision 3): STT has no per-turn figure. */
 export interface TurnCostCells {

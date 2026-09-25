@@ -51,7 +51,8 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
     },
     caller_perceived_ms: {
       name: 'Caller-perceived latency',
-      description: 'speech_end → first_audio_out: how long the caller waited in silence.',
+      description:
+        'speech_end → earliest(holding_line_out, first_audio_out): how long the caller waited in silence. On a turn that spoke a holding line the wait ends at the line, not at the answer (pipeline ADR 0030).',
     },
     'llm_first_reasoning → llm_first_token': {
       name: 'Model reasoning',
@@ -119,6 +120,11 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
       description:
         "first_audio_out → playback_start: sink to FreeSWITCH's report of the first played chunk. Advisory, outside the partition.",
     },
+    holding_line: {
+      name: 'Holding line',
+      description:
+        'endpoint_decision → holding_line_out: turn committed to the first byte of the holding line the bot spoke while the answer was still being generated. Present only on a turn that spoke one; outside the partition.',
+    },
   },
 
   // `call_log.end_reason` (contract §3.1).
@@ -159,12 +165,13 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
     reopen: { name: 'Reopened before the reply was heard' },
   },
 
-  // Interval holders (`src/intervals.ts` `HolderKind`). `reply` and `waiting`
-  // take the turn number and `canned` the line through `holderTerm`.
+  // Interval holders (`src/intervals.ts` `HolderKind`). `reply`, `waiting` and
+  // `holding` take the turn number and `canned` the line through `holderTerm`.
   holder: {
     greeting: { name: 'Fonnus · greeting' },
     reply: { name: 'Fonnus · reply' },
     waiting: { name: 'Fonnus · preparing reply' },
+    holding: { name: 'Fonnus · holding line' },
     canned: { name: 'Fonnus · canned line' },
     caller: { name: 'Caller' },
     silence: { name: 'Silence' },
@@ -192,7 +199,7 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
     'key:runtime.version': { name: 'Runtime config row' },
   },
 
-  // The 55 configuration leaves (`src/configuration/flat-keys.ts`); where
+  // The 57 configuration leaves (`src/configuration/flat-keys.ts`); where
   // each sentence comes from is ADR 0013 §Evidence.
   configLeaf: {
     'turn.max_call_duration_sec': {
@@ -222,6 +229,11 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
       name: 'Farewell grace (ms)',
       description:
         'The longest the call stays open after the farewell line before the pipeline hangs up on its own (bounds a lost playback-drain report).',
+    },
+    'turn.holding_line_after_ms': {
+      name: 'Holding line after (ms)',
+      description:
+        'How long a committed turn waits for the first sentence of the answer before the bot speaks a holding line ("anh chị chờ em một lát"); 0 = at once, a value above the LLM first-token bound (LLM_TTFB_MS) never fires; shipped 2 100, the median LLM first token of the baseline (pipeline ADR 0030 §6).',
     },
     'turn.stt_mute_on_first_audio': {
       name: 'Mute STT at first audio',
@@ -450,6 +462,11 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
       name: 'Farewell line',
       description: 'Said when a limit ends the call; same rules.',
     },
+    'text.holding_lines': {
+      name: 'Holding lines',
+      description:
+        'One to four variants of the line spoken while the answer is still being thought out, one per line; the call rotates through them by turn (the first turn hears the first). Each is a spoken text: at most 600 characters, no /, and it must survive the speakable filter unchanged. Never part of the answer text (pipeline ADR 0030).',
+    },
   },
 };
 
@@ -515,7 +532,7 @@ function labelNumber(label: string): number | null {
  */
 export function holderTerm(h: { kind: HolderKind; label: string; turnIdx: number | null }): Term {
   const base = GLOSSARY.holder[h.kind]?.name ?? h.label;
-  if (h.kind === 'reply' || h.kind === 'waiting') {
+  if (h.kind === 'reply' || h.kind === 'waiting' || h.kind === 'holding') {
     const n = h.turnIdx ?? labelNumber(h.label);
     return { name: n === null ? base : `${base} ${String(n)}`, code: h.label };
   }

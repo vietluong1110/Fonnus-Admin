@@ -2,7 +2,7 @@
  * `call_log.config_snapshot`, grouped by key prefix for reading — a rendering
  * choice only (`docs/upstream.md` §Call detail), never a claim about the
  * pipeline's own structure: the column is one flat object plus the nested
- * `runtime` key (`../Fonnus/docs/read-contract.md` §3.4).
+ * `runtime` and `faq` keys (`../Fonnus/docs/read-contract.md` §3.4).
  *
  * Two rules the grouping may never break, both from §3.4 and trap 6:
  *   - no key is ever dropped. A key this console does not know falls to Other
@@ -20,6 +20,8 @@
  * pipeline's 2026-09-17 rename still hold (§3.4's one allowed rename).
  */
 
+import { formatNumber } from '@/calls';
+
 /** The group names, in the order the card renders them. Console-own labels. */
 export const SNAPSHOT_GROUPS = [
   'Speech to text',
@@ -29,6 +31,7 @@ export const SNAPSHOT_GROUPS = [
   'Call limits',
   'Consent & recording',
   'Texts',
+  'FAQ entries',
   'Runtime config row',
   'Other',
 ] as const;
@@ -40,6 +43,9 @@ export interface SnapshotGroup {
   /** Key and value as the column holds them; the caller renders the value. */
   entries: { key: string; value: unknown }[];
 }
+
+/** The nested key holding the FAQ entries the call ran with (§3.4, pipeline ADR 0031). */
+export const SNAPSHOT_FAQ = 'faq';
 
 /*
  * Which group a key belongs to, tried in order: the first rule that matches
@@ -62,7 +68,9 @@ const RULES: { group: SnapshotGroupName; prefixes: readonly string[]; keys: read
   {
     group: 'Turn taking',
     prefixes: ['BARGE_IN_', 'VAD_'],
-    keys: ['MAX_TURN_REOPENS', 'NO_INPUT_TIMEOUT_MS'],
+    // `HOLDING_LINE_AFTER_MS`: how long a committed turn waits before the
+    // holding line (pipeline ADR 0030).
+    keys: ['MAX_TURN_REOPENS', 'NO_INPUT_TIMEOUT_MS', 'HOLDING_LINE_AFTER_MS'],
   },
   {
     group: 'Call limits',
@@ -79,8 +87,9 @@ const RULES: { group: SnapshotGroupName; prefixes: readonly string[]; keys: read
   {
     group: 'Texts',
     prefixes: ['CANNED_'],
-    keys: ['SYSTEM_PROMPT', 'GREETING_TEXT'],
+    keys: ['SYSTEM_PROMPT', 'GREETING_TEXT', 'HOLDING_LINES'],
   },
+  { group: 'FAQ entries', prefixes: [], keys: [SNAPSHOT_FAQ] },
   { group: 'Runtime config row', prefixes: [], keys: ['runtime'] },
 ];
 
@@ -125,4 +134,67 @@ export function groupSnapshot(snapshot: Record<string, unknown>): SnapshotGroup[
     groups.push({ name, entries });
   }
   return groups;
+}
+
+/** One FAQ entry as the call read it; a field that is not a string is null, shown as "—". */
+export interface SnapshotFaqEntry {
+  key: string | null;
+  question: string | null;
+  answer: string | null;
+  description: string | null;
+}
+
+/**
+ * The snapshot's `faq` key (contract §3.4): `{ count, entries: [{ key,
+ * question, answer, description }] }`, the tenant's `faq_entry` rows as the
+ * call read them, present only when the call ran with at least one. Absent is
+ * `none` — no enabled rows, every row refused, or a failed read — and never a
+ * zero. A `count` that is not a non-negative integer is null (not reported);
+ * an entry is kept whatever its shape, with each field it lacks as null, so
+ * no entry the call had is dropped from the card. The texts are the
+ * snapshot's only: nothing here reads `faq_entry`.
+ */
+export type SnapshotFaq =
+  | { kind: 'none' }
+  | { kind: 'entries'; count: number | null; entries: SnapshotFaqEntry[] };
+
+export function snapshotFaq(snapshot: Record<string, unknown>): SnapshotFaq {
+  if (!Object.hasOwn(snapshot, SNAPSHOT_FAQ)) return { kind: 'none' };
+  const faq = asObject(snapshot[SNAPSHOT_FAQ]);
+  const count = faq['count'];
+  const entries = Array.isArray(faq['entries']) ? (faq['entries'] as unknown[]) : [];
+  return {
+    kind: 'entries',
+    count: typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count : null,
+    entries: entries.map((raw) => {
+      const entry = asObject(raw);
+      const field = (name: string): string | null =>
+        typeof entry[name] === 'string' ? entry[name] : null;
+      return {
+        key: field('key'),
+        question: field('question'),
+        answer: field('answer'),
+        description: field('description'),
+      };
+    }),
+  };
+}
+
+/**
+ * The FAQ group's head line. Absent reads as the two things it can mean, never
+ * as "0 entries" (`../Fonnus/docs/console-call-view.md`, FAQ entries).
+ */
+export function faqHeadline(faq: SnapshotFaq): string {
+  if (faq.kind === 'none') return 'No FAQ entries — none enabled, or the read failed';
+  if (faq.count === null) {
+    return `Entry count not reported; ${formatNumber(faq.entries.length)} listed (as the call read them)`;
+  }
+  return `${formatNumber(faq.count)} ${faq.count === 1 ? 'entry' : 'entries'} (as the call read them)`;
+}
+
+/** A jsonb value as fields to read by name; anything but a plain object has none. */
+function asObject(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

@@ -353,6 +353,48 @@ export function valueAt(document: unknown, path: string): unknown {
 }
 
 /**
+ * What a list control expects, said once for the row's tooltip and the
+ * editor's note. `text.holding_lines` names its entry count explicitly:
+ * `boundsOf` reads number bounds only, and the schema's `.min(1).max(4)` on the
+ * array (contract §7, pipeline ADR 0030) would otherwise reach the operator
+ * only as a refusal at review.
+ */
+export function listHelp(path: string): string {
+  if (path === 'llm.params.stop') {
+    return 'one entry per line; a stop sequence that itself contains a line break cannot be written here';
+  }
+  if (path === 'text.holding_lines') return '1 to 4 lines, one per line';
+  return 'one entry per line';
+}
+
+/**
+ * A list value as its entries, one per line — the shape a list control edits —
+ * or null when it is not a non-empty array of strings each on one line (a stop
+ * sequence that is itself a line break, an empty list, a stored value of
+ * another shape), which is then shown as stored JSON rather than folded into
+ * lines that misread it or into nothing.
+ */
+export function listLines(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const lines: string[] = [];
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== 'string' || /[\r\n]/.test(entry)) return null;
+    lines.push(entry);
+  }
+  return lines;
+}
+
+/**
+ * A shipped text as the control writes it (`SHIPPED_TEXT`, ADR 0021 Decision
+ * 4): a spoken line as itself, the holding-line variants one per line, which
+ * is what `documentFromForm` splits them back into.
+ */
+export function shippedFormText(shipped: string | readonly string[] | undefined): string | undefined {
+  if (shipped === undefined || typeof shipped === 'string') return shipped;
+  return shipped.join('\n');
+}
+
+/**
  * The string every control shows for a document: a leaf the document leaves out
  * has no entry, which the form renders as "boot value". Keyed on the stored
  * value's own type rather than on the field's kind, because a stored document

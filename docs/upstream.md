@@ -69,13 +69,13 @@ own zone, so the box and a laptop show the same clock.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_log` | everything above plus `did`, `stt_model`, `tts_model`, `recording_started_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5) — the head says "Call" without a number, never a blank; `recording_started_at` is the origin of the audio ↔ marks mapping (§Artifacts) and null means no turn of the call can be placed on the recording's axis; `artifact_state` + `artifact_key_prefix` decide, through the one `recordingAccess` of ADR 0004, whether a player renders and whether `/calls/[id]/recording` presigns; `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `caller_phone_e164` renders masked in the head and in full only inside the collapsed "Pipeline detail" Call card (ADR 0008). The "Ran on" strip under the head (`ranOnOf`, `src/call-config.ts`) reads `runtime.version` (row #N, else boot config), `STT_PROVIDER` / `TTS_PROVIDER` for each leg's vendor, `stt_model` / `tts_model` for its model, `OPENROUTER_MODEL` for the configured LLM — with a count of turns whose `turn.llm_model` differs, stated as a difference and never called a failover (ASSUMED zero on an ordinary call, PLAN backlog) — `FONNUS_BUILD_SHA`, and `PROVIDERS = fake` as a warning; an absent key reads "not reported" / "not configured", never a guess |
+| `call_log` | everything above plus `did`, `stt_model`, `tts_model`, `recording_started_at`, `stt_audio_ms`, `tts_chars`, `tts_bytes`, `config_snapshot`, `greeting_first_audio_ms` | `caller_phone_e164` null may be age (trap 5) — the head says "Call" without a number, never a blank; `recording_started_at` is the origin of the audio ↔ marks mapping (§Artifacts) and null means no turn of the call can be placed on the recording's axis; `artifact_state` + `artifact_key_prefix` decide, through the one `recordingAccess` of ADR 0004, whether a player renders and whether `/calls/[id]/recording` presigns; `config_snapshot` null = written before the pipeline's migration 0007, rendered "not recorded", and a key the reader does not know is shown, never dropped (contract §3.4, trap 6); `greeting_first_audio_ms` is `first_audio_out − answered` of the greeting (contract §3.5) — measured from the channel answer, not `started_at`; null = not measured (hung up before the first byte, or written before migration 0008). `caller_phone_e164` renders masked in the head and in full only inside the collapsed "Pipeline detail" Call card (ADR 0008). The "Ran on" strip under the head (`ranOnOf`, `src/call-config.ts`) reads `runtime.version` (row #N, else boot config), `STT_PROVIDER` / `TTS_PROVIDER` for each leg's vendor, `stt_model` / `tts_model` for its model, `OPENROUTER_MODEL` for the configured LLM — with a count of turns whose `turn.llm_model` differs, stated as a difference and never called a failover (ASSUMED zero on an ordinary call, PLAN backlog) — `FONNUS_BUILD_SHA`, `PROVIDERS = fake` as a warning, and since row A20 `config_snapshot->'faq'->>'count'` as "N FAQ entries" — the key is absent when the call ran with no enabled entry, which reads "no FAQ entries" (never zero; contract §3.4), and a `count` that is not a non-negative integer reads "FAQ entries: not reported"; an absent key elsewhere reads "not reported" / "not configured", never a guess |
 | `call_log` | `tenant_id` (since row A15) | Only to scope the `boot_report` read below to the call's tenant, the same filter the Configuration tab applies (ADR 0029 D6) |
 | `call_log` | `config_snapshot->>'CARTESIA_VOICE_ID'` / `->>'ELEVENLABS_VOICE_ID'`, `config_snapshot->'runtime'->'config'` (since row A15) | The **effective voice id** (contract §3.4, ADR 0029): present on the call's `TTS_PROVIDER` vendor only, read after `TTS_PROVIDER`, and on a snapshot that names no known vendor whichever of the two keys is present — one function for this card and the Overview's `voice` grouping; the row's `tts.voice` when one ran, else the boot default — the snapshot never says which by itself, so the card reads `runtime.config.tts.voice`: present = "chosen by row #`<runtime.version>`", absent = "boot value" (rule 7 of `docs/redesign.md` §4.2, `layerOf`). The voice **lists** are never in the snapshot; the label comes from `boot_report` below. Rendered as its label in the "Text to speech" group of the snapshot card, "unlisted voice" when no report knows it; the id only in the tooltip |
 | `boot_report` (by `tenant_id`, `booted_at <= started_at`, `order by id desc limit 1`) | `id`, `booted_at`, `build_sha`, `voices` | One read per detail page on the `console` pool: the label of the voice id by ADR 0012 D6 (the newest report booted before the call, or the previous boot's for a call that started between its process's port bind and row insert; a `build_sha` that differs from the call's `FONNUS_BUILD_SHA` adds a caveat, never withholds the label). No row = "unlisted voice", and nothing is said about the box. Parsed as in §Configuration |
 | `call_log` | `greeting_marks` (since row A6) | Contract §3.5: `answered` plus the reply-side keys of the greeting (`tts_first_byte`, `tts_last_byte`, `first_audio_out`, `playback_start`, `playback_end`), written at finalize; null on a call written before migration 0008, a call that never finalized, or one terminated before the greeting was dispatched — then the axis has no greeting block, said in the caption. The block runs from `answered` to `playback_end`, else the latest key present, else `answered` itself (a hairline), placed on the recording clock through `recordingOffsetMs` like a turn (§Audio ↔ marks); it has no `pipeline_ms` of its own, so the lower lane draws no bar under it. `greeting_first_audio_ms` stays the head's number — the same two keys, computed by the pipeline |
 | `consent_record` | `consent_mode`, `disclosure_completed_at`, `granted_at`, `outcome`, `disclosure_text` | — |
-| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | **`caller_text` only when `outcome = 'granted'`** (trap 4) — through `showCallerData(outcome, gate)`, the one gate, which the test-phase switch of ADR 0005 can open; the same function withholds the recording; null text may be age (trap 5); `speech_start_ms` / `speech_end_ms` are offsets into `call.wav` already (§Artifacts, the mapping), so a bubble's voice length is `speech_end_ms − speech_start_ms` and a null pair is a bubble with text but no place on the strip; null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7). "The call" block draws one bar per turn from `pipeline_ms`, on the same axis as the turn blocks: a turn without `first_audio_out` has a null `pipeline_ms` and is drawn as a dashed outline labelled "—" (a reply that never became audible, never a zero); a negative value is the fault of contract §3.2 and is drawn the same way, labelled "not measured" |
+| `turn` (by `call_id`, order `idx`) | `idx`, `caller_text`, `assistant_text`, `interrupted`, `source`, `speech_start_ms`, `speech_end_ms`, `marks`, `caller_perceived_ms`, `pipeline_ms`, `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars`, `tts_bytes`, `failed_leg`, `failed_stage`, `failed_after_ms` | `caller_perceived_ms` is `speech_end → earliest(holding_line_out, first_audio_out)` since pipeline ADR 0030 (contract §3): on a turn that spoke a holding line the caller's silent wait ended at the line, not at the answer, and `pipeline_ms` is unchanged (`endpoint_decision → first_audio_out`); `tts_chars` includes the holding line's characters (§3.1), said in the TTS cost tooltip. **`caller_text` only when `outcome = 'granted'`** (trap 4) — through `showCallerData(outcome, gate)`, the one gate, which the test-phase switch of ADR 0005 can open; the same function withholds the recording; null text may be age (trap 5); `speech_start_ms` / `speech_end_ms` are offsets into `call.wav` already (§Artifacts, the mapping), so a bubble's voice length is `speech_end_ms − speech_start_ms` and a null pair is a bubble with text but no place on the strip; null accounting = "not reported", a different fact from 0; `tokens_cached` is a share of `tokens_in`, not on top of it; `failed_leg IS NOT NULL` is the test for "failed" (`interrupted` alone does not separate a barge-in from a mid-reply failure), a null `failed_stage` under a non-null leg is a provider error, and `failed_after_ms` is the elapsed time from `endpoint_decision`, never the configured bound — the bound is `config_snapshot.LLM_TTFB_MS` and its siblings (trap 7). "The call" block draws one bar per turn from `pipeline_ms`, on the same axis as the turn blocks: a turn without `first_audio_out` has a null `pipeline_ms` and is drawn as a dashed outline labelled "—" (a reply that never became audible, never a zero); a negative value is the fault of contract §3.2 and is drawn the same way, labelled "not measured" |
 | `turn` (the same read) with `call_log.tts_model`, `total_cost_vnd`, `started_at`, `ended_at` | `llm_model`, `tokens_in`, `tokens_out`, `tokens_cached`, `tts_chars` | **Per-turn cost (ADR 0015)**, computed here from `src/contract/pricing.ts` — a byte copy of `../Fonnus/app/src/domain/pricing.ts` `PRICES` and its functions, pinned by `src/contract/pricing.test.ts` (the contract pins no hash for it — an ask in `PLAN.md` §Waiting on) — at the documented constant `VND_PER_USD = 26 500` (`src/cost.ts`; the pipeline reads it from the box `.env`, never snapshots it): LLM = `llmCostUsd({model: llm_model, tokens_in, tokens_out, tokens_cached})`, the cached share charged instead of, never on top of, the input rate (`tokens_cached ≤ tokens_in`, clamped as the pipeline does); TTS = `ttsCostUsd(tts_chars, call_log.tts_model)`; **STT has no per-turn figure** (`stt_audio_ms` is per call, billed per minute) and the cell reads "—" with that reason. A null counter is "not reported", never 0; a model with no price row is `unpriced (<model>)`, the id verbatim — `openai/gpt-oss-120b`, the running model, has none. Every cost header says "list price" once, with the price source and rate in its tooltip. The per-turn sum is **not** `total_cost_vnd` and is never shown as the call's total: the stored figure also covers STT, the greeting and the canned lines (`call_log.tts_chars`), and the LLM usage of an unconsented call that has no `turn` rows (trap 1) — the turn-table footer says so. The unpriced-model list of a call = `stt_model`, `tts_model`, `config_snapshot.OPENROUTER_MODEL` and every distinct `turn.llm_model` without a price row — the configured model is always in it, because an unconsented call has no `turn` rows while its `total_cost_vnd` still includes the LLM usage |
 
 **The stat strip** under the player (row A19): Call duration (`ended_at − started_at`) ·
@@ -89,9 +89,18 @@ Pipeline detail; the "Cost floor" figure is replaced by the total above.
 
 The config snapshot on the detail is grouped by key prefix for reading (Speech to text ·
 Language model · Text to speech · Turn taking · Call limits · Consent & recording · Texts
-· Other, the nested `runtime` key folded under them) — a rendering choice only; a key with an unknown prefix
+· Other, the nested `runtime` key folded under them, and since row A20 **FAQ entries** for the
+nested `faq` key) — a rendering choice only; a key with an unknown prefix
 falls to Other and no key is ever dropped (a test pins that every key of a snapshot lands
-in one group). Each vendor group is headed by `STT_PROVIDER` / `TTS_PROVIDER`, read
+in one group). `HOLDING_LINES` (a JSON array) sits under Texts and renders one line per
+entry, never as JSON; `HOLDING_LINE_AFTER_MS` under Turn taking. The **FAQ entries** group
+reads `config_snapshot.faq = { count, entries: [{ key, question, answer, description }] }`
+(contract §3.4, pipeline ADR 0031): the head says "N entries (as the call read them)", then
+one collapsed entry per element in the snapshot's order (key order), opening to its three
+texts, a missing field shown as "—" and never dropped; the key is absent when the call ran
+with no enabled entry and then the group says "No FAQ entries — none enabled, or the read
+failed", never zero. The texts are the snapshot's only: nothing on the call detail reads
+`faq_entry`, because the row may have been edited since the call. Each vendor group is headed by `STT_PROVIDER` / `TTS_PROVIDER`, read
 before any vendor key; a vendor's keys are present only on a call that ran that vendor,
 so an absent `DEEPGRAM_*` key means "that vendor did not run", never "the default
 applied" (contract §3.4). `PROVIDERS` is `real` / `fake` and says only whether real
@@ -103,13 +112,17 @@ under the groups as raw JSON, shown and never dropped.
 ### The selected turn (capsule tracks since row A19; the waterfall before it)
 
 `turn.marks` is a JSON object of absolute wall-clock instants (ms since epoch), one key
-per stage the turn reached; every key optional (contract §3.2). Eleven keys since
-migration 0014: `speech_end`, `endpoint_decision`, `stt_final`, `llm_first_reasoning`,
+per stage the turn reached; every key optional (contract §3.2). Twelve keys since
+pipeline ADR 0030: `speech_end`, `endpoint_decision`, `stt_final`, `llm_first_reasoning`,
 `llm_first_token`, `llm_last_token`, `tts_first_byte`, `tts_last_byte`, `playback_start`,
-`first_audio_out`, `playback_end`; `src/latency.ts` keeps exactly these and drops any
-other key. The six legs and their end
+`first_audio_out`, `holding_line_out`, `playback_end`; `src/latency.ts` keeps exactly these
+and drops any other key. `holding_line_out` is the first byte of the holding line the bot
+spoke while the answer was still being generated — present only on a turn where the line
+played; `first_audio_out` stays the answer's first byte, and a turn may carry the former
+and not the latter when the answer never became audible. The seven legs and their end
 points, copied from `../Fonnus/app/src/domain/latency.ts` and
-`PIPELINE_ARCHITECTURE.md` §6:
+`PIPELINE_ARCHITECTURE.md` §6 (the contract's closing paragraph of §3.2 says the list may
+gain entries, so the copy is held to the pipeline's by test, not by count):
 
 | Leg | from → to | Render note |
 |---|---|---|
@@ -119,9 +132,13 @@ points, copied from `../Fonnus/app/src/domain/latency.ts` and
 | `tts_ttfb` | `llm_first_token → tts_first_byte` | **first sentence only** |
 | `send` | `tts_first_byte → first_audio_out` | |
 | `playback` | `first_audio_out → playback_start` | outside the partition; advisory |
+| `holding_line` | `endpoint_decision → holding_line_out` | outside the partition; the row is drawn only on a turn that carries the mark (pm decision, row A20) |
 
-`endpoint_wait + llm_ttft + tts_ttfb + send` tiles `caller_perceived_ms` exactly; the last
-three tile `pipeline_ms`. A span whose end precedes its start is a fault, rendered "not
+`endpoint_wait + llm_ttft + tts_ttfb + send` tiles `caller_perceived_ms` exactly on a turn
+without a holding line; on a turn with one, `endpoint_wait + holding_line` tiles it, and the
+headline caller-perceived bar ends at the line (`callerPerceivedEnd`, the copy of the
+pipeline's `callerPerceivedMs` rule). The last three of the four tile `pipeline_ms` on
+every turn. A span whose end precedes its start is a fault, rendered "not
 measured" — never a negative bar, never folded into a percentile. The rows are drawn as
 capsule tracks (`HBar` thick, ADR 0014) on **one shared scale**: origin = the earliest mark
 the turn carries (`speech_end` when present), end = `playback_end` or the latest mark present;
@@ -131,11 +148,11 @@ out when the audio clock has no origin (`effect-runner.ts`: an invented `speech_
 than a missing one), and then a leg can have a span but no place on the axis — it is named
 under the rows as "measured but not placed", never drawn from 0 as if it ran alongside the
 legs before it. The two headline spans lead the rows with their target marks (ADR 0007), the
-six legs follow, then Model reasoning and the three end-of-turn spans; the footer prints the
+legs follow (six, or seven on a holding-line turn), then Model reasoning and the three end-of-turn spans; the footer prints the
 turn's STT · LLM · TTS cost and `tokens_in` / `tokens_out` from the per-turn cost row above. Targets (ADR 0007):
 `pipeline_ms` P95 < 1 200; `caller_perceived_ms` alarm at P95 ≥ 3 600 (aspirational).
 
-Under the six legs the card draws the three **end-of-turn marks** of W2-L3 F2 as
+Under the legs the card draws the three **end-of-turn marks** of W2-L3 F2 as
 spans by mark pair — `llm_first_token → llm_last_token`, `tts_first_byte → tts_last_byte`,
 `playback_start → playback_end` — outside the partition. The pipeline names no leg for
 them (`app/src/domain/__tests__/latency.test.ts` pins that tail spans are not legs), so
@@ -147,8 +164,8 @@ generation's and the end-of-turn marks the last's.
 
 Beside them, since row A6, the one **head pair** of W2-L3 F7: `llm_first_reasoning →
 llm_first_token`, the thinking span of a reasoning model. `llm_first_reasoning` is a head
-mark (first-write-wins) and part of no leg — it sits inside `llm_ttft`, which the six-leg
-row already shows whole, so the pair is a second reading of that leg, not a seventh leg,
+mark (first-write-wins) and part of no leg — it sits inside `llm_ttft`, which the leg
+row already shows whole, so the pair is a second reading of that leg, not a leg of its own,
 and the pipeline names none for it. Absent on a model that emits no reasoning, and then
 absent from the card. On an LLM failover the mark is the primary's and `llm_first_token`
 the fallback's (contract §3.2), a fact the two marks alone cannot show — the caveat under
@@ -171,7 +188,7 @@ so a call's card and its `intervals.txt` must agree.
 | `call_event` where `call_id = $1`, ordered by `seq`, no `LIMIT` (`getCallEvents`, one statement on the `console` pool, after `getCall` and beside `getTurns`; `count(*)` and `max(seq)` are taken from the array) | `seq`, `ts`, `kind`, `type`, `gen`, `turn_idx`, `phase`, `sensitive`, `data` | Read and place by `seq`, never by `ts`: `ts` can tie and step back a few ms between records the pipeline wrote in order (trap 9). No row at all is `RECORD_CALLS` off, a call that died before its first record, a row set the sweep removed, or a call older than migration 0009 — never "nothing happened" (trap 8). A `sensitive` row with null `data` is refused consent or the transcript TTL, told apart by `consent_record.outcome` (trap 10). `chunk_played.data.seq` is the playback module's own counter, not `call_event.seq` (trap 11) — not read here. An unknown `{kind, type}` is a record the pipeline added since (§3.1): ignored by the derivation, counted for completeness. |
 | `call_log` (already read by `getCall`) | `recording_started_at`, `ended_at`, `config_snapshot->>'RECORD_CALLS'` | The clock origin: offset = `ts − recording_started_at`, exact in ms, right to about 100 ms and late-only (§8 rule 1; ADR 0012); a null origin places nothing: the card says the trail cannot be placed on the recording clock and the lane falls back to turn blocks. `ended_at` null is a running call — verdict `open`, not `truncated`. The snapshot key is named in the `absent` verdict only; §3.4 rules for the snapshot apply. |
 | `consent_record` (already read by `getCall`) | `outcome` | Gates every recogniser text on the card through `showCallerData` once (ADR 0005, trap 4); tells withheld from expired on a null `data` (trap 10). |
-| `turn` (already read by `getTurns`) | `idx`, `assistant_text` | The reply interval's bot text, joined by `turn_idx`; `effect/start_reply.data` is `sensitive` and is not read for text. Absent for a canned line and the greeting (§8 rule 2 — they own no turn). |
+| `turn` (already read by `getTurns`) | `idx`, `assistant_text` | The reply interval's bot text, joined by `turn_idx`; `effect/start_reply.data` is `sensitive` and is not read for text. Absent for a canned line and the greeting (§8 rule 2 — they own no turn). `assistant_text` never contains the holding line (§3.1); the line's text comes from the trail, below. |
 | `call_annotation` where `call_id = $1`, ordered by `id`, no `LIMIT` (`getCallAnnotations`, one statement on the `console` pool, beside `getTurns` and `getCallEvents`; since row A7) | `id`, `call_id`, `from_ms`, `to_ms`, `label`, `caller_said`, `note`, `supersedes`, `text_expired_at`, `created_by`, `created_at` | Every row of the call is read and **current** is derived in TypeScript by the contract §3 rule (a labelled row no other row supersedes — `currentAnnotations`, copied from `call-evidence.ts:911-913`), so one fetch serves both the cells and the history. `from_ms` / `to_ms` are already on the recording clock (§8 rule 1) — no conversion; a current row is shown on **every** interval it overlaps (`from_ms < interval.toMs AND to_ms > interval.fromMs`, the ms form of §8's rule — `call-evidence.ts:971`), because the caller's stretch is cut at each `turn_end`. `caller_said` and `note` are caller-derived (trap 4): gated through `showCallerData` like the recogniser texts; `label`, the interval, `created_by`, `created_at` and `supersedes` are never withheld. A null text is one of three things (trap 13): `[withheld]` when the gate is closed; `[expired]` when `text_expired_at` is set (the sweep, counted from the **call's** `started_at`); `—` when both are null (never written) — the cell prints the bare `[expired]` the card's caveat explains, the history prints `[expired <instant>]` as `annotations.txt` does. A row carrying both texts shows both in its cell (`"caller_said" — note: …`), where the reference prints the words alone and leaves the note to `annotations.txt` — the console's history is a collapsed block, so the cell cannot lean on it. `label` is the fixed vocabulary of §3.1 (six values; null only on a retraction) — an unknown value renders with the `Vocabulary` warning, never dropped. A call without granted consent or without `recording_started_at` has no rows by the pipeline's insert gate (§7), not because nothing was wrong on it — the card's caveat says so. `id` and `supersedes` are `bigint` and arrive from `pg` as strings (ASSUMED standard driver behaviour; settled by the first live row). `annotations.txt` in an evidence bundle is the reference for the history view (standing words `current` · `superseded by #N` · `retracted by #N` · `retraction of #N`, `annotationStanding` `:921-930`). No index serves `order by id` beyond the `(call_id, id)` UNIQUE (§3.3) — tens of rows per call at most. |
 
 **`data` keys read**, per `{kind, type}` — the contract names the payload "verbatim, as
@@ -185,6 +202,8 @@ below are verified against the recorder (`../Fonnus/app/src/recording/artifact-r
 | `recorder/finalized` | `failed` (boolean), `mirror.dropped` (number), `mirror.fromSeq` (number) | the verdict — named by §3.1 and trap 8 (not assumed) |
 | `effect/speak_text` | `text` (string, not sensitive) | the greeting's text on the card — ASSUMED (`artifact-recorder.ts:963`) |
 | `effect/speak_canned` | `line` (`reprompt` / `degraded` / `farewell`) | the holder label `bot: <line>` — named by §8 rule 2 (not assumed) |
+| `tts/sentence` | `holding_line` (boolean), `text` (string, not sensitive) | the holding line's text on its interval, from the record of the same `gen` flagged `holding_line = true` — the flag is named by §3.1, the `text` key and the flag's placement in `data` are ASSUMED (`artifact-recorder.ts:467`); a record of the wrong shape reads as no text |
+| `event/holding_line_audible`, `event/holding_line_failed`, `effect/speak_holding_line`, `event/first_sentence_queued` | none | the first is the instant the `holding` interval starts (§8 rule 3); the other three are counted for completeness and read for nothing |
 | `event/stt_partial`, `event/stt_final` | `text` (string, sensitive) | the recogniser cell — ASSUMED (`artifact-recorder.ts:918`); null `data` under a granted outcome is trap 10 (`[expired]`), and a payload that is present without the key reads `[no text in payload]` — the assumption failing would show as that marker, never as the TTL |
 | `event/turn_end` | `source` (string) | printed verbatim in the "segmented, returned nothing (<source>)" signature — named by §8 rule 4 (not assumed); never switched on |
 | `event/timer_fired` | `id` (`no_input`) | the no-input watchdog — named by §8 rule 5 (not assumed) |
@@ -207,12 +226,22 @@ to)` in ms on the recording clock, contiguous from the first record to `recorder
 even when negative (`:622-624` — the recorder can open after the first record; ADR 0010
 Decision 4). The rules, each cited:
 
-- **Bot intervals** (§8 rule 3; `botSpans` `:710-757`): one per intent record —
+- **Bot intervals** (§8 rule 3; `botSpans` `:723-792`): one per intent record —
   `effect/speak_text` → `bot: greeting`; `effect/speak_canned` → `bot: <data.line>`
   (`cannedHolder` `:760-763`, `bot: canned line` when the key is missing);
   `effect/start_reply` → `bot: waiting on reply N` from the intent to the first
   `event/first_audible` of the same `gen`, then `bot: reply N` to the end, with
-  `N = turn_idx ?? gen` and no N at all when both are null. The window is the intent to the
+  `N = turn_idx ?? gen` and no N at all when both are null. Since pipeline ADR 0030 (row
+  A20, `:735-748`, `:765-771`, `:780-785`): when the first `event/holding_line_audible` of
+  the `gen` precedes the answer's `first_audible`, the wait ends at the line and
+  `bot: holding line N` runs from there to the answer's `first_audible` — or, when the
+  answer never became audible, to the later of `synthesis_complete` and the last
+  `playback_completed` of the `gen` before any `first_audible` (a drain before the answer
+  belongs to the line; only drains after it belong to the reply); `event/holding_line_failed`
+  ends nothing; barge-in and `reply_failed` cut as before. The card's row for such a line
+  carries "the answer never became audible" when the reply never produced `first_audible`
+  (`console-call-view.md` item 1 — a line that played and an answer that never came must
+  read as exactly that). The window is the intent to the
   next intent (any `gen`) or the clock end. The end is the first that applies of: the first
   `barge_in/detected` strictly after the intent inside the window (it carries no `gen`);
   the **last** `event/playback_completed` of the `gen` in the window (`playback_completed`
@@ -263,7 +292,10 @@ Decision 4). The rules, each cited:
 - **Bot text on the card**: the greeting from `effect/speak_text.data.text` (ASSUMED key,
   above); a reply from `turn.assistant_text` via `turn_idx`, shown on every call exactly as
   the Transcript card shows it — trap 4 gates `caller_text` only, and the bot's own words
-  are not the caller's; a canned line shows its holder label only.
+  are not the caller's; a holding line from the `tts/sentence` record of its `gen` flagged
+  `holding_line` (ASSUMED key, above; the record is not sensitive — the text is clinic
+  configuration), a departure from the reference, which prints no text for the line
+  (recorded in the `src/intervals.ts` header); a canned line shows its holder label only.
 
 The card's columns since row A19 are From · To · Who (the holder through the glossary,
 ADR 0013; tone by kind) · What was heard (plus the bot's own text in italics on a Fonnus
@@ -320,7 +352,8 @@ gives a statement 10 seconds (`src/db.ts`) and the screen reads every turn in th
 
 Computation is in TypeScript (`src/dashboard.ts`), never in SQL, so the copied pipeline
 rule is the one that runs and the one the tests pin: per-leg spans from `legSpans` over the
-six legs, nearest-rank P50 / P95 / max copied from `../Fonnus/tools/lib/call-report.ts`
+seven legs of `LEGS` (`holding_line` has a row like the others; its sample is turns carrying
+both marks, so the "max of N" caveat usually applies), nearest-rank P50 / P95 / max copied from `../Fonnus/tools/lib/call-report.ts`
 (`sorted[min(n−1, ceil(q·n)−1)]`, null on empty), and the two headline percentiles of
 `caller_perceived_ms` and `pipeline_ms` — which the pipeline's baseline JSON does not carry —
 against the ADR 0007 targets. Buckets take the **call's** `started_at` (a turn has no
@@ -339,7 +372,10 @@ Grouping by `config` keys on the whole `config_snapshot` object ("this exact
 configuration", labelled by its `FONNUS_BUILD_SHA`) and shows only the keys whose values
 differ across the groups, side by side — never the whole object twice: the top-level flat
 keys plus the one derived column `runtime.version`, never the `runtime.config` leaves
-(ADR 0009). `key:<K>` groups on one setting (`config_snapshot->>K`, evaluated in
+(ADR 0009), and never the nested `faq` key (row A20): the entries are an object of some
+kilobytes that changes with every edit of a FAQ entry, so it is neither part of the
+grouping identity nor a differing column — a grouping on `faq.count` is a later ask if
+needed. `key:<K>` groups on one setting (`config_snapshot->>K`, evaluated in
 TypeScript); `key:runtime.version` on `config_snapshot->'runtime'->>'version'`, the
 `runtime_config.id` the call ran under (absent = boot config, grouped "unknown"); the
 three `DEEPGRAM_*` keys read their pre-2026-09-17 `STT_*` spelling as a fallback (contract
@@ -351,8 +387,12 @@ each group share the headline's scale. "Turn failures" counts the window's turns
 `failed_leg · failed_stage` over the turns with marks, a null stage under a set leg
 rendered "provider error" (§3.1). "Where the reply's time goes" is the P50 of each of the
 four partition legs laid end to end — P50s of legs do not sum to the P50 of
-`caller_perceived_ms`, said under the bar. "Turns that never became audible" lists the
-window's turns whose marks lack `first_audio_out` (the reply never became audible) with
+`caller_perceived_ms`, said under the bar; `holding_line` is not laid in (its P50 is over a
+different turn set), and when the window has turns carrying `holding_line_out` a caveat
+names their count and says the bar is the answer's four legs. "Turns that never became
+audible" lists the window's turns whose marks lack `first_audio_out` (the answer never
+became audible — a turn whose holding line played is still listed, marked "holding line
+played", and does count in the caller-perceived percentile) with
 `source`, `interrupted`, `failed_leg`, `failed_stage` (null under a set leg = "provider
 error", §3.1) and `failed_after_ms` (elapsed since `endpoint_decision`, not the bound —
 trap 7); the first six by default, all of them under `outside=all`, each row linking to
@@ -527,7 +567,17 @@ byte for byte from the pipeline — `src/contract/config/runtime-document.ts` an
 `src/contract/domain/speakable.ts`, from `../Fonnus/app/src/config/runtime-document.ts` and
 `../Fonnus/app/src/domain/speakable.ts` — whose bytes the contract's two `contract-hash:`
 lines (§7) pin and `src/contract/contract-hash.test.ts` checks. **Re-copying is the only
-edit** these files ever get; a console-side change fails that test.
+edit** these files ever get; a console-side change fails that test. The copy is at the
+pipeline's `cba8ea1` (row A20): 57 leaves, among them `turn.holding_line_after_ms`
+(`HOLDING_LINE_AFTER_MS`, the wait before a holding line is spoken; 0 = at once, above the
+LLM first-token bound = never) and `text.holding_lines` (`HOLDING_LINES`, one to four spoken
+texts the call rotates through by turn), both from pipeline ADR 0030. `text.holding_lines`
+is the form's one list leaf with a bounded length: the schema holds 1 to 4 entries and the
+spoken-text rules per entry, the hint says so, "restore shipped text" fills the three
+shipped variants one per line, and the review diff and the "last call" cell print a list one
+entry per line, never as JSON (an entry containing a newline, or an empty list, still prints
+as JSON). The copy also carries `faqEntrySchema`, `FaqEntry`, `FAQ_MAX_ENTRIES` and
+`FAQ_RESERVED_KEY` (pipeline ADR 0031), unused until the Info config page (PLAN row A21).
 
 | Table | Columns read | Trap / rule |
 |---|---|---|

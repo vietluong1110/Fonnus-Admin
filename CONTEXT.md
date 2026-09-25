@@ -55,22 +55,25 @@ caveats; the decisions stay with the person reading it.
    total cost and cost per minute (list price, ADR 0015), average turn latency (the mean of
    `pipeline_ms`); then the **transcript** as chat bubbles (caller left, assistant right; a
    click on the bubble selects the turn and seeks, the play glyph plays that utterance and
-   stops) beside **the selected turn** — the six latency legs (`stt_emit`, `endpoint_wait`,
-   `llm_ttft`, `tts_ttfb`, `send`, `playback` — `../Fonnus/PIPELINE_ARCHITECTURE.md` §6),
+   stops) beside **the selected turn** — the latency legs (`stt_emit`, `endpoint_wait`,
+   `llm_ttft`, `tts_ttfb`, `send`, `playback`, and `holding_line` on a turn where the bot
+   spoke a holding line while the answer was still being generated —
+   `../Fonnus/PIPELINE_ARCHITECTURE.md` §6, pipeline ADR 0030),
    the two headline spans against their ADR 0007 targets, the thinking span
    (`llm_first_reasoning → llm_first_token`) and the three end-of-turn spans, drawn as
    capsule tracks on one scale with the playhead, and the turn's LLM and TTS cost and
    tokens under them. Under those, the **Intervals** card (row A1b, ADR 0010), drawn from
    the sequence of contiguous intervals contract §8 derives from `call_event` — who held
-   the line and what the recogniser returned, with the caller-line facts (sound heard while
+   the line (the holding line as the bot speaking, with its text, never as the answer) and
+   what the recogniser returned, with the caller-line facts (sound heard while
    nothing was recognised, sound while the feed was muted) noted inside the latter — with
    the trail's completeness verdict above it, so a non-turn line, an utterance that
    returned nothing and an overtaken partial become visible; rows are tinted by side
    (Fonnus, caller); the annotations of row A7 (`call_annotation` — the current rows on the
    intervals they overlap, texts under the consent rule, the history of corrections and
    retractions) sit under the table. The per-turn research detail (the turn table with
-   per-turn cost and latency, the config snapshot by group with each leaf's plain name, the
-   consent record, the full number and the identity fields) sits last in a collapsed
+   per-turn cost and latency, the config snapshot by group with each leaf's plain name and
+   the FAQ entries the call ran with as the snapshot recorded them, the consent record, the full number and the identity fields) sits last in a collapsed
    "Pipeline detail" section, and the bucket (W2-L1) serves the verbatim files behind a step.
 3. **Overview** (`/`) — over the same window: P50 / P95 / max per leg against the ADR 0007
    targets, calls per bucket (one hour for `24h`, one day up to 45 days, one week beyond;

@@ -77,8 +77,8 @@ describe('the glossary is total, both ways (ADR 0013 decision 6)', () => {
     },
   );
 
-  it('covers the 55 configuration leaves', () => {
-    expect(Object.keys(GLOSSARY.configLeaf)).toHaveLength(55);
+  it('covers the 57 configuration leaves', () => {
+    expect(Object.keys(GLOSSARY.configLeaf)).toHaveLength(57);
   });
 
   it('gives every entry a name and its own code, and every leaf and leg a description', () => {
@@ -158,6 +158,19 @@ describe('holderTerm', () => {
       'Fonnus · preparing reply 2',
     );
     expect(holderTerm({ kind: 'reply', label: 'bot: reply', turnIdx: null }).name).toBe('Fonnus · reply');
+  });
+
+  it('numbers a holding line like its reply (pipeline ADR 0030)', () => {
+    expect(holderTerm({ kind: 'holding', label: 'bot: holding line 4', turnIdx: 4 })).toEqual({
+      name: 'Fonnus · holding line 4',
+      code: 'bot: holding line 4',
+    });
+    expect(holderTerm({ kind: 'holding', label: 'bot: holding line 7', turnIdx: null }).name).toBe(
+      'Fonnus · holding line 7',
+    );
+    expect(holderTerm({ kind: 'holding', label: 'bot: holding line', turnIdx: null }).name).toBe(
+      'Fonnus · holding line',
+    );
   });
 
   it('names the canned line, or says canned line when the event did not', () => {

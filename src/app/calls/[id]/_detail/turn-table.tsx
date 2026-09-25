@@ -24,7 +24,7 @@ import Term from '@/ui/term';
 import Tooltip from '@/ui/tooltip';
 import Vocabulary from '@/ui/vocabulary';
 import { usePlayback } from '../playback-provider';
-import type { TurnCostCells } from './turn-view';
+import { TTS_PER_TURN_TIP, type TurnCostCells } from './turn-view';
 
 /** One row, prepared on the server: no query result crosses the boundary. */
 export interface TurnTableRow {
@@ -129,7 +129,7 @@ export default function TurnTable({ rows, spans }: { rows: TurnTableRow[]; spans
                     <Caveat as="span">list price</Caveat>
                   </span>
                 </Th>
-                <Th align="end" hint={PRICE_SOURCE_TIP}>
+                <Th align="end" hint={TTS_PER_TURN_TIP}>
                   TTS cost
                 </Th>
                 <Th align="end" hint="tokens_in; of which cached in each cell's tooltip">

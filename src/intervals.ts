@@ -15,7 +15,11 @@
  *    `intervals.txt` of the same call read the same;
  *  - an `Interval` carries facts and never caller text. Text is resolved once,
  *    in `intervalCells`, through the single gate `showCallerData` (ADR 0005);
- *    the derivation has nothing to leak.
+ *    the derivation has nothing to leak;
+ *  - a holding line's interval shows the line's text. The reference prints no
+ *    text for it; `../Fonnus/docs/console-call-view.md` item 1 asks for the
+ *    line shown with its text, as the bot speaking and not as the answer, so
+ *    `botTextOf` reads it off the flagged `tts/sentence` record (§8 rule 2).
  *
  * This module is pure: no Next.js, no React, no database.
  */
@@ -245,13 +249,22 @@ function mirrorVerdict(terminal: EventRow | undefined): { dropped: number; fromS
 // ── the intervals: the whole recording clock, accounted for ─────────────
 
 /** Who held the line (`../Fonnus/docs/console-call-view.md` holder vocabulary). */
-export type HolderKind = 'greeting' | 'canned' | 'waiting' | 'reply' | 'caller' | 'silence' | 'deaf';
+export type HolderKind =
+  | 'greeting'
+  | 'canned'
+  | 'waiting'
+  | 'holding'
+  | 'reply'
+  | 'caller'
+  | 'silence'
+  | 'deaf';
 
 /** Every holder kind, in the order a legend lists them. */
 export const HOLDER_KINDS = [
   'greeting',
   'canned',
   'waiting',
+  'holding',
   'reply',
   'caller',
   'silence',
@@ -260,7 +273,10 @@ export const HOLDER_KINDS = [
 
 export interface Holder {
   kind: HolderKind;
-  /** The pipeline's own string: `bot: reply 3`, `bot: farewell`, `caller`, `silence`, `deaf`. */
+  /**
+   * The pipeline's own string: `bot: reply 3`, `bot: holding line 3`,
+   * `bot: farewell`, `caller`, `silence`, `deaf`.
+   */
   label: string;
   turnIdx: number | null;
   gen: number | null;
@@ -360,6 +376,9 @@ const NO_TEXT = '[no text in payload]';
  *     `event/reply_failed` ends the wait, and so does `event/synthesis_complete`.
  *  3. A committed turn shows its wait — intent → first audible byte — as
  *     `bot: waiting on reply N`: that stretch is silence the caller sits through.
+ *     When the reply's holding line became audible first, the wait ends there
+ *     and `bot: holding line N` runs to the answer's first audible byte (ADR
+ *     0030); the line's own drains are not the reply's end.
  *  4. Between bot intervals the line is the caller's, cut at each
  *     `event/turn_end`; a segment with any sound or text is `caller`, one with
  *     none is `silence`.
@@ -502,7 +521,7 @@ function unheardAt(t: number, muted: Stretch[]): boolean {
 
 /**
  * Every stretch the bot held the line, in order, clamped to the clock
- * (`call-evidence.ts:710-757`). Whether the caller's sound was heard across any
+ * (`call-evidence.ts:723-792`). Whether the caller's sound was heard across any
  * of them is not decided here: `mutedStretches` reads that off the trail.
  *
  * Known reference bug carried as written (`../Fonnus/ISSUES.md` L10-260917-1,
@@ -525,8 +544,25 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
     const mine = (p: Placed, key: string): boolean =>
       p.key === key && gen !== null && p.r.gen === gen && p.t >= from && p.t <= windowEnd;
     const audible = placed.find((p) => mine(p, 'event/first_audible'));
-    const drains = placed.filter((p) => mine(p, 'event/playback_completed'));
+    // The holding line (ADR 0030, `call-evidence.ts:735-748`) is audio of the
+    // reply's own generation, sent while the answer was still coming. Its drain
+    // is not the reply's: only a drain after the answer's first audible byte
+    // ends the reply. `effect/speak_holding_line`, `event/holding_line_failed`
+    // and `event/first_sentence_queued` are not read here: a failed line ends
+    // nothing, and the order itself decides no boundary.
+    const line = placed.find((p) => mine(p, 'event/holding_line_audible'));
+    const drains = placed.filter(
+      (p) =>
+        mine(p, 'event/playback_completed') &&
+        (line === undefined || (audible !== undefined && p.t >= audible.t)),
+    );
     const lastDrain = drains[drains.length - 1];
+    // With no answer audible, every drain of the generation is the line's.
+    const lineDrains =
+      line !== undefined && audible === undefined
+        ? placed.filter((p) => mine(p, 'event/playback_completed'))
+        : [];
+    const lastLineDrain = lineDrains[lineDrains.length - 1];
     const barge = placed.find((p) => p.key === 'barge_in/detected' && p.t > from && p.t <= windowEnd);
     const failed = placed.find((p) => mine(p, 'event/reply_failed'));
     // A reply that synthesized no audio at all: the engine unmutes and gives
@@ -539,7 +575,15 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
     if (barge !== undefined) to = barge.t;
     else if (lastDrain !== undefined) to = lastDrain.t;
     else if (audible === undefined && failed !== undefined) to = failed.t;
-    else if (audible === undefined && synthesized !== undefined) to = synthesized.t;
+    else if (audible === undefined && line !== undefined) {
+      // An empty answer behind an audible line (`call-evidence.ts:765-771`):
+      // the engine hands the line back only once the answer is over AND the
+      // line has drained, whichever of the two comes last; with either missing
+      // it never did.
+      if (synthesized !== undefined && lastLineDrain !== undefined) {
+        to = Math.max(synthesized.t, lastLineDrain.t);
+      }
+    } else if (audible === undefined && synthesized !== undefined) to = synthesized.t;
     to = Math.min(Math.max(to, from), windowEnd);
     const audibleAt = audible === undefined ? null : Math.min(Math.max(audible.t, from), to);
     const heard = audible !== undefined;
@@ -548,6 +592,7 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
       const idx = intent.r.turnIdx;
       const reply = n === null ? 'bot: reply' : `bot: reply ${String(n)}`;
       const waiting = n === null ? 'bot: waiting on reply' : `bot: waiting on reply ${String(n)}`;
+      const holding = n === null ? 'bot: holding line' : `bot: holding line ${String(n)}`;
       const holder = (kind: HolderKind, label: string): Holder => ({
         kind,
         label,
@@ -555,12 +600,17 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
         gen,
         audible: heard,
       });
-      if (audibleAt === null) {
-        out.push({ from, to, holder: holder('waiting', waiting), deaf: false });
-        continue;
+      // The wait ends at whichever the caller heard first: the holding line or
+      // the answer (`call-evidence.ts:780-785`).
+      const lineAt = line === undefined ? null : Math.min(Math.max(line.t, from), audibleAt ?? to);
+      const waitEnd = lineAt ?? audibleAt ?? to;
+      out.push({ from, to: waitEnd, holder: holder('waiting', waiting), deaf: false });
+      if (lineAt !== null) {
+        out.push({ from: lineAt, to: audibleAt ?? to, holder: holder('holding', holding), deaf: false });
       }
-      out.push({ from, to: audibleAt, holder: holder('waiting', waiting), deaf: false });
-      out.push({ from: audibleAt, to, holder: holder('reply', reply), deaf: false });
+      if (audibleAt !== null) {
+        out.push({ from: audibleAt, to, holder: holder('reply', reply), deaf: false });
+      }
       continue;
     }
     const greeting = intent.key === 'effect/speak_text';
@@ -685,6 +735,9 @@ function signalRuns(owned: Placed[]): { source: string | null; count: number }[]
 
 // ── the cells: the one place text is resolved ───────────────────────────
 
+/** The holding line's note when its answer never became audible. */
+export const ANSWER_NEVER_AUDIBLE = 'the answer never became audible';
+
 /** One interval as the card prints it — every cell a string, text already gated. */
 export interface IntervalCell {
   /** Seconds on the recording clock, as `intervals.txt` prints them (`:1041-1043`). */
@@ -696,6 +749,12 @@ export interface IntervalCell {
   callerLine: string;
   recogniser: string;
   botText: string | null;
+  /**
+   * A holding line whose answer never produced `event/first_audible` — the
+   * stretch ended at the line's drain, at `synthesis_complete`, or at
+   * `reply_failed` — says so beside the line's text (console-call-view item 1).
+   */
+  botNote: string | null;
   unsupported: boolean;
   /**
    * The current annotations this interval overlaps — a fourth fact beside the
@@ -743,6 +802,7 @@ export function intervalCells(
     callerLine: callerLineCell(interval),
     recogniser: recogniserCell(interval, text),
     botText: botTextOf(interval, rows, { assistantText: ctx.assistantText }),
+    botNote: interval.holder.kind === 'holding' && interval.holder.audible === false ? ANSWER_NEVER_AUDIBLE : null,
     unsupported: interval.unsupported,
     annotations: annotationCellItems(current, interval, { showCaller }),
     seekMs: Math.max(0, interval.fromMs),
@@ -813,9 +873,12 @@ function sttText(
  * `effect/speak_text.data.text` — an ASSUMED key, read per
  * `../Fonnus/app/src/recording/artifact-recorder.ts:963` and not named by
  * contract §3 — and a reply from `turn.assistant_text` via `turn_idx`, under
- * the same gate as the transcript. A canned line shows its holder label only
- * (§8 rule 2: it owns no turn), and so does a wait, which is by definition the
- * stretch before any audio.
+ * the same gate as the transcript. A holding line shows the `text` of the
+ * `tts/sentence` record of its `gen` flagged `data.holding_line = true` (§8
+ * rule 2; both keys ASSUMED, read per
+ * `../Fonnus/app/src/recording/artifact-recorder.ts:467`). A canned line shows
+ * its holder label only (§8 rule 2: it owns no turn), and so does a wait,
+ * which is by definition the stretch before any audio.
  */
 function botTextOf(
   interval: Interval,
@@ -836,6 +899,23 @@ function botTextOf(
     // ungated (`docs/upstream.md` §Call detail) — the two surfaces must agree.
     if (turnIdx === null) return null;
     return o.assistantText.get(turnIdx) ?? null;
+  }
+  if (kind === 'holding') {
+    // The line is the clinic's configured text, never the caller's words, so
+    // the pipeline writes it `sensitive = false` (contract §3.1) and it is not
+    // gated. A record that says `sensitive` is not the line whatever its flag:
+    // its text is never printed here, where no gate is applied.
+    const sentence = rows.find(
+      (r) =>
+        r.kind === 'tts' &&
+        r.type === 'sentence' &&
+        !r.sensitive &&
+        gen !== null &&
+        r.gen === gen &&
+        fields(r.data)['holding_line'] === true,
+    );
+    const raw = fields(sentence?.data ?? null)['text'];
+    return typeof raw === 'string' ? raw : null;
   }
   return null;
 }

@@ -3,6 +3,7 @@ import { LEGS, type Stage } from '@/latency';
 import {
   playheadOnScale,
   selectedTurnView,
+  TTS_PER_TURN_TIP,
   TURN_COUNT_HINT,
   turnCostCells,
   turnCountView,
@@ -54,7 +55,7 @@ describe('selectedTurnView — the capsule stack of one turn', () => {
     expect(view?.rows.map((row) => row.key)).toEqual([
       'pipeline_ms',
       'caller_perceived_ms',
-      ...LEGS.map((leg) => leg.name),
+      ...LEGS.filter((leg) => leg.name !== 'holding_line').map((leg) => leg.name),
       'llm_first_token → llm_last_token',
       'tts_first_byte → tts_last_byte',
       'playback_start → playback_end',
@@ -158,9 +159,73 @@ describe('selectedTurnView — the capsule stack of one turn', () => {
       STARTED_AT,
     );
     const keys = withReasoning?.rows.map((row) => row.key) ?? [];
-    expect(keys[8]).toBe('llm_first_reasoning → llm_first_token');
-    expect(withReasoning?.rows[8]?.term.name).toBe('Model reasoning');
+    // Two headlines, then the legs this turn draws (no holding line: all but one).
+    const afterLegs = 2 + LEGS.length - 1;
+    expect(keys[afterLegs]).toBe('llm_first_reasoning → llm_first_token');
+    expect(withReasoning?.rows[afterLegs]?.term.name).toBe('Model reasoning');
     expect(selectedTurnView(input(), STARTED_AT)?.rows.some((row) => row.key.startsWith('llm_first_reasoning'))).toBe(false);
+  });
+
+  it('ends the caller-perceived bar at a holding line that played before the answer (ADR 0030)', () => {
+    // Line at 10 700, answer at 11 200: the caller's silence ended at the line.
+    const marks = { ...FULL, holding_line_out: ORIGIN + 10_700 };
+    const view = selectedTurnView(input({ marks, caller_perceived_ms: 700 }), STARTED_AT);
+    const perceived = view?.rows.find((row) => row.key === 'caller_perceived_ms');
+    expect(perceived?.span).toEqual({ from: 0, to: 700 });
+    expect(perceived?.value).toBe('700 ms');
+    // The pipeline bar still measures the answer.
+    expect(view?.rows[0]?.span).toEqual({ from: 400, to: 1_200 });
+    const line = view?.rows.find((row) => row.key === 'holding_line');
+    expect(line?.span).toEqual({ from: 400, to: 700 });
+    expect(line?.value).toBe('300 ms');
+    expect(line?.term.name).toBe('Holding line');
+    // Row order: the headlines, all seven legs in LEGS order, then the end-of-turn spans.
+    expect(view?.rows.map((row) => row.key)).toEqual([
+      'pipeline_ms',
+      'caller_perceived_ms',
+      ...LEGS.map((leg) => leg.name),
+      'llm_first_token → llm_last_token',
+      'tts_first_byte → tts_last_byte',
+      'playback_start → playback_end',
+    ]);
+    expect(view?.rows.filter((row) => row.outlined).map((row) => row.key)).toEqual([
+      'stt_emit',
+      'playback',
+      'holding_line',
+    ]);
+  });
+
+  it('ends the caller-perceived bar at the answer when it came before the line', () => {
+    const marks = { ...FULL, holding_line_out: ORIGIN + 11_500 };
+    const view = selectedTurnView(input({ marks }), STARTED_AT);
+    expect(view?.rows[1]?.span).toEqual({ from: 0, to: 1_200 });
+  });
+
+  it('ends the caller-perceived bar at the line when the answer never became audible', () => {
+    const marks = marksAt({
+      speech_end: 10_000,
+      stt_final: 10_200,
+      endpoint_decision: 10_400,
+      holding_line_out: 10_700,
+      llm_first_token: 12_000,
+    });
+    const view = selectedTurnView(
+      input({ marks, pipeline_ms: null, caller_perceived_ms: 700 }),
+      STARTED_AT,
+    );
+    const perceived = view?.rows[1];
+    expect(perceived?.span).toEqual({ from: 0, to: 700 });
+    expect(perceived?.value).toBe('700 ms');
+    // pipeline_ms is the answer's: no first_audio_out, no bar.
+    expect(view?.rows[0]?.value).toBe('—');
+    expect(view?.rows[0]?.span).toBeNull();
+    expect(view?.rows[0]?.term.description).toContain('no first_audio_out mark');
+    expect(view?.rows.find((row) => row.key === 'holding_line')?.value).toBe('300 ms');
+  });
+
+  it('draws no holding_line row on a turn without the mark', () => {
+    const view = selectedTurnView(input(), STARTED_AT);
+    expect(view?.rows.some((row) => row.key === 'holding_line')).toBe(false);
   });
 
   it('carries the interrupted and reopen readings on the end-of-turn rows', () => {
@@ -212,6 +277,10 @@ describe('turnCostCells — the turn table and the selected-turn footer (ADR 001
     expect(cells.llm).toBe('unpriced (openai/gpt-oss-120b)');
     expect(cells.tts).toBe('unpriced (sonic-9)');
     expect(turnCostCells({ ...PRICED, llm_model: 'openai/gpt-oss-120b' }, 'sonic-3.6').tts).toBe('159 ₫');
+  });
+
+  it('says in the TTS tooltip that the character count includes the holding line', () => {
+    expect(TTS_PER_TURN_TIP).toContain('includes the holding line');
   });
 
   it('says "not reported" when the accounting is null', () => {

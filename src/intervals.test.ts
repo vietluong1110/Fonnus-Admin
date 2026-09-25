@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { AnnotationRow } from '@/queries/calls';
 import {
   callIntervals,
+  ANSWER_NEVER_AUDIBLE,
   intervalCells,
   parseEventRow,
   trailVerdict,
@@ -600,6 +601,218 @@ describe('callIntervals', () => {
       annotations: [],
     })[0]).toMatchObject({ from: '-0.10', seekMs: 0 });
     expectContiguous(list, -0.1, 5);
+  });
+
+  // The holding line (pipeline ADR 0030): the four cases of
+  // `call-evidence.test.ts:805-899`, with the same holders and bounds.
+  it('splits the wait at the holding line, and ends nothing at a failed one (ADR 0030)', () => {
+    const reply = { sensitive: true, data: { source: 'speech_final', transcript: 'x' } };
+    const trail = trailAt(
+      [0, 'effect/start_reply', { gen: 1, turnIdx: 1, ...reply }],
+      [2.1, 'effect/speak_holding_line', { gen: 1, turnIdx: 1 }],
+      [2.4, 'event/holding_line_audible', { gen: 1 }],
+      [2.41, 'effect/mute_stt', { gen: 1 }],
+      // The line's own drain, while the answer is still coming: not the end
+      // of the reply.
+      [4, 'event/playback_completed', { gen: 1 }],
+      [5, 'event/first_audible', { gen: 1 }],
+      [9, 'event/playback_completed', { gen: 1 }],
+      [9.02, 'effect/unmute_stt', { gen: 1 }],
+      // Turn 2: its line failed, so the caller only ever waited.
+      [10, 'effect/start_reply', { gen: 2, turnIdx: 2, ...reply }],
+      [12.1, 'effect/speak_holding_line', { gen: 2, turnIdx: 2 }],
+      [12.5, 'event/holding_line_failed', { gen: 2, data: {} }],
+      [13, 'event/first_audible', { gen: 2 }],
+      [15, 'event/playback_completed', { gen: 2 }],
+      [16, 'recorder/finalized'],
+    );
+    const list = intervalsOf(trail);
+    expect(list.map((i) => i.holder.label)).toEqual([
+      'bot: waiting on reply 1',
+      'bot: holding line 1',
+      'bot: reply 1',
+      'silence',
+      'bot: waiting on reply 2',
+      'bot: reply 2',
+      'silence',
+    ]);
+    expect(list[1]?.holder).toMatchObject({ kind: 'holding', turnIdx: 1, gen: 1 });
+    expect(list[0]?.toMs).toBe(2400);
+    expect(list[1]?.toMs).toBe(5000);
+    expect(list[2]?.toMs).toBe(9000);
+    expect(list[4]?.toMs).toBe(13000);
+    expectContiguous(list, 0, 16);
+    // The answer was heard: the line's row carries no note.
+    expect(cellsOf(trail).map((c) => c.botNote)).toEqual(Array(7).fill(null));
+  });
+
+  it('runs a holding line to the end of a reply whose answer never became audible', () => {
+    const trail = trailAt(
+      [0, 'effect/start_reply', { gen: 1, turnIdx: 1, sensitive: true, data: { source: 'speech_final', transcript: 'x' } }],
+      [2.4, 'event/holding_line_audible', { gen: 1 }],
+      [4, 'event/playback_completed', { gen: 1 }],
+      [6, 'event/reply_failed', { gen: 1, data: { leg: 'llm', stage: 'idle', ms: 5000 } }],
+      [6.1, 'effect/speak_canned', { gen: 2, data: { line: 'degraded' } }],
+      [6.5, 'event/first_audible', { gen: 2 }],
+      [9, 'event/playback_completed', { gen: 2 }],
+      [10, 'recorder/finalized'],
+    );
+    const list = intervalsOf(trail);
+    expect(list.map((i) => i.holder.label)).toEqual([
+      'bot: waiting on reply 1',
+      'bot: holding line 1',
+      'silence',
+      'bot: degraded',
+      'silence',
+    ]);
+    // The line's drain at 4 did not end the reply; the failure at 6 did.
+    expect(list[1]?.toMs).toBe(6000);
+    expectContiguous(list, 0, 10);
+    // The failure says so in the error tone and the line's row says it in words.
+    const cells = cellsOf(trail);
+    expect(cells.find((c) => c.holderKind === 'holding')?.botNote).toBe(ANSWER_NEVER_AUDIBLE);
+    expect(cells.filter((c) => c.botNote !== null)).toHaveLength(1);
+  });
+
+  it('says the answer never became audible on a holding line the caller barged into', () => {
+    // `botSpans` cuts the line at `barge_in/detected` with no `first_audible`
+    // of the gen, so the holder's `audible` is false — the same note as a
+    // failed or empty answer, pinned here so the barge-in branch keeps it.
+    const trail = trailAt(
+      [0, 'effect/start_reply', { gen: 1, turnIdx: 1, sensitive: true, data: { source: 'speech_final', transcript: 'x' } }],
+      [2.4, 'event/holding_line_audible', { gen: 1 }],
+      [3.5, 'barge_in/detected', { gen: 1, phase: 'listening', data: { trigger: 'caller_energy' } }],
+      [4, 'event/playback_completed', { gen: 1 }],
+      [10, 'recorder/finalized'],
+    );
+    const list = intervalsOf(trail);
+    expect(list.map((i) => i.holder.label)).toEqual(['bot: waiting on reply 1', 'bot: holding line 1', 'silence']);
+    expect(list[1]?.toMs).toBe(3500);
+    expectContiguous(list, 0, 10);
+    const cells = cellsOf(trail);
+    expect(cells.find((c) => c.holderKind === 'holding')?.botNote).toBe(ANSWER_NEVER_AUDIBLE);
+  });
+
+  it('holds an empty answer behind a line until its drain, when the drain comes last', () => {
+    const trail = trailAt(
+      [0, 'effect/start_reply', { gen: 1, turnIdx: 1, sensitive: true, data: { source: 'speech_final', transcript: 'x' } }],
+      [2.4, 'event/holding_line_audible', { gen: 1 }],
+      // The model answered nothing while the line was still playing.
+      [3, 'event/synthesis_complete', { gen: 1 }],
+      [4.5, 'event/playback_completed', { gen: 1 }],
+      [4.52, 'effect/unmute_stt', { gen: 1 }],
+      [6, 'recorder/finalized'],
+    );
+    const list = intervalsOf(trail);
+    expect(list.map((i) => i.holder.label)).toEqual([
+      'bot: waiting on reply 1',
+      'bot: holding line 1',
+      'silence',
+    ]);
+    // The line's last 1.5 s are the bot's, not the caller's.
+    expect(list[1]?.toMs).toBe(4500);
+    expectContiguous(list, 0, 6);
+    const cells = cellsOf(trail);
+    expect(cells.find((c) => c.holderKind === 'holding')?.botNote).toBe(ANSWER_NEVER_AUDIBLE);
+    expect(cells.find((c) => c.holderKind === 'waiting')?.botNote).toBeNull();
+  });
+
+  it('holds an empty answer behind a line until synthesis_complete, when that comes last', () => {
+    const list = intervalsOf(
+      trailAt(
+        [0, 'effect/start_reply', { gen: 1, turnIdx: 1, sensitive: true, data: { source: 'speech_final', transcript: 'x' } }],
+        [2.4, 'event/holding_line_audible', { gen: 1 }],
+        [4.5, 'event/playback_completed', { gen: 1 }],
+        // Silence after the line, while the model still produced nothing.
+        [7, 'event/synthesis_complete', { gen: 1 }],
+        [7.02, 'effect/unmute_stt', { gen: 1 }],
+        [9, 'recorder/finalized'],
+      ),
+    );
+    expect(list.map((i) => i.holder.label)).toEqual([
+      'bot: waiting on reply 1',
+      'bot: holding line 1',
+      'silence',
+    ]);
+    expect(list[1]?.toMs).toBe(7000);
+    expectContiguous(list, 0, 9);
+  });
+
+  it('counts the four holding-line records for the verdict and changes nothing else', () => {
+    // The four types are §3.1 records like any other: counted for completeness,
+    // no verdict of their own.
+    const trail = trailAt(
+      [0, 'effect/start_reply', { gen: 1, turnIdx: 1 }],
+      [1, 'event/first_sentence_queued', { gen: 1 }],
+      [2.1, 'effect/speak_holding_line', { gen: 1, turnIdx: 1 }],
+      [2.4, 'event/holding_line_audible', { gen: 1 }],
+      [2.5, 'event/holding_line_failed', { gen: 1, data: {} }],
+      [5, 'event/first_audible', { gen: 1 }],
+      [9, 'event/playback_completed', { gen: 1 }],
+      [10, 'recorder/finalized'],
+    );
+    expect(trailVerdict(trail, { recordCalls: 'full', ended: true })).toMatchObject({
+      kind: 'complete',
+      records: 8,
+    });
+  });
+});
+
+describe('the holding line on the card', () => {
+  /** A reply with a holding line, and the flagged `tts/sentence` that carried it. */
+  function lineTrail(sentence: Partial<EventRow>): EventRow[] {
+    return trailAt(
+      [0, 'effect/start_reply', { gen: 1, turnIdx: 1, sensitive: true }],
+      [2.1, 'effect/speak_holding_line', { gen: 1, turnIdx: 1 }],
+      [2.15, 'tts/sentence', { gen: 1, turnIdx: 1, ...sentence }],
+      [2.4, 'event/holding_line_audible', { gen: 1 }],
+      [3, 'tts/sentence', { gen: 1, turnIdx: 1, sensitive: true, data: { text: 'Dạ, 7h30 ạ.' } }],
+      [4, 'event/playback_completed', { gen: 1 }],
+      [5, 'event/first_audible', { gen: 1 }],
+      [9, 'event/playback_completed', { gen: 1 }],
+      [10, 'recorder/finalized'],
+    );
+  }
+  const LINE = 'Dạ, anh chị chờ em một lát ạ';
+  const flagged = { sensitive: false, data: { text: LINE, holding_line: true } };
+  const assistant = new Map([[1, 'Dạ, phòng khám mở cửa 7h30 ạ.']]);
+
+  it("shows the line's text on its own row, and the reply's row keeps assistant_text only", () => {
+    const cells = cellsOf(lineTrail(flagged), false, assistant);
+    const line = cells.find((c) => c.holderKind === 'holding');
+    expect(line).toMatchObject({ holder: 'bot: holding line 1', turnIdx: 1, botText: LINE });
+    const reply = cells.find((c) => c.holderKind === 'reply');
+    expect(reply?.botText).toBe('Dạ, phòng khám mở cửa 7h30 ạ.');
+    expect(reply?.botText).not.toContain(LINE);
+  });
+
+  it('shows no text when the flagged record is absent', () => {
+    const cells = cellsOf(
+      lineTrail({ sensitive: true, data: { text: 'Dạ, 7h30 ạ.' } }),
+      true,
+      assistant,
+    );
+    expect(cells.find((c) => c.holderKind === 'holding')?.botText).toBeNull();
+  });
+
+  it('reads a payload of the wrong shape as absent', () => {
+    for (const data of [
+      { text: 42, holding_line: true },
+      { text: LINE, holding_line: 'yes' },
+      null,
+    ]) {
+      const cells = cellsOf(lineTrail({ sensitive: false, data }), true, assistant);
+      expect(cells.find((c) => c.holderKind === 'holding')?.botText).toBeNull();
+    }
+  });
+
+  it('never prints a sensitive record as the line, even when it is flagged', () => {
+    const cells = cellsOf(
+      lineTrail({ sensitive: true, data: { text: 'caller words', holding_line: true } }),
+      false,
+      assistant,
+    );
+    expect(cells.find((c) => c.holderKind === 'holding')?.botText).toBeNull();
   });
 });
 

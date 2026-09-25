@@ -2,13 +2,15 @@
  * Per-turn latency marks and legs — copied, not imported, from
  * `../Fonnus/app/src/domain/latency.ts` (ADR 0001: the pipeline is a separate
  * repository and this console reads its data, so the rule travels as a copy with
- * a test pinning it to the pipeline's names). The stage list is the eleven keys
+ * a test pinning it to the pipeline's names). The stage list is the twelve keys
  * of `../Fonnus/docs/read-contract.md` §3.2; the legs are
- * `../Fonnus/PIPELINE_ARCHITECTURE.md` §6.
+ * `../Fonnus/PIPELINE_ARCHITECTURE.md` §6 plus `holding_line` (pipeline ADR 0030).
  *
- * Two headline spans (../Fonnus ADR 0007):
- *   caller-perceived = speech_end → first_audio_out        (the alarm budget)
- *   pipeline         = endpoint_decision → first_audio_out (the tuning target)
+ * Two headline spans (../Fonnus ADR 0007, ADR 0030):
+ *   caller-perceived = speech_end → earliest(holding_line_out, first_audio_out)
+ *                      (the alarm budget: whatever the caller heard first)
+ *   pipeline         = endpoint_decision → first_audio_out (the tuning target;
+ *                      always the answer, never the holding line)
  */
 
 /** In the order a turn passes through them. */
@@ -23,9 +25,11 @@ export type Stage =
   | 'tts_last_byte'
   | 'playback_start'
   | 'first_audio_out'
+  /** The holding line's first byte handed to the sink (ADR 0030); turns that spoke one only. */
+  | 'holding_line_out'
   | 'playback_end';
 
-/** The eleven keys `turn.marks` may carry today; anything else is dropped. */
+/** The twelve keys `turn.marks` may carry today; anything else is dropped. */
 export const STAGES = [
   'speech_end',
   'endpoint_decision',
@@ -37,6 +41,7 @@ export const STAGES = [
   'tts_last_byte',
   'playback_start',
   'first_audio_out',
+  'holding_line_out',
   'playback_end',
 ] as const satisfies readonly Stage[];
 
@@ -53,6 +58,11 @@ export const LEGS = [
   { name: 'send', from: 'tts_first_byte', to: 'first_audio_out' },
   /** Sink → FreeSWITCH says it played a chunk (advisory). */
   { name: 'playback', from: 'first_audio_out', to: 'playback_start' },
+  /**
+   * Committed → the holding line's first byte (ADR 0030); turns that spoke one
+   * only. Appended last, as upstream, so every earlier leg keeps its index.
+   */
+  { name: 'holding_line', from: 'endpoint_decision', to: 'holding_line_out' },
 ] as const satisfies readonly { name: string; from: Stage; to: Stage }[];
 
 /*
@@ -73,9 +83,13 @@ export type LegName = (typeof LEGS)[number]['name'];
 
 /**
  * The legs that tile a headline span exactly, so a bar drawn for one of them is
- * a share of the caller's wait rather than an overlapping measurement. All four
- * tile `caller_perceived_ms`; the last three tile `pipeline_ms`. `stt_emit`
- * overlaps `endpoint_wait` and `playback` is advisory, so both sit outside.
+ * a share of the caller's wait rather than an overlapping measurement. The last
+ * three always tile `pipeline_ms`. All four tile `caller_perceived_ms` only on a
+ * turn without a holding line; on a turn with one, `endpoint_wait` +
+ * `holding_line` tile it instead (`../Fonnus/app/src/domain/latency.ts`, the
+ * comment above `LEGS`). `stt_emit` overlaps `endpoint_wait`, `playback` is
+ * advisory and `holding_line` overlaps the pipeline span it runs inside, so all
+ * three sit outside.
  */
 export const PARTITION_LEGS = ['endpoint_wait', 'llm_ttft', 'tts_ttfb', 'send'] as const;
 
@@ -94,6 +108,17 @@ export const TARGETS = { pipelineP95Ms: 1200, perceivedP95AlarmMs: 3600 } as con
 export function spanOf(a: number | undefined, b: number | undefined): number | undefined {
   if (a === undefined || b === undefined || b < a) return undefined;
   return b - a;
+}
+
+/**
+ * Where `caller_perceived_ms` ends: whatever the caller heard first — the
+ * holding line when one played before the answer, else the answer. Copied from
+ * `../Fonnus/app/src/domain/latency.ts` `TurnMarks.callerPerceivedMs` (ADR 0030).
+ */
+export function callerPerceivedEnd(marks: Partial<Record<Stage, number>>): number | undefined {
+  const line = marks.holding_line_out;
+  const answer = marks.first_audio_out;
+  return line === undefined ? answer : answer === undefined ? line : Math.min(line, answer);
 }
 
 /**

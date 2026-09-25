@@ -28,6 +28,7 @@ import {
   flatKeyOf,
   formFromDocument,
   layerOf,
+  listLines,
   parseDocument,
   ranOn,
 } from '@/configuration/document';
@@ -140,8 +141,13 @@ export default async function ConfigurationPage({
   for (const field of fields) {
     if (field.path in ranOnByPath) continue;
     const value = ranOn(snapshot, field);
+    // The holding lines (`HOLDING_LINES`) are sentences, not a JSON array, so
+    // they read one per entry; every other list keeps its stored JSON, the
+    // reading it had before row A20 (a stop sequence or a keyterm can be empty
+    // or hold the separator itself). A value `listLines` cannot fold stays JSON.
+    const lines = field.path === 'text.holding_lines' ? listLines(value) : null;
     ranOnByPath[field.path] = {
-      value: value === undefined ? null : renderValue(value),
+      value: value === undefined ? null : (lines?.join(' · ') ?? renderValue(value)),
       key: flatKeyOf(snapshot, field) ?? null,
       layer: snapshot === null ? null : layerOf(snapshot, field.path),
     };

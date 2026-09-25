@@ -8,6 +8,7 @@ import {
   endOfTurnRows,
   headPairRows,
   legSpans,
+  callerPerceivedEnd,
   parseMarks,
   spanOf,
   type Stage,
@@ -36,7 +37,7 @@ const TAIL: Partial<Record<Stage, number>> = {
 };
 
 describe('LEGS — copied from ../Fonnus/app/src/domain/latency.ts', () => {
-  it('names the six legs in the pipeline order', () => {
+  it('names the seven legs in the pipeline order, holding_line appended last (ADR 0030)', () => {
     expect(LEGS.map((leg) => leg.name)).toEqual([
       'stt_emit',
       'endpoint_wait',
@@ -44,6 +45,7 @@ describe('LEGS — copied from ../Fonnus/app/src/domain/latency.ts', () => {
       'tts_ttfb',
       'send',
       'playback',
+      'holding_line',
     ]);
   });
 
@@ -55,6 +57,7 @@ describe('LEGS — copied from ../Fonnus/app/src/domain/latency.ts', () => {
       ['tts_ttfb', 'llm_first_token', 'tts_first_byte'],
       ['send', 'tts_first_byte', 'first_audio_out'],
       ['playback', 'first_audio_out', 'playback_start'],
+      ['holding_line', 'endpoint_decision', 'holding_line_out'],
     ]);
   });
 
@@ -72,7 +75,18 @@ describe('legSpans', () => {
       tts_ttfb: 250,
       send: 110,
       playback: 60,
+      holding_line: null,
     });
+  });
+
+  it('measures holding_line from endpoint_decision to holding_line_out', () => {
+    expect(legSpans({ ...FULL, holding_line_out: T0 + 700 }).holding_line).toBe(300);
+  });
+
+  it('tiles the caller-perceived span with endpoint_wait + holding_line when the line came first', () => {
+    const marks = { ...FULL, holding_line_out: T0 + 700 };
+    const spans = legSpans(marks);
+    expect(spans.endpoint_wait! + spans.holding_line!).toBe(callerPerceivedEnd(marks)! - marks.speech_end!);
   });
 
   it('tiles the caller-perceived span with the four partition legs', () => {
@@ -97,11 +111,30 @@ describe('legSpans', () => {
   });
 });
 
+describe('callerPerceivedEnd — ../Fonnus/app/src/domain/latency.ts callerPerceivedMs', () => {
+  // The four cases of ../Fonnus/app/src/domain/__tests__/latency.test.ts, "caller-perceived".
+  it('answer only: the answer', () => {
+    expect(callerPerceivedEnd({ first_audio_out: T0 + 1_000 })).toBe(T0 + 1_000);
+  });
+
+  it('line then answer: the line', () => {
+    expect(callerPerceivedEnd({ holding_line_out: T0 + 600, first_audio_out: T0 + 1_000 })).toBe(T0 + 600);
+  });
+
+  it('line only: the line', () => {
+    expect(callerPerceivedEnd({ holding_line_out: T0 + 600 })).toBe(T0 + 600);
+  });
+
+  it('neither: undefined', () => {
+    expect(callerPerceivedEnd({ speech_end: T0 })).toBeUndefined();
+  });
+});
+
 describe('parseMarks — the jsonb trust boundary', () => {
-  it('keeps the eleven keys of contract §3.2 and drops everything else', () => {
-    // `llm_first_reasoning` is the eleventh, on record since the pipeline's
-    // migration 0014 and present only on a turn whose model streamed reasoning.
-    const kept = { ...FULL, ...TAIL, llm_first_reasoning: T0 + 700 };
+  it('keeps the twelve keys of contract §3.2 and drops everything else', () => {
+    // `llm_first_reasoning` (migration 0014) and `holding_line_out` (ADR 0030)
+    // are present only on a turn that reasoned, or spoke a holding line.
+    const kept = { ...FULL, ...TAIL, llm_first_reasoning: T0 + 700, holding_line_out: T0 + 800 };
     expect(Object.keys(kept)).toHaveLength(STAGES.length);
     // `answered` is a real mark, but of `call_log.greeting_marks` (§3.5), not
     // of `turn.marks`; `foo` stands for a key a later pipeline may add.
@@ -210,10 +243,12 @@ describe('headPairRows — the thinking span of contract §3.2', () => {
   it('adds no leg — the pipeline names none for it', () => {
     // `llm_first_reasoning` sits inside `llm_ttft`, which the six-leg row
     // already draws whole (`docs/upstream.md` §The waterfall).
-    expect(LEGS).toHaveLength(6);
+    expect(LEGS).toHaveLength(7);
     const legStages: Stage[] = LEGS.flatMap((leg) => [leg.from, leg.to]);
     expect(legStages).not.toContain('llm_first_reasoning');
-    expect(STAGES).toHaveLength(11);
+    expect(STAGES).toHaveLength(12);
+    expect(STAGES.indexOf('holding_line_out')).toBe(STAGES.indexOf('first_audio_out') + 1);
+    expect(STAGES.indexOf('playback_end')).toBe(STAGES.indexOf('holding_line_out') + 1);
     expect(STAGES.indexOf('llm_first_reasoning')).toBe(STAGES.indexOf('llm_first_token') - 1);
   });
 });

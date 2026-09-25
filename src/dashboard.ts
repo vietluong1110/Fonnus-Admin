@@ -342,15 +342,24 @@ function canonicalJson(value: unknown): string {
   return `{${fields.join(',')}}`;
 }
 
+/** `config_snapshot->'faq'` (contract §3.4): never a grouping identity, never a column. */
+const SNAPSHOT_FAQ_KEY = 'faq';
+
 /**
  * A snapshot's identity as a string — "this exact configuration" (§3.4, where
  * the grouping is jsonb equality, which is structural). Sorted at every level
  * so two processes that booted the same configuration land in one group
  * whatever order Postgres handed the object over in, and so that two calls on
  * one build SHA with different `runtime.config` land in two.
+ *
+ * The top-level `faq` key is left out (contract §3.4, pipeline ADR 0031): it is
+ * the tenant's FAQ entries as read, about 8 KB per call, and an edit to one
+ * answer's wording must not split an otherwise identical configuration.
  */
 function snapshotIdentity(snapshot: Record<string, unknown>): string {
-  return canonicalJson(snapshot);
+  return canonicalJson(
+    Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== SNAPSHOT_FAQ_KEY)),
+  );
 }
 
 /**
@@ -463,8 +472,11 @@ export function differingKeys(snapshots: Array<Record<string, unknown> | null>):
     // holding the whole document is unreadable, and it always differs when the
     // version does — which the derived column below says in one number. The
     // renamed keys fold onto their new spelling, so a deploy that straddles the
-    // rename shows one column, not two.
-    for (const key of Object.keys(snapshot)) if (key !== 'runtime') keys.add(canonicalKey(key));
+    // rename shows one column, not two. `faq` is left out for the reason
+    // `snapshotIdentity` gives, and because a cell of 8 KB is unreadable.
+    for (const key of Object.keys(snapshot)) {
+      if (key !== 'runtime' && key !== SNAPSHOT_FAQ_KEY) keys.add(canonicalKey(key));
+    }
   }
   const differing: string[] = [];
   for (const key of keys) {
@@ -604,10 +616,22 @@ export interface Dashboard {
   failedTurns: number;
   /** The four partition legs' P50s, in the order a turn passes through them. */
   medianReply: LegMedian[];
+  /**
+   * Turns with marks that carry `holding_line_out` (ADR 0030): on those the
+   * caller heard a holding line before the answer, so `medianReply` — the
+   * answer's four legs — is not their `caller_perceived_ms`.
+   */
+  holdingLineTurns: number;
   groups: DashboardGroup[];
   /** Only ever filled when grouping on the whole snapshot. */
   differingKeys: string[];
-  outside: DashboardTurn[];
+  outside: OutsideTurn[];
+}
+
+/** A turn whose answer never became audible, and whether a holding line played on it. */
+export interface OutsideTurn extends DashboardTurn {
+  /** The turn carries `holding_line_out`: the caller heard the line, never the answer. */
+  holdingLine: boolean;
 }
 
 /** One group's raw samples, before `percentiles` turns them into a row. */
@@ -728,7 +752,8 @@ export function aggregate(
   const latencyBuckets = new Map<string, Samples>();
   const groups = new Map<string, { samples: Samples; snapshot: Record<string, unknown> | null }>();
   const withTurns = new Set<string>();
-  const outside: DashboardTurn[] = [];
+  const outside: OutsideTurn[] = [];
+  let holdingLineTurns = 0;
   const failures = new Map<string, TurnFailure>();
   let failedTurns = 0;
 
@@ -788,9 +813,15 @@ export function aggregate(
       }
     }
 
-    // The reply never became audible: no `first_audio_out`, so neither headline
-    // span exists and the turn is in no percentile at all.
-    if (parseMarks(turn.marks).first_audio_out === undefined) outside.push(turn);
+    // The answer never became audible: no `first_audio_out`, so `pipeline_ms`
+    // does not exist. A turn that spoke a holding line still has a
+    // `caller_perceived_ms` (it ends at the line, contract §3 `turn`, ADR 0030)
+    // and is inside that percentile; it is listed here all the same, because
+    // the answer is what never arrived, and the row says the line played.
+    const marks = parseMarks(turn.marks);
+    const holdingLine = marks.holding_line_out !== undefined;
+    if (turn.marks !== null && holdingLine) holdingLineTurns += 1;
+    if (marks.first_audio_out === undefined) outside.push({ ...turn, holdingLine });
   }
 
   // The window's calls, read once for everything that is a fact about calls
@@ -903,6 +934,7 @@ export function aggregate(
     // `caller_perceived_ms` exactly (`src/latency.ts` PARTITION_LEGS), laid end
     // to end. P50s do not add up to the P50 of the whole — said on the card.
     medianReply: PARTITION_LEGS.map((leg) => ({ leg, p50: legs[leg].p50 })),
+    holdingLineTurns,
     groups: rows,
     differingKeys:
       grouping === 'config' ? differingKeys(rows.map((row) => row.snapshot)) : [],

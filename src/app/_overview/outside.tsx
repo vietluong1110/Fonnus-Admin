@@ -1,8 +1,11 @@
 /*
  * "Turns that never became audible" — the turns whose marks carry no
- * `first_audio_out` (the reply never became audible, so neither headline span
- * exists) and the turns whose `marks` column is null (nothing about the reply
- * is known). Layout: `docs/design/Main-html` band 5.
+ * `first_audio_out` (the answer never became audible, so `pipeline_ms` does not
+ * exist) and the turns whose `marks` column is null (nothing about the reply
+ * is known). A turn that spoke a holding line first has a `caller_perceived_ms`
+ * ending at the line (ADR 0030) and is inside that percentile, but is listed
+ * here all the same — the answer never arrived — and its row says the line
+ * played. Layout: `docs/design/Main-html` band 5.
  *
  * Each row opens the call at that turn, which is where the loop continues: a
  * number on this screen becomes a hypothesis on the call review. Newest first,
@@ -17,7 +20,8 @@ import {
   isKnownFailedLeg,
   isKnownFailedStage,
 } from '@/calls';
-import type { DashboardCall, DashboardTurn } from '@/queries/dashboard';
+import type { OutsideTurn } from '@/dashboard';
+import type { DashboardCall } from '@/queries/dashboard';
 import Badge from '@/ui/badge';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
@@ -37,7 +41,7 @@ export default function Outside({
   showAll,
   allHref,
 }: {
-  turns: DashboardTurn[];
+  turns: OutsideTurn[];
   callsById: Map<string, DashboardCall>;
   showAll: boolean;
   /** `?outside=all` with the window and the grouping kept (ADR 0006). */
@@ -49,7 +53,7 @@ export default function Outside({
   return (
     <Card
       title="Turns that never became audible"
-      sub="no first audio out, or the turn carries no marks — outside every percentile"
+      sub="the answer never became audible, or the turn carries no marks — outside every percentile, except caller-perceived when a holding line played"
       actions={
         <span
           className={`font-num text-[20px] font-semibold tabular-nums ${turns.length > 0 ? 'text-warning' : ''}`}
@@ -107,6 +111,7 @@ export default function Outside({
                           <WhatFailed leg={turn.failed_leg} stage={turn.failed_stage} />
                         )}
                         {turn.interrupted ? <Badge>interrupted</Badge> : null}
+                        {turn.holdingLine ? <Badge>holding line played</Badge> : null}
                       </span>
                     </Td>
                     <Td>

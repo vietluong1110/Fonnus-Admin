@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FLAT_KEYS } from './configuration/flat-keys';
-import { keysFromRow, PATH_OF_KEY, ranOnOf } from './call-config';
+import { faqCountText, keysFromRow, PATH_OF_KEY, ranOnOf } from './call-config';
 
 /** A call that ran under row #42, which set the LLM model and the Soniox endpointing delay. */
 const SNAPSHOT: Record<string, unknown> = {
@@ -40,7 +40,29 @@ describe('ranOnOf', () => {
       tts: { vendor: 'cartesia', model: 'sonic-3.5' },
       build: '5c2cb31aa0000000000000000000000000000000',
       fakeProviders: false,
+      faq: { kind: 'none' },
     });
+  });
+
+  it('counts the FAQ entries the call ran with, from faq.count (pipeline ADR 0031)', () => {
+    const faq = { count: 23, entries: [] };
+    const ran = ranOnOf({ ...SNAPSHOT, faq }, COLUMNS, []);
+    expect(ran.faq).toEqual({ kind: 'count', count: 23 });
+    expect(faqCountText(ran.faq)).toBe('23 FAQ entries');
+    expect(faqCountText({ kind: 'count', count: 1 })).toBe('1 FAQ entry');
+  });
+
+  it('reads an absent faq key as no FAQ entries, never as zero', () => {
+    expect(ranOnOf(SNAPSHOT, COLUMNS, []).faq).toEqual({ kind: 'none' });
+    expect(ranOnOf(null, COLUMNS, []).faq).toEqual({ kind: 'none' });
+    expect(faqCountText({ kind: 'none' })).toBe('no FAQ entries');
+  });
+
+  it('says a malformed faq.count was not reported', () => {
+    for (const faq of [{ count: -1 }, { count: 'x' }, { entries: [] }, 'nonsense', null]) {
+      expect(ranOnOf({ ...SNAPSHOT, faq }, COLUMNS, []).faq).toEqual({ kind: 'unreported' });
+    }
+    expect(faqCountText({ kind: 'unreported' })).toBe('FAQ entries: not reported');
   });
 
   it('counts the turns that reported another model, and ignores turns with no accounting', () => {

@@ -46,7 +46,9 @@ function hatch(stripe: string): string {
 /**
  * A segment wears its holder: the bot speaks in the first chart voice, the
  * caller in the second, a wait is that first voice hatched (nothing is audible
- * yet), silence is the page ground behind a hairline, and a deaf recogniser is
+ * yet), a holding line is that first voice washed out inside a solid edge of
+ * it (the bot is speaking, but not the answer — pipeline ADR 0030; not dashed,
+ * which the lower lane already spends on "a reply never audible"), silence is the page ground behind a hairline, and a deaf recogniser is
  * the muted voice hatched. A reply on a failed turn takes the error tone, which
  * wins over the holder's own colour — a turn that failed mid-reply is the one
  * being looked for (trap 7), the same rule `blockColour` in `call-axis.tsx`
@@ -66,6 +68,15 @@ export function segmentStyle(
       // The wait of a failed turn is the one being looked for as much as its
       // reply: `event/reply_failed` ends exactly this span (§8 rule 3).
       return { background: hatch(failed ? 'var(--error)' : 'var(--chart-1)'), border: null };
+    case 'holding': {
+      // The line sits inside the reply's interval (§8 rule 3), so a failed
+      // turn's line wears the error voice like its wait and its reply.
+      const voice = failed ? 'var(--error)' : 'var(--chart-1)';
+      return {
+        background: `color-mix(in srgb, ${voice} 35%, var(--surface-card))`,
+        border: `1px solid ${voice}`,
+      };
+    }
     case 'caller':
       return { background: 'var(--chart-2)', border: null };
     case 'silence':
@@ -111,6 +122,7 @@ export function rowTint(kind: HolderKind): string {
     case 'greeting':
     case 'canned':
     case 'waiting':
+    case 'holding':
     case 'reply':
       return 'var(--surface-card)';
     case 'caller':
@@ -223,6 +235,7 @@ export function holderTone(kind: HolderKind): BadgeTone {
     case 'greeting':
     case 'canned':
     case 'waiting':
+    case 'holding':
     case 'reply':
       return 'terracotta';
     case 'caller':
@@ -302,7 +315,7 @@ export function gapNote(holeFromSeq: number | null): string | null {
 export const INTERVAL_CAVEATS = {
   trail:
     "Read from the call's event trail (contract §8); a record sits on the audio to about 100 ms, late never early.",
-  text: "Reply text is the turn's assistant_text, the greeting's is the trail's; a canned line shows its label only.",
+  text: "Reply text is the turn's assistant_text, the greeting's and the holding line's are the trail's; a canned line shows its label only.",
   withheld:
     '[withheld] — consent not granted, or not yet on record (contract trap 2); [expired] — the transcript passed its retention TTL (contract trap 10).',
   cannedSilent:

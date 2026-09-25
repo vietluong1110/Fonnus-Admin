@@ -12,8 +12,11 @@ import {
   mergeBranches,
   flatKeyOf,
   layerOf,
+  listHelp,
+  listLines,
   parseDocument,
   ranOn,
+  shippedFormText,
   vendorsOf,
   type Field,
 } from './document';
@@ -39,17 +42,17 @@ describe('fieldsOf', () => {
   it('covers every leaf of every group, once per branch that carries it', () => {
     const fields = fieldsOf();
     const byGroup = (group: string) => fields.filter((f) => f.group === group);
-    // 11 turn leaves; stt = the discriminator plus the three branches' leaves
+    // 12 turn leaves; stt = the discriminator plus the three branches' leaves
     // (8 deepgram, 7 soniox, 6 speechmatics); llm = model, fallback and five
     // params; tts = the discriminator plus 8 cartesia and 11 elevenlabs; the
-    // five texts. A leaf the pipeline adds moves one of these numbers.
-    expect(byGroup('turn')).toHaveLength(11);
+    // six texts. A leaf the pipeline adds moves one of these numbers.
+    expect(byGroup('turn')).toHaveLength(12);
     expect(byGroup('stt')).toHaveLength(22);
     expect(byGroup('llm')).toHaveLength(7);
     expect(byGroup('tts')).toHaveLength(20);
-    expect(byGroup('text')).toHaveLength(5);
+    expect(byGroup('text')).toHaveLength(6);
     // The shared paths are one path with one field per branch.
-    expect(leafPaths()).toHaveLength(55);
+    expect(leafPaths()).toHaveLength(57);
     expect(fields.filter((f) => f.path === 'stt.params.language').map((f) => f.vendor)).toEqual([
       'deepgram',
       'soniox',
@@ -428,7 +431,10 @@ describe('layerOf', () => {
       it('carries the parsed document, so a path present there is one the row set', () => {
         const source = readFileSync(callConfigPath, 'utf8');
         expect(source).toContain('const doc = parsed.data;');
-        expect(source).toContain('buildConfigSnapshot(config, { version: row.id, config: doc })');
+        // Since the pipeline's J3 (`cba8ea1`) the row resolver returns the pair
+        // and the caller hands it to `buildConfigSnapshot(row.config, row.runtime, faq)`.
+        expect(source).toContain('runtime: { version: row.id, config: doc }');
+        expect(source).toContain('buildConfigSnapshot(row.config, row.runtime, faq)');
       });
     },
   );
@@ -469,5 +475,58 @@ describe('vendorsOf', () => {
     expect(vendorsOf(fields, 'stt.provider')).toBeNull();
     expect(vendorsOf(fields, 'stt.params.endpointing_ms')).toHaveLength(1);
     expect(vendorsOf(fields, 'stt.model')?.length).toBeGreaterThan(1);
+  });
+});
+
+describe('the holding lines (pipeline ADR 0030)', () => {
+  it('renders text.holding_lines and turn.holding_line_after_ms as a list and an integer', () => {
+    const fields = fieldsOf();
+    expect(fields.find((f) => f.path === 'text.holding_lines')).toMatchObject({
+      group: 'text',
+      kind: 'list',
+      flatKey: 'HOLDING_LINES',
+    });
+    expect(fields.find((f) => f.path === 'turn.holding_line_after_ms')).toMatchObject({
+      group: 'turn',
+      kind: 'integer',
+      flatKey: 'HOLDING_LINE_AFTER_MS',
+    });
+  });
+
+  it('states the 1-to-4 count the schema enforces, since no bound is read off an array', () => {
+    expect(listHelp('text.holding_lines')).toBe('1 to 4 lines, one per line');
+    expect(listHelp('llm.params.stop')).toContain('one entry per line');
+    expect(listHelp('stt.params.keyterms')).toBe('one entry per line');
+    // The hint is only true while the copied schema says it: 1 and 4 pass, 0 and 5 do not.
+    const lines = (n: number) => ({ text: { holding_lines: Array.from({ length: n }, () => 'Dạ, chờ em ạ.') } });
+    expect(parseDocument(lines(1)).ok).toBe(true);
+    expect(parseDocument(lines(4)).ok).toBe(true);
+    expect(parseDocument(lines(0)).ok).toBe(false);
+    expect(parseDocument(lines(5)).ok).toBe(false);
+  });
+
+  it('restores the shipped variants one per line, and they read back as the shipped tuple', () => {
+    const text = shippedFormText(SHIPPED_TEXT.holding_lines);
+    expect(text).toBe(SHIPPED_TEXT.holding_lines.join('\n'));
+    expect(text?.split('\n')).toHaveLength(3);
+    expect(documentFromForm([['text.holding_lines', text ?? '']])).toEqual({
+      text: { holding_lines: [...SHIPPED_TEXT.holding_lines] },
+    });
+    expect(shippedFormText(SHIPPED_TEXT.greeting)).toBe(SHIPPED_TEXT.greeting);
+    expect(shippedFormText(undefined)).toBeUndefined();
+  });
+
+  it('refuses a variant the spoken-text rules refuse, on its own element', () => {
+    const parsed = parseDocument({ text: { holding_lines: ['Dạ, chờ em ạ.', 'một / hai'] } });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.issues.map((issue) => issue.path)).toContain('text.holding_lines.1');
+  });
+
+  it('shows a list as its entries, and anything it cannot fold as stored', () => {
+    expect(listLines([...SHIPPED_TEXT.holding_lines])).toEqual([...SHIPPED_TEXT.holding_lines]);
+    expect(listLines(['\n\n'])).toBeNull();
+    expect(listLines([])).toBeNull();
+    expect(listLines(['a', 1])).toBeNull();
+    expect(listLines('a')).toBeNull();
   });
 });

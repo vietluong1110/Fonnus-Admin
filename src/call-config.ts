@@ -13,6 +13,8 @@
 import { renderValue, canonicalKey } from '@/dashboard';
 import { layerOf, runtimeRow } from '@/configuration/document';
 import { FLAT_KEYS } from '@/configuration/flat-keys';
+import { formatNumber } from '@/calls';
+import { snapshotFaq } from '@/snapshot-groups';
 
 export interface RanOn {
   /** `runtime.version`, the id of the row the call ran under; null = boot config. */
@@ -28,6 +30,13 @@ export interface RanOn {
   build: string | null;
   /** `PROVIDERS = fake`: no vendor answered the call. */
   fakeProviders: boolean;
+  /**
+   * `faq.count`, the FAQ entries the call ran with (contract §3.4, pipeline
+   * ADR 0031): `none` when the key is absent — no entry enabled, or the read
+   * failed — and `unreported` when the key is there but its count is not a
+   * non-negative integer.
+   */
+  faq: { kind: 'count'; count: number } | { kind: 'none' } | { kind: 'unreported' };
 }
 
 /** A snapshot key's value as text, or null when the key is absent (§3.4: absent, never null). */
@@ -64,7 +73,26 @@ export function ranOnOf(
     tts: { vendor: text(snapshot, 'TTS_PROVIDER'), model: call.tts_model },
     build: text(snapshot, 'FONNUS_BUILD_SHA'),
     fakeProviders: text(snapshot, 'PROVIDERS') === 'fake',
+    faq: faqOf(snapshot),
   };
+}
+
+function faqOf(snapshot: Record<string, unknown> | null): RanOn['faq'] {
+  const faq = snapshot === null ? { kind: 'none' as const } : snapshotFaq(snapshot);
+  if (faq.kind === 'none') return { kind: 'none' };
+  return faq.count === null ? { kind: 'unreported' } : { kind: 'count', count: faq.count };
+}
+
+/** The strip's FAQ field: "23 FAQ entries", "no FAQ entries" — never a zero for an absent key. */
+export function faqCountText(faq: RanOn['faq']): string {
+  switch (faq.kind) {
+    case 'none':
+      return 'no FAQ entries';
+    case 'unreported':
+      return 'FAQ entries: not reported';
+    case 'count':
+      return `${formatNumber(faq.count)} FAQ ${faq.count === 1 ? 'entry' : 'entries'}`;
+  }
 }
 
 /**

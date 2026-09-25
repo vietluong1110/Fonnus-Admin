@@ -133,10 +133,10 @@ export const P95_RULE =
  * call's `started_at` (a turn has no timestamp of its own, contract §3), then
  * the later turn of one call first. A turn whose call is missing sorts last.
  */
-export function newestFirst(
-  turns: readonly DashboardTurn[],
+export function newestFirst<T extends DashboardTurn>(
+  turns: readonly T[],
   callsById: ReadonlyMap<string, Pick<DashboardCall, 'started_at'>>,
-): DashboardTurn[] {
+): T[] {
   const at = (turn: DashboardTurn): number =>
     callsById.get(turn.call_id)?.started_at.getTime() ?? Number.NEGATIVE_INFINITY;
   return [...turns].sort((a, b) => at(b) - at(a) || b.idx - a.idx);

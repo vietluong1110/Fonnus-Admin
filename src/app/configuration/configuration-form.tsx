@@ -40,6 +40,9 @@ import {
 } from '@/boot-report';
 import {
   isSetText,
+  listHelp,
+  listLines,
+  shippedFormText,
   valueAt,
   vendorsOf,
   type Field,
@@ -147,8 +150,11 @@ export interface ConfigurationFormProps {
   from: Record<string, unknown>;
   /** The id of the row the form was loaded from (`?from=` or the newest); null with none. */
   fromRow: string | null;
-  /** `SHIPPED_TEXT`, keyed by the leaf under `text.`. */
-  shippedText: Record<string, string>;
+  /**
+   * `SHIPPED_TEXT`, keyed by the leaf under `text.`: a spoken line, or the
+   * holding-line variants (`shippedFormText` writes them one per line).
+   */
+  shippedText: Readonly<Record<string, string | readonly string[]>>;
   /**
    * `disclosureAdvice` on the greeting of the row the pipeline runs on now —
    * the newest one, not the document this form started from; empty when there
@@ -343,7 +349,7 @@ function EditStep({
             <input
               type="hidden"
               name={GREETING_PATH}
-              value={shippedText[GREETING_PATH.slice('text.'.length)] ?? ''}
+              value={shippedFormText(shippedText[GREETING_PATH.slice('text.'.length)]) ?? ''}
             />
             {editable ? (
               <div>
@@ -446,7 +452,7 @@ function EditStep({
                       boot={bootValueOf(ranOn, field.path, provider === '' ? null : provider, perVendor)}
                       shipped={
                         field.group === 'text'
-                          ? shippedText[field.path.slice('text.'.length)]
+                          ? shippedFormText(shippedText[field.path.slice('text.'.length)])
                           : undefined
                       }
                       ranOn={ranOn[field.path] ?? null}
@@ -904,13 +910,7 @@ function rowHint({
     vendorBounds,
   ].filter((bound): bound is string => bound !== null);
   if (bounds.length > 0) lines.push(`Allowed: ${bounds.join(', ')}.`);
-  if (field.kind === 'list') {
-    lines.push(
-      field.path === 'llm.params.stop'
-        ? 'One entry per line; a stop sequence that itself contains a line break cannot be written here.'
-        : 'One entry per line.',
-    );
-  }
+  if (field.kind === 'list') lines.push(sentence(listHelp(field.path)));
   if (field.kind === 'record') lines.push('A JSON object, as stored.');
   // Rule 4 of `docs/redesign.md` §4.2 (ADR 0012 D3): the vendors of the box's
   // newest boot report when there is one, every vendor when there is none.
@@ -1177,13 +1177,7 @@ function LongControl({
   const editor = `edit:${path}`;
   const set = isSetText(value);
   const help =
-    kind === 'list'
-      ? path === 'llm.params.stop'
-        ? 'one entry per line; a stop sequence that itself contains a line break cannot be written here'
-        : 'one entry per line'
-      : kind === 'record'
-        ? 'a JSON object, as stored'
-        : null;
+    kind === 'list' ? listHelp(path) : kind === 'record' ? 'a JSON object, as stored' : null;
 
   return (
     <>
@@ -1389,12 +1383,17 @@ function ReviewStep({
             </thead>
             <tbody>
               {state.diff.map((entry) => {
+                // The holding lines read one per line, as their control edits
+                // them — sentences, not a JSON array; every other list keeps
+                // its stored JSON, as before row A20.
                 const shown = (value: unknown): string | null =>
                   value === undefined
                     ? null
                     : entry.path === 'tts.voice' && typeof value === 'string'
                       ? voiceName(offered, value)
-                      : renderValue(value);
+                      : entry.path === 'text.holding_lines'
+                        ? (listLines(value)?.join('\n') ?? renderValue(value))
+                        : renderValue(value);
                 const before = shown(entry.from);
                 const after = shown(entry.to);
                 const beforeAbsent = absentWords(entry.path, from, fields, ranOn);

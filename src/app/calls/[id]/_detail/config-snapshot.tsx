@@ -12,8 +12,13 @@
  *     absent `DEEPGRAM_*` key means that vendor did not run, never "the default
  *     applied". A key the process had no value for is absent, never null.
  *   - a key this console does not know is shown, never dropped (trap 6), and a
- *     value is not always a scalar: `runtime` and `SPEECHMATICS_SOUNDS_LIKE`
- *     are objects and four keys are arrays.
+ *     value is not always a scalar: `runtime`, `faq` and
+ *     `SPEECHMATICS_SOUNDS_LIKE` are objects and five keys are arrays.
+ *
+ * The `faq` key (pipeline ADR 0031) is its own group, "FAQ entries": its count
+ * and one expandable entry per key, the texts as the call read them — from the
+ * snapshot only, never from `faq_entry`. An absent key reads as "no FAQ
+ * entries", never as a zero.
  *
  * Each group is a card of key/value rows; a key the runtime document can set
  * is labelled by the glossary's name over the snapshot key (ADR 0013), any
@@ -31,7 +36,15 @@ import type { VoiceFact } from '@/boot-report';
 import { keysFromRow, PATH_OF_KEY } from '@/call-config';
 import { runtimeRow } from '@/configuration/document';
 import { canonicalKey, parseSnapshot, renderValue } from '@/dashboard';
-import { groupSnapshot } from '@/snapshot-groups';
+import { listLines } from '@/configuration/document';
+import {
+  SNAPSHOT_FAQ,
+  faqHeadline,
+  groupSnapshot,
+  snapshotFaq,
+  type SnapshotFaq,
+  type SnapshotGroupName,
+} from '@/snapshot-groups';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
@@ -54,11 +67,17 @@ function providersLine(value: string): string {
  * A value as the card prints it. An empty string is drawn as `""`, never blank,
  * so it cannot be mistaken for a key the process had no value for — that key
  * would be absent from the object entirely. An array reads as one line of JSON,
- * an object as indented JSON, so the operator can see which leaf changed.
+ * an object as indented JSON, so the operator can see which leaf changed. The
+ * holding lines are spoken sentences, so they read one per line, as the
+ * Configuration form edits them.
  */
 function valueText(key: string, value: unknown): string {
   if (value === '') return '""';
   if (key === 'PROVIDERS' && typeof value === 'string') return providersLine(value);
+  if (key === 'HOLDING_LINES') {
+    const lines = listLines(value);
+    if (lines !== null) return lines.join('\n');
+  }
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     return JSON.stringify(value, null, 2);
   }
@@ -87,8 +106,11 @@ export default function ConfigSnapshot({
 
   const row = runtimeRow(snapshot);
   const fromRow = keysFromRow(snapshot);
-  const flat = Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'runtime'));
+  const flat = Object.fromEntries(
+    Object.entries(snapshot).filter(([key]) => key !== 'runtime' && key !== SNAPSHOT_FAQ),
+  );
   const groups = groupSnapshot(flat);
+  const faq = snapshotFaq(snapshot);
 
   return (
     <>
@@ -133,6 +155,9 @@ export default function ConfigSnapshot({
             </Card>
           </div>
         ))}
+        <div className="min-w-0 md:col-span-2">
+          <FaqGroup faq={faq} />
+        </div>
       </div>
 
       <details className="text-[length:var(--size-ui)]">
@@ -198,7 +223,7 @@ function Entry({
             <ClampedText
               text={text}
               className={
-                typeof value === 'string'
+                typeof value === 'string' || name === 'HOLDING_LINES'
                   ? 'text-[length:var(--size-ui)] leading-[1.5]'
                   : 'font-num text-[length:var(--size-eyebrow)]'
               }
@@ -210,6 +235,50 @@ function Entry({
             {text} {tag}
           </span>
         )}
+      </dd>
+    </>
+  );
+}
+
+/**
+ * The FAQ entries the call ran with: the count, then one `<details>` per entry
+ * in the snapshot's order (key order, §3.4), its key as the summary and its
+ * three texts labelled inside. A field an entry lacks reads "—", never dropped.
+ */
+function FaqGroup({ faq }: { faq: SnapshotFaq }) {
+  return (
+    <Card title={'FAQ entries' satisfies SnapshotGroupName} level={3}>
+      <p className="m-0 text-[length:var(--size-ui)]">{faqHeadline(faq)}</p>
+      {faq.kind === 'none' || faq.entries.length === 0 ? null : (
+        <div className="mt-2 flex flex-col">
+          {faq.entries.map((entry, index) => (
+            <details
+              // Keys are unique by contract, but a malformed entry has none.
+              key={`${entry.key ?? ''}-${String(index)}`}
+              className="border-t border-border-hairline py-1.5 first:border-t-0"
+            >
+              <summary className="cursor-pointer font-num text-[length:var(--size-eyebrow)] font-medium [overflow-wrap:anywhere]">
+                {entry.key ?? '—'}
+              </summary>
+              <dl className="m-0 mt-1.5 grid grid-cols-1 gap-x-4 gap-y-0.5 text-[length:var(--size-ui)] sm:grid-cols-[minmax(0,7rem)_minmax(0,1fr)] sm:gap-y-1.5">
+                <FaqField label="question" text={entry.question} />
+                <FaqField label="answer" text={entry.answer} />
+                <FaqField label="description" text={entry.description} />
+              </dl>
+            </details>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function FaqField({ label, text }: { label: string; text: string | null }) {
+  return (
+    <>
+      <dt className="text-text-muted">{label}</dt>
+      <dd className="m-0 min-w-0 leading-[1.5] whitespace-pre-wrap [overflow-wrap:anywhere]">
+        {text ?? '—'}
       </dd>
     </>
   );

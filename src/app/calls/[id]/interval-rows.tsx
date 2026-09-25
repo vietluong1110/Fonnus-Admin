@@ -149,6 +149,7 @@ export default function IntervalRows({ rows }: { rows: IntervalRow[] }) {
                     // (ISSUES L10-260917-1).
                     <div className="italic">{row.botText}</div>
                   )}
+                  {row.botNote === null ? null : <Caveat>{row.botNote}</Caveat>}
                   {row.botText !== null && row.recogniser === EMPTY_CELL ? null : (
                     <div>{row.recogniser}</div>
                   )}

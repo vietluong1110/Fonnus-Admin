@@ -1,7 +1,8 @@
 /*
  * The "Ran on" strip under the call detail's head: the configuration the call
  * ran under, which is what the operator changes between test calls — the
- * `runtime_config` row (a link to it in Configuration) or boot config, then the
+ * `runtime_config` row (a link to it in Configuration) or boot config with the
+ * FAQ entries the call ran with under it (`faq.count`, pipeline ADR 0031), then the
  * STT, LLM and TTS legs with vendor and model, the voice with the layer that
  * chose it, and the build. Every fact comes from `ranOnOf` and `voiceFact`;
  * this file only lays them out.
@@ -9,7 +10,7 @@
 
 import Link from 'next/link';
 import type { VoiceFact } from '@/boot-report';
-import type { RanOn } from '@/call-config';
+import { faqCountText, type RanOn } from '@/call-config';
 import { formatNumber, shortSha } from '@/calls';
 import Badge from '@/ui/badge';
 import Caveat from '@/ui/caveat';
@@ -55,6 +56,14 @@ export default function RanOnStrip({
             row #{ran.row}
           </Link>
         )}
+        {/* Under the row, not a column of its own: the strip's five columns
+            stay as they are at 1280. The entries themselves are on the
+            snapshot card. */}
+        <span className="block whitespace-nowrap">
+          <Tooltip tip="faq.count in config_snapshot: the tenant's FAQ entries the call ran with, as read at call time; none means none enabled, or the read failed">
+            {faqCountText(ran.faq)}
+          </Tooltip>
+        </span>
       </Field>
       <Field label="STT">
         <span className="[overflow-wrap:anywhere]">{leg(ran.stt.vendor, ran.stt.model)}</span>

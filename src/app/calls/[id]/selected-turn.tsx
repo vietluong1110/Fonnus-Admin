@@ -19,7 +19,12 @@ import type { Term as GlossaryTerm } from '@/ui/glossary';
 import HBar, { TrackRow } from '@/ui/hbar';
 import Stat from '@/ui/stat';
 import Term from '@/ui/term';
-import { playheadOnScale, type SelectedTurnView, type TurnCostCells } from './_detail/turn-view';
+import {
+  playheadOnScale,
+  TTS_PER_TURN_TIP,
+  type SelectedTurnView,
+  type TurnCostCells,
+} from './_detail/turn-view';
 import { usePlayback } from './playback-provider';
 
 /**
@@ -149,7 +154,7 @@ export default function SelectedTurn({
       >
         <Stat size="sm" label="STT cost" value={current.costs.stt} hint={STT_PER_TURN_TIP} />
         <Stat size="sm" label="LLM cost" value={current.costs.llm} hint={PRICE_SOURCE_TIP} caveat="list price" />
-        <Stat size="sm" label="TTS cost" value={current.costs.tts} hint={PRICE_SOURCE_TIP} caveat="list price" />
+        <Stat size="sm" label="TTS cost" value={current.costs.tts} hint={TTS_PER_TURN_TIP} caveat="list price" />
         <Stat
           size="sm"
           label="LLM tokens in"
