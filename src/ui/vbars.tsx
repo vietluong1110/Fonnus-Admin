@@ -9,9 +9,12 @@
  * window (7 columns), and the same chart has to carry 24 hours, 30 days or 53
  * weeks. So a column is at most the artboard's 40 px and shrinks to fit, the
  * plot fills the height the card gives it (percent heights, not pixels), and
- * the label row thins as the columns narrow (`labelEvery`). Bars, values and
- * labels are cells of ONE grid, so a label can never drift off its bar; a label
- * is centred on its column and may overflow it, never truncated to `2…`.
+ * the label row thins as the columns narrow (`labelEvery`). Bars and labels
+ * are cells of ONE grid, so a label can never drift off its bar; a label is
+ * centred on its column and may overflow it, never truncated to `2…`. The
+ * written value rides the top of its own bar (ADR 0014 decision 7), inside the
+ * bar's cell, so it cannot drift either; the plot keeps a headroom above the
+ * tallest bar for it.
  *
  * The chart explains itself, so a card prints no sentence under it: the target
  * is named at the end of its own dashed line, and a partial edge column is
@@ -27,6 +30,8 @@
  * custom property such as `var(--chart-1)`, never a hex.
  */
 
+import Tooltip from './tooltip';
+
 /**
  * The artboard's bar width — a ceiling now, so 1–7 bars are not slabs. The
  * columns themselves share the card's width, so a week of bars spreads across
@@ -36,6 +41,9 @@ const MAX_COLUMN_PX = 40;
 
 /** The artboard's plot height, now the floor a taller card grows from. */
 const MIN_PLOT_PX = 104;
+
+/** The room above the plot for the value on top of the tallest bar: one eyebrow line. */
+const VALUE_HEADROOM_PX = 18;
 
 /**
  * How dense the label row may be. A label is `00` or `24/8`, about 30 px wide,
@@ -85,7 +93,7 @@ const HATCH =
 /**
  * Whether the written values are drawn at all. Past 16 columns they no longer
  * fit their column, and a clipped or overlapping number is worse than none:
- * the `title` on every column already carries `label: value`.
+ * the tooltip on every column already carries `label: value`.
  */
 export function valuesShown(n: number): boolean {
   return n <= 16;
@@ -157,8 +165,9 @@ export default function VBars({
             gutter ? ' auto' : ''
           }`,
           // The plot takes whatever height the card has left, never less than
-          // the artboard's; the value and label rows take what they need.
-          gridTemplateRows: `minmax(${String(MIN_PLOT_PX)}px, 1fr) auto auto`,
+          // the artboard's; the label row takes what it needs.
+          gridTemplateRows: `minmax(${String(MIN_PLOT_PX)}px, 1fr) auto`,
+          ...(withValues ? { paddingTop: `${String(VALUE_HEADROOM_PX)}px` } : {}),
         }}
       >
         {bars.map((bar, index) => (
@@ -166,15 +175,34 @@ export default function VBars({
             // The label is a day or an hour and can repeat across a window, so
             // the position is part of the key.
             key={`bar-${bar.label}-${String(index)}`}
-            className="flex w-full min-w-0 flex-col justify-end justify-self-center"
+            className="relative w-full min-w-0 justify-self-center"
             style={{ gridRow: 1, gridColumn: index + 1, maxWidth: `${String(MAX_COLUMN_PX)}px` }}
-            title={`${bar.label}: ${bar.value === null ? 'not measured' : valueLabel(bar.value)}${
-              bar.partial === true ? ` (partial${unit === undefined ? '' : ` ${unit}`})` : ''
-            }`}
           >
-            {bar.value === null ? null : (
-              <Bar bar={bar} percent={percent(bar.value)} target={target} scaleMax={scaleMax} />
-            )}
+            {/* A column in the right half ends its tooltip at its own right
+                edge: centred there, it runs past the card and the page scrolls
+                sideways at 1280 px. */}
+            <Tooltip
+              className="h-full w-full flex-col justify-end align-top"
+              align={index >= n / 2 ? 'end' : 'center'}
+              tip={`${bar.label}: ${bar.value === null ? 'not measured' : valueLabel(bar.value)}${
+                bar.partial === true ? ` (partial${unit === undefined ? '' : ` ${unit}`})` : ''
+              }`}
+            >
+              {bar.value === null ? null : (
+                <Bar bar={bar} percent={percent(bar.value)} target={target} scaleMax={scaleMax} />
+              )}
+            </Tooltip>
+            {/* The value on top of its bar, as a chart read for a number must
+                not be read off a height. A null is the same "not measured" the
+                rest of the console says, never a dash on its own. */}
+            {withValues ? (
+              <ColumnValue
+                bar={bar}
+                n={n}
+                bottom={bar.value === null ? 0 : percent(Math.min(bar.value, scaleMax))}
+                valueLabel={valueLabel}
+              />
+            ) : null}
           </div>
         ))}
 
@@ -208,31 +236,6 @@ export default function VBars({
           </div>
         )}
 
-        {/* The value under its bar, as the artboards write it: a chart read for
-            a number must not be read off a height. A null is the same "not
-            measured" the rest of the console says, never a dash on its own. */}
-        {!withValues
-          ? null
-          : bars.map((bar, index) => (
-              <span
-                key={`value-${bar.label}-${String(index)}`}
-                className="truncate text-center font-num text-[length:var(--size-eyebrow)] leading-[1.4] tabular-nums"
-                style={{ gridRow: 2, gridColumn: index + 1 }}
-              >
-                {bar.value === null ? (
-                  // Past 12 columns a bar with nothing in it says nothing: its
-                  // tooltip still carries "not measured".
-                  n <= 12 ? (
-                    <span className="text-text-muted" title="not measured">
-                      ·
-                    </span>
-                  ) : null
-                ) : n <= 12 || bar.value > 0 ? (
-                  valueLabel(bar.value)
-                ) : null}
-              </span>
-            ))}
-
         {bars.map((bar, index) => (
           // Centred by flex so a label wider than its column spills evenly to
           // both sides of it; the density rule keeps the spill clear of the
@@ -240,7 +243,7 @@ export default function VBars({
           <span
             key={`label-${bar.label}-${String(index)}`}
             className={`flex min-w-0 justify-center whitespace-nowrap ${AXIS_TEXT}`}
-            style={{ gridRow: 3, gridColumn: index + 1 }}
+            style={{ gridRow: 2, gridColumn: index + 1 }}
           >
             {/* A skipped label is an empty cell, not a missing one: the row
                 keeps its height and the columns keep their alignment. */}
@@ -268,6 +271,39 @@ export default function VBars({
 /** The axis's own small type: the labels, the target's key, the legend. */
 const AXIS_TEXT =
   'font-num text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted tabular-nums';
+
+/**
+ * The written value, standing on the top of its bar. Past 12 columns a zero or
+ * a null says nothing a missing bar does not; the column's tooltip still
+ * carries it.
+ */
+function ColumnValue({
+  bar,
+  n,
+  bottom,
+  valueLabel,
+}: {
+  bar: VBar;
+  n: number;
+  /** The bar's height as a share of the plot, where the value stands. */
+  bottom: number;
+  valueLabel: (value: number) => string;
+}) {
+  const text =
+    bar.value === null ? (n <= 12 ? '·' : null) : n <= 12 || bar.value > 0 ? valueLabel(bar.value) : null;
+  if (text === null) return null;
+  return (
+    <span
+      className={`pointer-events-none absolute right-0 left-0 truncate pb-0.5 text-center font-num text-[length:var(--size-eyebrow)] leading-[1.4] tabular-nums${
+        bar.value === null ? ' text-text-muted' : ''
+      }`}
+      style={{ bottom: `${String(bottom)}%` }}
+      aria-hidden
+    >
+      {text}
+    </span>
+  );
+}
 
 /** One bar: its segments if it has them, else one fill, plus the overshoot cap. */
 function Bar({

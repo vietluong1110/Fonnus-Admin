@@ -20,7 +20,7 @@ import {
   TTS_PROVIDER_VALUES,
 } from '@/contract/config/runtime-document';
 import { layerOf, type DocumentIssue, type Layer } from '@/configuration/document';
-import { FLAT_KEYS } from '@/configuration/flat-keys';
+import { voiceIdOf } from '@/dashboard';
 
 /** One entry of a TTS vendor's voice list, in the pipeline's own names. */
 export interface BootReportVoice {
@@ -281,32 +281,30 @@ function isVoiceKey(key: unknown): key is VoiceFact['key'] {
 }
 
 /**
- * The effective voice of a call: the snapshot's own `TTS_PROVIDER` picks the
- * key, read before any vendor key (contract §3.4), through the one per-vendor
- * table (`FLAT_KEYS['tts.voice']`, copied from `RUNTIME_KEY_MAP`); the id is
- * that key's value. The label comes from `report` — the one booted at or
- * before the call — by `labelVoice`; the layer is `layerOf(snapshot,
- * 'tts.voice')`.
+ * The effective voice of a call: which key and id by `voiceIdOf`, the one
+ * voice rule the Overview's `voice` grouping uses too — the snapshot's own
+ * `TTS_PROVIDER` picks the key, and a snapshot naming no known vendor takes
+ * whichever voice key is present. The label comes from `report` — the one
+ * booted at or before the call — by `labelVoice`; the layer is
+ * `layerOf(snapshot, 'tts.voice')`.
  *
- * Null when there is nothing to say: no snapshot, no `TTS_PROVIDER` (or one
- * with no voice key), or that key absent or not a non-empty string — a vendor's
- * key is present only on its own call, so another vendor's key is never read
- * in its place.
+ * Null when there is nothing to say: no snapshot, or no voice id by that rule.
  */
 export function voiceFact(
   snapshot: Record<string, unknown> | null,
   report: BootReport | null,
 ): VoiceFact | null {
   if (snapshot === null) return null;
-  const vendor = snapshot['TTS_PROVIDER'];
-  const keys = FLAT_KEYS['tts.voice'];
-  if (typeof vendor !== 'string' || typeof keys !== 'object' || !Object.hasOwn(keys, vendor)) return null;
-  const key = keys[vendor];
-  if (!isVoiceKey(key) || !Object.hasOwn(snapshot, key)) return null;
-  const id = snapshot[key];
-  if (typeof id !== 'string' || id === '') return null;
-  const { label, labelCaveat } = labelVoice(report, snapshot, id);
-  return { key, id, label, note: labelCaveat, layer: layerOf(snapshot, 'tts.voice') };
+  const voice = voiceIdOf(snapshot);
+  if (voice === null || !isVoiceKey(voice.key)) return null;
+  const { label, labelCaveat } = labelVoice(report, snapshot, voice.id);
+  return {
+    key: voice.key,
+    id: voice.id,
+    label,
+    note: labelCaveat,
+    layer: layerOf(snapshot, 'tts.voice'),
+  };
 }
 
 /**

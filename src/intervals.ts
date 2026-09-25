@@ -247,6 +247,17 @@ function mirrorVerdict(terminal: EventRow | undefined): { dropped: number; fromS
 /** Who held the line (`../Fonnus/docs/console-call-view.md` holder vocabulary). */
 export type HolderKind = 'greeting' | 'canned' | 'waiting' | 'reply' | 'caller' | 'silence' | 'deaf';
 
+/** Every holder kind, in the order a legend lists them. */
+export const HOLDER_KINDS = [
+  'greeting',
+  'canned',
+  'waiting',
+  'reply',
+  'caller',
+  'silence',
+  'deaf',
+] as const satisfies readonly HolderKind[];
+
 export interface Holder {
   kind: HolderKind;
   /** The pipeline's own string: `bot: reply 3`, `bot: farewell`, `caller`, `silence`, `deaf`. */

@@ -89,3 +89,163 @@
 
   --shadow-raise: var(--shadow-raise);
 }
+
+/*
+ * The drawn tooltip of `src/ui/tooltip.tsx` (ADR 0014 decision 2). The node is
+ * always in the DOM — `aria-describedby` reads it hidden or not — and shows on
+ * hover or focus of its wrapper with no delay, fading over `--duration-fast`.
+ * Above the trigger by default; `data-tip-side="bottom"` puts it below, for a
+ * trigger near the top of a clipping box. Centred by default;
+ * `data-tip-align="end"` ends it at the trigger's right edge, `"start"` starts
+ * it at the left edge.
+ */
+@layer components {
+  .tip {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .tip > .tip-trigger {
+    display: inherit;
+    flex-direction: inherit;
+    align-items: inherit;
+    justify-content: inherit;
+    gap: inherit;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    border-radius: var(--radius-xs);
+  }
+
+  .tip > .tip-body {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    z-index: 70;
+    width: max-content;
+    max-width: 28rem;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-inverse);
+    color: var(--text-on-inverse);
+    box-shadow: var(--shadow-overlay);
+    font-family: var(--font-ui);
+    font-size: var(--size-eyebrow);
+    font-weight: 400;
+    line-height: 1.45;
+    letter-spacing: normal;
+    text-align: left;
+    text-transform: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    /* `display: none`, not only `visibility: hidden`: a hidden box still
+       counts toward its scroll container's overflow, so a tooltip near the
+       right edge would widen the page. The fade-in survives through
+       `@starting-style` below. */
+    display: none;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%);
+    transition:
+      opacity var(--duration-fast) var(--ease-out),
+      display var(--duration-fast) var(--ease-out) allow-discrete;
+  }
+
+  .tip[data-tip-side='bottom'] > .tip-body {
+    bottom: auto;
+    top: calc(100% + 6px);
+  }
+
+  /* Ends at the trigger's right edge instead of centring on it. */
+  .tip[data-tip-align='end'] > .tip-body {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+
+  /* Starts at the trigger's left edge — a trigger at the window's left edge. */
+  .tip[data-tip-align='start'] > .tip-body {
+    left: 0;
+    transform: none;
+  }
+
+  .tip:hover > .tip-body,
+  .tip:focus-within > .tip-body {
+    display: block;
+    opacity: 1;
+  }
+
+  @starting-style {
+    .tip:hover > .tip-body,
+    .tip:focus-within > .tip-body {
+      opacity: 0;
+    }
+  }
+
+  /*
+   * The listbox panel and its rows, from `.popup` and `.option*` of
+   * ../Fonnus-Web-UI/src/app/ui/Field.module.css @ 302e3e8, with the base
+   * palette names replaced by aliases (`--ink` → `--text-body`, `--ink-soft`
+   * → `--text-muted`).
+   */
+  .listbox-popup {
+    position: fixed;
+    z-index: 80;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--surface-card);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-overlay), inset 0 0 0 1px var(--border-hairline);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    animation: listbox-pop-in var(--duration-base) var(--ease-arc);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(38, 31, 24, 0.22) transparent;
+  }
+
+  .listbox-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-ui);
+    font-size: var(--size-body-sm);
+    line-height: 1.4;
+    color: var(--text-body);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .listbox-option-active {
+    background: var(--action-ghost-hover);
+  }
+
+  .listbox-option-on {
+    font-weight: 600;
+    color: var(--text-accent);
+  }
+
+  .listbox-option-on.listbox-option-active {
+    background: rgba(184, 92, 43, 0.14);
+  }
+
+  .listbox-option-disabled {
+    color: var(--text-muted);
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+@keyframes listbox-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

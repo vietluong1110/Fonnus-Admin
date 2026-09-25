@@ -1,14 +1,14 @@
 /**
  * Audio ↔ marks: where a turn sits on the recording's time axis, which turn the
- * screen is on, where the playhead falls on that turn's waterfall, and the view
- * object each transcript bubble is drawn from. Pure — no React, no I/O, no
+ * screen is on, which stretch of the recording a bubble's play glyph plays, and
+ * the view object each transcript bubble is drawn from. Pure — no React, no I/O, no
  * database, so the consent gate's effect on a bubble is testable in isolation.
  *
  * The recording clock is the wall clock (`../Fonnus/docs/adr/0012-*`): sample 0
  * of `call.wav` is `call_log.recording_started_at` exactly, on both channels
  * (`../Fonnus/app/src/recording/wav-writer.ts`). So a mark's place in the audio
  * is a subtraction, and no new pipeline data is needed to line the transcript,
- * the call strip and the waterfall up with what is being heard.
+ * the call strip and the selected turn up with what is being heard.
  *
  * The writer pads a gap over `GAP_TOLERANCE_MS = 100` with silence and never
  * rewinds a track, so every offset below is right to within ~100 ms and can
@@ -42,7 +42,7 @@ export interface TurnSpan {
   startMs: number;
   /** Place of `marks.playback_end`; else the largest mark by value; else `speech_end_ms`. */
   endMs: number;
-  /** Place of `marks.speech_end` on the recording, or null — the waterfall's axis origin. */
+  /** Place of `marks.speech_end` on the recording, or null when the mark is absent. */
   speechEndMs: number | null;
   interrupted: boolean;
   /** `failed_leg !== null` — the contract's test for "failed" (§3.2, trap 7). */
@@ -109,7 +109,7 @@ function endWallMs(marks: Partial<Record<Stage, number>>): number | undefined {
 /**
  * The placed turn with the latest start at or before the playhead; null before
  * the first one. Between a reply's end and the next utterance the previous turn
- * stays current — its waterfall is still the one being heard out. Overlapping
+ * stays current — its reply is still the one being heard out. Overlapping
  * blocks (a barge-in starts the next turn before the last turn's
  * `playback_end`) resolve the same way: the later start wins the moment it
  * begins.
@@ -130,10 +130,11 @@ export function turnAt(spans: TurnSpan[], playheadMs: number): TurnSpan | null {
  * by turn, and a turn that cannot be placed stays selectable while the
  * recording is paused inside another.
  *
- * `selectedIdx` is non-null only between a click and the next playhead move —
- * the provider clears it on every seek and on every position the player
- * reports (`playback-provider.tsx`) — which is what makes "the selection wins"
- * safe: a selection never outlives the position it was made at.
+ * `selectedIdx` is non-null only while the playhead stays inside the selected
+ * turn — the provider clears it the moment a seek or a reported position
+ * leaves that turn's block (`leavesSelection`, `playback-provider.tsx`) — which
+ * is what makes "the selection wins" safe: a selection never outlives the turn
+ * being heard.
  *
  * "The playhead has moved" is `playheadMs > 0`: a playhead still at 0 is the
  * state the page rendered with rather than a position anyone chose. A
@@ -152,15 +153,132 @@ export function currentTurnIdx(
 }
 
 /**
- * The playhead's place on one turn's waterfall, whose axis starts at
- * `speech_end` (`src/latency.ts`, `waterfallRows`). Null when the turn has no
- * `speech_end` mark — the chart's own "measured but not placed" rule. The value
- * may be negative or past the chart's domain; the chart discards it then, this
- * function does not clamp, so the caller can tell "before this turn" from
- * "inside it".
+ * How far outside a turn's block the playhead may sit and still be "in" it.
+ * The recording drifts up to ~100 ms late against the marks (see the header),
+ * and a seek lands on a frame boundary, so a click that seeks to a turn's own
+ * start must never read as having left it.
  */
-export function waterfallPlayheadMs(playheadMs: number, span: TurnSpan): number | null {
-  return span.speechEndMs === null ? null : playheadMs - span.speechEndMs;
+export const SEEK_SLACK_MS = 150;
+
+/**
+ * Whether a playhead position ends the selection: true only when a turn is
+ * selected, that turn has a block on the recording, and the position falls
+ * outside `[speech_start_ms, playback_end]` (`TurnSpan.startMs`–`endMs`) by
+ * more than `SEEK_SLACK_MS`. A selected turn with no block — no
+ * `speech_start_ms`, or a call with no `recording_started_at` — has nothing to
+ * leave, so it stays selected until the next click.
+ */
+export function leavesSelection(
+  spans: TurnSpan[],
+  selectedIdx: number | null,
+  playheadMs: number,
+): boolean {
+  if (selectedIdx === null) return false;
+  const span = spans.find((candidate) => candidate.idx === selectedIdx);
+  if (span === undefined) return false;
+  return playheadMs < span.startMs - SEEK_SLACK_MS || playheadMs > span.endMs + SEEK_SLACK_MS;
+}
+
+/** What `watchRangeEnd` needs of the player and the frame clock — `<audio>` and `requestAnimationFrame` in the browser. */
+export interface RangeClock {
+  /** Where the audio is now, in ms. */
+  positionMs: () => number;
+  pause: () => void;
+  frame: (callback: () => void) => number;
+  cancelFrame: (handle: number) => void;
+  /** Listens for the player's own `seeking` or `timeupdate` event; returns the unsubscribe. */
+  on: (event: 'seeking' | 'timeupdate', callback: () => void) => () => void;
+}
+
+/**
+ * Plays a range to its end: pauses the audio at the first check that finds
+ * the position at or past `toMs`, however far past — a check is once a frame
+ * (`timeupdate` fires only every ~250 ms, too sparse to stop on a word), and
+ * `timeupdate` is a second check, because a background tab stops the frames
+ * while the audio plays on (the overshoot there is accepted).
+ *
+ * Moving the audio elsewhere is known from the player's own `seeking` event,
+ * never inferred from the position. The one `seeking` the watch lets pass is
+ * the range's own start: the provider's seek to `fromMs` fires its event after
+ * the watch has begun, and so does the start position of an audio that had
+ * not loaded yet. Returns the cancel, which the provider also calls on its
+ * own seek or a pause.
+ */
+export function watchRangeEnd(clock: RangeClock, fromMs: number, toMs: number): () => void {
+  let handle: number | null = null;
+  let done = false;
+  let unsubscribe: (() => void)[] = [];
+  const stop = (): void => {
+    if (done) return;
+    done = true;
+    if (handle !== null) clock.cancelFrame(handle);
+    handle = null;
+    for (const each of unsubscribe) each();
+  };
+  const check = (): void => {
+    if (done || clock.positionMs() < toMs) return;
+    stop();
+    clock.pause();
+  };
+  const tick = (): void => {
+    handle = null;
+    check();
+    if (!done) handle = clock.frame(tick);
+  };
+  unsubscribe = [
+    clock.on('timeupdate', check),
+    clock.on('seeking', () => {
+      if (Math.abs(clock.positionMs() - fromMs) > SEEK_SLACK_MS) stop();
+    }),
+  ];
+  handle = clock.frame(tick);
+  return stop;
+}
+
+/** A stretch of the recording, in ms from sample 0 — what a bubble's play glyph hears. */
+export interface PlayRange {
+  fromMs: number;
+  toMs: number;
+}
+
+/**
+ * What one bubble's play glyph plays (`playRange`, `playback-provider.tsx`):
+ * the caller's own utterance, `speech_start_ms → speech_end_ms` (already
+ * recording offsets), or the reply as heard, `first_audio_out` (else
+ * `playback_start`, `assistantStartWallMs`) `→ playback_end`, placed through
+ * the recorder's origin. Null when the call has no recorder clock, either end
+ * is missing, or the pair is empty or reversed — a glyph with nothing to play
+ * is not drawn.
+ *
+ * On an `interrupted` reply `playback_end` is the last lull before the cut
+ * (../Fonnus/docs/read-contract.md §3.2), so the range stops there and the
+ * audio after it is not played. The next turn's `speech_start_ms` is no
+ * substitute: the pipeline takes it on an unmuted line only, and the line is
+ * muted while a reply plays (`app/src/session/effect-runner.ts:483`), so it
+ * falls after the cut — and after the degraded line, on a reply that failed
+ * mid-way (trap 7).
+ */
+export function playRangeOf(
+  turn: Pick<TurnRow, 'speech_start_ms' | 'speech_end_ms' | 'marks'>,
+  side: 'caller' | 'assistant',
+  recordingStartedAt: Date | null,
+): PlayRange | null {
+  let fromMs: number | null = null;
+  let toMs: number | null = null;
+  if (recordingStartedAt === null) return null;
+  if (side === 'caller') {
+    fromMs = turn.speech_start_ms;
+    toMs = turn.speech_end_ms;
+  } else {
+    const marks = parseMarks(turn.marks);
+    const start = assistantStartWallMs(marks);
+    const origin = recordingStartedAt.getTime();
+    if (start !== undefined && marks.playback_end !== undefined) {
+      fromMs = recordingOffsetMs(start, origin);
+      toMs = recordingOffsetMs(marks.playback_end, origin);
+    }
+  }
+  return fromMs === null || toMs === null || toMs <= fromMs ? null : { fromMs, toMs };
 }
 
 /**
@@ -217,12 +335,20 @@ export interface TurnBubbleView {
   callerLengthMs: number | null;
   /** `playback_end − first_audio_out` by mark. */
   assistantLengthMs: number | null;
-  /** Where the bubble seeks to on the recording, or null when it has no place there. */
-  callerSeekMs: number | null;
-  assistantSeekMs: number | null;
+  /**
+   * Where a click on either bubble seeks to: the turn's start
+   * (`speech_start_ms`), or null when the turn has no place on the recording.
+   */
+  seekMs: number | null;
+  /** What each bubble's play glyph plays (`playRangeOf`); null draws no glyph. */
+  callerRange: PlayRange | null;
+  assistantRange: PlayRange | null;
   interrupted: boolean;
   /** `failureLine(...)`, or null when `failed_leg` is null (trap 7). */
   failure: string | null;
+  /** The two columns `failureChip` names the failure from. */
+  failedLeg: string | null;
+  failedStage: string | null;
   source: string | null;
 }
 
@@ -243,12 +369,8 @@ export function bubbleView(
     span: TurnSpan | undefined;
   },
 ): TurnBubbleView {
-  const marks = parseMarks(turn.marks);
   const length = bubbleLengthMs(turn);
   const showCaller = showCallerData(context.outcome, context.gate);
-  const origin =
-    context.recordingStartedAt === null ? null : context.recordingStartedAt.getTime();
-  const assistantStart = assistantStartWallMs(marks);
   return {
     idx: turn.idx,
     callerText: showCaller ? turn.caller_text : null,
@@ -261,13 +383,13 @@ export function bubbleView(
     assistantText: turn.assistant_text,
     callerLengthMs: length.caller,
     assistantLengthMs: length.assistant,
-    callerSeekMs: context.span?.startMs ?? null,
-    assistantSeekMs:
-      origin === null || assistantStart === undefined
-        ? null
-        : recordingOffsetMs(assistantStart, origin),
+    seekMs: context.span?.startMs ?? null,
+    callerRange: playRangeOf(turn, 'caller', context.recordingStartedAt),
+    assistantRange: playRangeOf(turn, 'assistant', context.recordingStartedAt),
     interrupted: turn.interrupted,
     failure: failureLine(turn.failed_leg, turn.failed_stage, turn.failed_after_ms),
+    failedLeg: turn.failed_leg,
+    failedStage: turn.failed_stage,
     source: turn.source,
   };
 }

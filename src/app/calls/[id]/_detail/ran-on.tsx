@@ -14,6 +14,13 @@ import { formatNumber, shortSha } from '@/calls';
 import Badge from '@/ui/badge';
 import Caveat from '@/ui/caveat';
 import Field from '@/ui/field';
+import { termFor } from '@/ui/glossary';
+import Tooltip from '@/ui/tooltip';
+
+// The leg names the glossary gives a failed turn's leg, so the strip and the
+// failure chip spell LLM and TTS once (ADR 0013 decision 6).
+const LLM_LABEL = termFor('failedLeg', 'llm')?.name ?? '';
+const TTS_LABEL = termFor('failedLeg', 'tts')?.name ?? '';
 
 /** "vendor · model", either part omitted when absent; "not reported" when both are. */
 function leg(vendor: string | null, model: string | null): string {
@@ -37,9 +44,9 @@ export default function RanOnStrip({
         hint="The runtime_config row the call ran under; values it does not set are boot config"
       >
         {ran.row === null ? (
-          <span title="No row applied: none existed, or the process refused the newest one">
+          <Tooltip tip="No row applied: none existed, or the process refused the newest one">
             boot config
-          </span>
+          </Tooltip>
         ) : (
           <Link
             href={`/configuration?${new URLSearchParams({ tenant: tenantId, from: ran.row }).toString()}`}
@@ -52,7 +59,7 @@ export default function RanOnStrip({
       <Field label="STT">
         <span className="[overflow-wrap:anywhere]">{leg(ran.stt.vendor, ran.stt.model)}</span>
       </Field>
-      <Field label="LLM" hint="OPENROUTER_MODEL, the configured model">
+      <Field label={LLM_LABEL} hint="OPENROUTER_MODEL, the configured model">
         <span className="[overflow-wrap:anywhere]">{ran.llm.model ?? 'not configured'}</span>
         {ran.llm.others.map((other) => (
           <Caveat key={other.model}>
@@ -61,11 +68,11 @@ export default function RanOnStrip({
           </Caveat>
         ))}
       </Field>
-      <Field label="TTS">
+      <Field label={TTS_LABEL}>
         <span className="[overflow-wrap:anywhere]">{leg(ran.tts.vendor, ran.tts.model)}</span>
         {voice === null ? null : (
           <Caveat>
-            voice <span title={voice.id}>{voice.label ?? 'unlisted voice'}</span>
+            voice <Tooltip tip={voice.id}>{voice.label ?? 'unlisted voice'}</Tooltip>
             {' · '}
             {voice.layer.kind === 'row' ? `chosen by row #${voice.layer.version}` : 'boot value'}
             {voice.note === null ? null : <span className="block">{voice.note}</span>}
@@ -76,15 +83,15 @@ export default function RanOnStrip({
         {ran.build === null ? (
           'not recorded'
         ) : (
-          <span className="font-num" title={ran.build}>
-            {shortSha(ran.build)}
-          </span>
+          <Tooltip tip={ran.build}>
+            <span className="font-num">{shortSha(ran.build)}</span>
+          </Tooltip>
         )}
         {ran.fakeProviders ? (
           <span className="mt-1 block">
-            <Badge tone="warning" title="PROVIDERS = fake: no vendor was called">
-              fake providers
-            </Badge>
+            <Tooltip tip="PROVIDERS = fake: no vendor was called">
+              <Badge tone="warning">fake providers</Badge>
+            </Tooltip>
           </span>
         ) : null}
       </Field>

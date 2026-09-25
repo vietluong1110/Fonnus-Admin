@@ -7,11 +7,14 @@
  * The rule it enforces: the result is said, not assumed — "Copied" or, when the
  * browser refuses the clipboard (an insecure origin, a denied permission),
  * "Copy failed" with the value in the tooltip to select by hand. Both are
- * announced through a live region.
+ * announced through a live region. The button is the tooltip's trigger itself
+ * (ADR 0014), and the tooltip ends at its right edge: its one place is the
+ * right end of the call's page head, where a centred id would run off the page.
  */
 
 import { useEffect, useState } from 'react';
 import Button from './button';
+import Tooltip from './tooltip';
 
 type State = 'idle' | 'copied' | 'failed';
 
@@ -37,10 +40,12 @@ export default function CopyButton({ value, label }: { value: string; label: str
   };
 
   return (
-    <Button variant="secondary" title={value} onClick={() => { void copy(); }}>
-      <span aria-live="polite">
-        {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}
-      </span>
-    </Button>
+    <Tooltip tip={value} align="end" asChild>
+      <Button variant="secondary" onClick={() => { void copy(); }}>
+        <span aria-live="polite">
+          {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}
+        </span>
+      </Button>
+    </Tooltip>
   );
 }

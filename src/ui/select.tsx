@@ -2,19 +2,19 @@
  * A native `<select>`, wearing the shell of
  * ../Fonnus-Web-UI/src/app/ui/Field.module.css `.control` @ 302e3e8 (imported
  * from `input.tsx`, which copied it).
- * The Web-UI's drawn listbox is deliberately NOT copied (ADR 0011 decision 10):
- * nothing here needs type-ahead over a handful of options, and a native control
- * is the only one that still works with JavaScript off — which is the fallback
- * the Configuration form is built to keep.
+ * It is the form control; `listbox.tsx` draws the Web-UI's listbox over it as
+ * its face once scripts run (ADR 0014 decision 3, revising ADR 0011 decision
+ * 10), and with scripts off this native control is what the operator gets —
+ * the fallback the Configuration form is built to keep.
  */
 
-import type { SelectHTMLAttributes } from 'react';
+import type { ComponentProps } from 'react';
 import { CONTROL } from './input';
 
 export default function Select({
   className,
   ...rest
-}: SelectHTMLAttributes<HTMLSelectElement>) {
+}: ComponentProps<'select'>) {
   return (
     <select
       // `pr-9!`: CONTROL's `px-[14px]` otherwise wins, and a long option runs

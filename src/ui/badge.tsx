@@ -3,7 +3,8 @@
  * (its tone table copied unchanged).
  * The rule it enforces: a badge is a 12–16% tint of the tone colour carrying
  * the tone colour as text — never a saturated fill with white text, which
- * reads as an alarm wherever it lands.
+ * reads as an alarm wherever it lands. A badge that needs an explanation is
+ * wrapped in `Tooltip` by its caller (ADR 0014: no `title` attribute).
  */
 
 import type { ReactNode } from 'react';
@@ -33,18 +34,15 @@ const TONES: Record<BadgeTone, { bg: string; fg: string }> = {
 export default function Badge({
   tone = 'neutral',
   dot = false,
-  title,
   children,
 }: {
   tone?: BadgeTone;
   dot?: boolean;
-  title?: string;
   children: ReactNode;
 }) {
   const { bg, fg } = TONES[tone];
   return (
     <span
-      title={title}
       style={{ background: bg, color: fg }}
       className="inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 font-ui text-[length:var(--size-ui)] leading-[1.4] font-medium whitespace-nowrap"
     >

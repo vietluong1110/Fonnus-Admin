@@ -51,7 +51,9 @@ describe('callsInScope', () => {
     await callsInScope(parseScope({}, NOW));
 
     const { sql } = lastCall();
-    expect(sql).toContain('json_agg(t.idx order by t.idx)');
+    // Each failed turn carries its leg and stage, so a tick's tooltip names
+    // the failure through the glossary (`failedTickTip`).
+    expect(sql).toMatch(/json_agg\(json_build_object\('idx', t\.idx,\s*'failed_leg', t\.failed_leg,\s*'failed_stage', t\.failed_stage\)\s*order by t\.idx\)/);
     expect(sql).toContain('t.failed_leg is not null');
     expect(sql).toContain("'[]'::json");
     // `call_event` is never read on a list screen: a range scan across calls is

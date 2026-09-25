@@ -1,9 +1,7 @@
 /*
  * The exact configuration the call ran under, every key grouped by prefix for
  * reading (`src/snapshot-groups.ts`), each value that came from the call's
- * `runtime_config` row tagged "row" (`keysFromRow`). The row itself, the
- * nested `runtime` key, is folded under the groups as raw JSON: its values are
- * the tagged keys above, so it is there to be checked, not read.
+ * `runtime_config` row tagged "row" (`keysFromRow`).
  *
  * Three rules of contract §3.4 the card carries on screen, because none of them
  * can be read off the values:
@@ -17,23 +15,32 @@
  *     value is not always a scalar: `runtime` and `SPEECHMATICS_SOUNDS_LIKE`
  *     are objects and four keys are arrays.
  *
+ * Each group is a card of key/value rows; a key the runtime document can set
+ * is labelled by the glossary's name over the snapshot key (ADR 0013), any
+ * other key by itself. The whole snapshot, `runtime` row included, is folded
+ * at the end as raw JSON: to be checked, not read.
+ *
  * One value the card explains (ADR 0012 D6, D8): the effective voice id — the
- * `*_VOICE_ID` key of the call's own `TTS_PROVIDER` — reads by its label when
- * the boot report booted before the call lists it, the id only on hover, and
+ * `*_VOICE_ID` key `voiceIdOf` picks, the call's own `TTS_PROVIDER` first — reads by its label when
+ * the boot report booted before the call lists it, the id only in its tooltip, and
  * says which layer chose it, because the snapshot's flat key alone cannot say.
  */
 
 import { Fragment } from 'react';
 import type { VoiceFact } from '@/boot-report';
-import { keysFromRow } from '@/call-config';
+import { keysFromRow, PATH_OF_KEY } from '@/call-config';
 import { runtimeRow } from '@/configuration/document';
-import { parseSnapshot, renderValue } from '@/dashboard';
+import { canonicalKey, parseSnapshot, renderValue } from '@/dashboard';
 import { groupSnapshot } from '@/snapshot-groups';
+import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
+import { termFor } from '@/ui/glossary';
+import Term from '@/ui/term';
+import Tooltip from '@/ui/tooltip';
 import ClampedText from './clamped-text';
 
-/** Past this many characters a value gets a line of its own under its key. */
+/** Past this many characters, or on a second line, a value is clamped with "show all". */
 const INLINE_MAX = 48;
 
 /** `PROVIDERS` is `real` or `fake` and says only whether real vendors answered. */
@@ -91,8 +98,8 @@ export default function ConfigSnapshot({
             <>No runtime_config row applied: every value below is boot config.</>
           ) : (
             <>
-              Values tagged <RowTag /> came from runtime_config row #{row.version}; the rest
-              are boot config.
+              Values tagged <RowTag /> came from runtime_config row #{row.version}; the rest are
+              boot config.
             </>
           )}
         </p>
@@ -104,110 +111,107 @@ export default function ConfigSnapshot({
 
       {/* Grouped by prefix, a rendering choice only: a key with an unknown
           prefix falls to Other and none is ever dropped. Texts are prose, so
-          they take the whole width. */}
-      <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
+          their card takes the whole width. */}
+      <div className="grid items-start gap-4 md:grid-cols-2">
         {groups.map((group) => (
-          <div key={group.name} className={`min-w-0 ${group.name === 'Texts' ? 'md:col-span-2' : ''}`}>
-            <h3 className="m-0 border-b border-border-hairline pb-1 text-[length:var(--size-eyebrow)] font-semibold tracking-[.1em] text-text-accent uppercase">
-              {group.name}
-            </h3>
-            <dl className="m-0 mt-1 flex flex-col">
-              {group.entries.map((entry) => (
-                <Entry
-                  key={entry.key}
-                  name={entry.key}
-                  value={entry.value}
-                  fromRow={fromRow.has(entry.key)}
-                  stacked={group.name === 'Texts'}
-                  voice={voice !== null && entry.key === voice.key ? voice : null}
-                />
-              ))}
-            </dl>
+          <div
+            key={group.name}
+            className={`min-w-0 ${group.name === 'Texts' ? 'md:col-span-2' : ''}`}
+          >
+            <Card title={group.name} level={3}>
+              <dl className="m-0 grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-x-4 md:grid-cols-[minmax(0,13rem)_minmax(0,1fr)] gap-y-2.5">
+                {group.entries.map((entry) => (
+                  <Entry
+                    key={entry.key}
+                    name={entry.key}
+                    value={entry.value}
+                    fromRow={fromRow.has(entry.key)}
+                    voice={voice !== null && entry.key === voice.key ? voice : null}
+                  />
+                ))}
+              </dl>
+            </Card>
           </div>
         ))}
       </div>
 
-      {Object.hasOwn(snapshot, 'runtime') ? (
-        <details className="text-[length:var(--size-ui)]">
-          <summary className="cursor-pointer font-medium text-text-link">
-            Raw runtime row (JSON)
-          </summary>
-          <pre className="mt-2 mb-0 font-num text-[length:var(--size-eyebrow)] whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {JSON.stringify(snapshot['runtime'], null, 2)}
-          </pre>
-        </details>
-      ) : null}
+      <details className="text-[length:var(--size-ui)]">
+        <summary className="cursor-pointer font-medium text-text-link">
+          Raw config_snapshot (JSON)
+        </summary>
+        <pre className="mt-2 mb-0 font-num text-[length:var(--size-eyebrow)] whitespace-pre-wrap [overflow-wrap:anywhere]">
+          {JSON.stringify(snapshot, null, 2)}
+        </pre>
+      </details>
     </>
   );
 }
 
 /**
- * One key and its value. A short value sits beside its key, left-aligned, so
- * the eye does not cross the column to find it; a long one — prose, JSON — or
- * any value of a `stacked` group takes a line of its own under the key and is
- * cut to three lines.
+ * One key and its value, as a row of the group's two-column grid. A long value
+ * — prose, JSON — is clamped to two lines with "show all".
  */
 function Entry({
   name,
   value,
   fromRow,
-  stacked,
   voice,
 }: {
   name: string;
   value: unknown;
   fromRow: boolean;
-  stacked: boolean;
   voice: VoiceFact | null;
 }) {
+  // An old spelling of a renamed Deepgram key finds its path through the new one.
+  const path = PATH_OF_KEY.get(canonicalKey(name));
+  const term = path === undefined ? null : termFor('configLeaf', path);
   const keyCell = (
-    <dt className="font-num text-[length:var(--size-eyebrow)] [overflow-wrap:anywhere] text-text-muted">
-      <KeyName name={name} />
+    <dt className="min-w-0 text-[length:var(--size-ui)]">
+      {term === null ? (
+        <span className="font-num text-[length:var(--size-eyebrow)] text-text-muted">
+          <KeyName name={name} />
+        </span>
+      ) : (
+        <Term term={{ ...term, code: name }} />
+      )}
     </dt>
   );
   const tag = fromRow ? <RowTag /> : null;
 
   if (voice !== null) {
     return (
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 py-0.5">
+      <>
         {keyCell}
         <VoiceValue voice={voice} />
-      </div>
+      </>
     );
   }
 
   const text = valueText(name, value);
-  if (!stacked && text.length <= INLINE_MAX && !text.includes('\n')) {
-    return (
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 py-0.5">
-        {keyCell}
-        <dd className="m-0 font-num text-[length:var(--size-eyebrow)] [overflow-wrap:anywhere]">
-          {text} {tag}
-        </dd>
-      </div>
-    );
-  }
-
-  const prose = typeof value === 'string';
+  const long = text.length > INLINE_MAX || text.includes('\n');
   return (
-    <div className="py-1">
-      <dt className="flex items-baseline gap-2 font-num text-[length:var(--size-eyebrow)] [overflow-wrap:anywhere] text-text-muted">
-        <span>
-          <KeyName name={name} />
-        </span>
-        {tag}
-      </dt>
-      <dd className="m-0 mt-0.5">
-        <ClampedText
-          text={text}
-          className={
-            prose
-              ? 'text-[length:var(--size-ui)] leading-[1.5]'
-              : 'font-num text-[length:var(--size-eyebrow)]'
-          }
-        />
+    <>
+      {keyCell}
+      <dd className="m-0 min-w-0">
+        {long ? (
+          <>
+            <ClampedText
+              text={text}
+              className={
+                typeof value === 'string'
+                  ? 'text-[length:var(--size-ui)] leading-[1.5]'
+                  : 'font-num text-[length:var(--size-eyebrow)]'
+              }
+            />
+            {tag}
+          </>
+        ) : (
+          <span className="font-num text-[length:var(--size-eyebrow)] [overflow-wrap:anywhere]">
+            {text} {tag}
+          </span>
+        )}
       </dd>
-    </div>
+    </>
   );
 }
 
@@ -253,8 +257,12 @@ function RowTag() {
 function VoiceValue({ voice }: { voice: VoiceFact }) {
   const layer = voice.layer.kind === 'row' ? `chosen by row #${voice.layer.version}` : 'boot value';
   return (
-    <dd className="m-0 text-[length:var(--size-eyebrow)]">
-      <span title={voice.id}>{voice.label ?? 'unlisted voice'}</span>
+    <dd className="m-0 min-w-0 text-[length:var(--size-ui)]">
+      <Tooltip tip={voice.id}>
+        <span className="cursor-help underline decoration-border-strong decoration-dotted underline-offset-[3px]">
+          {voice.label ?? 'unlisted voice'}
+        </span>
+      </Tooltip>
       <Caveat as="span" className="ml-2">
         {layer}
       </Caveat>

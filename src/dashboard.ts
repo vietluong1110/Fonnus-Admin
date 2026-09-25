@@ -9,7 +9,15 @@
  * Vocabulary is the pipeline's, unchanged (CLAUDE.md §Ground rules).
  */
 
-import { CALL_TIME_ZONE, isConsentGranted, parseCostVnd, shortSha } from './calls';
+import {
+  CALL_TIME_ZONE,
+  CALL_TIME_ZONE_OFFSET,
+  formatDayShort,
+  isConsentGranted,
+  parseCostVnd,
+  shortSha,
+} from './calls';
+import { FLAT_KEYS } from './configuration/flat-keys';
 import { LEGS, PARTITION_LEGS, type LegName, legSpans, parseMarks } from './latency';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
 import { type BucketUnit, type Window, bucketUnit } from './window';
@@ -76,13 +84,13 @@ export function dayKey(date: Date): string {
 }
 
 /**
- * A day bucket as the charts write it — `5/9` for the 5th of September. The
- * key is already a day in the clinic's zone, so this is string work and no zone
- * is involved a second time.
+ * A day bucket as the charts write it — `05-09` for the 5th of September, the
+ * console's short day (`formatDayShort`), so an axis reads like every other
+ * date on screen. The key is already a day in the clinic's zone, so it is read
+ * as midnight at the clinic's offset and lands on the same day.
  */
 export function dayLabel(day: string): string {
-  const [, month, date] = day.split('-');
-  return `${String(Number(date))}/${String(Number(month))}`;
+  return formatDayShort(new Date(`${day}T00:00:00${CALL_TIME_ZONE_OFFSET}`));
 }
 
 // The same formatter with the hour, for the `24h` window's columns. `h23` so
@@ -125,7 +133,7 @@ export function bucketKey(unit: BucketUnit, date: Date): string {
   return dayKey(date);
 }
 
-/** What a column is called under the axis: `07` · `5/9` · the Monday's `5/9`. */
+/** What a column is called under the axis: `07` · `05-09` · the Monday's `05-09`. */
 export function bucketLabel(unit: BucketUnit, key: string): string {
   return unit === 'hour' ? key.slice(11, 13) : dayLabel(key.slice(0, 10));
 }
@@ -151,7 +159,17 @@ const STEP_MS: Record<BucketUnit, number> = {
  * same constant assumption `src/window.ts` makes when it resolves a date-only
  * bound, and the one `CALL_TIME_ZONE` is pinned against there.
  */
-const ZONE_OFFSET_MS = 7 * 3_600_000;
+const ZONE_OFFSET_MS = offsetMs(CALL_TIME_ZONE_OFFSET);
+
+/** `+07:00` → 25 200 000: the one zone constant, read as milliseconds. */
+function offsetMs(offset: string): number {
+  const match = /^([+-])(\d{2}):(\d{2})$/.exec(offset);
+  if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) {
+    throw new Error(`not a UTC offset: ${offset}`);
+  }
+  const ms = (Number(match[2]) * 60 + Number(match[3])) * 60_000;
+  return match[1] === '-' ? -ms : ms;
+}
 
 /** One column of a window chart: its key, what the axis calls it, and whether
  * the window covers only part of it. */
@@ -242,9 +260,9 @@ export function foldKey(key: string, keys: string[]): string | null {
  * whole object" (§3.4, jsonb equality is structural); `key:<K>` is its "group on
  * one key". The model groupings read the columns, which are the ids the call
  * actually ran on — under `PROVIDERS=fake` those differ from the snapshot's
- * model keys (trap 6).
+ * model keys (trap 6). `voice` is the effective voice id (`voiceIdOf`).
  */
-export const GROUPINGS = ['none', 'llm_model', 'stt_model', 'tts_model', 'config'] as const;
+export const GROUPINGS = ['none', 'llm_model', 'stt_model', 'tts_model', 'config', 'voice'] as const;
 
 export type Grouping = (typeof GROUPINGS)[number] | `key:${string}`;
 
@@ -362,6 +380,35 @@ function runtimeVersion(snapshot: Record<string, unknown>): unknown {
   return Object.hasOwn(object, 'version') ? object['version'] : undefined;
 }
 
+/**
+ * The voice id the call's speech ran on, and the key it was read from — the
+ * one rule the Overview's `voice` grouping and the call detail's voice
+ * (`voiceFact`) share (docs/upstream.md §Overview). The snapshot's own
+ * `TTS_PROVIDER` picks the key through the per-vendor table
+ * (`FLAT_KEYS['tts.voice']`, copied from the pipeline's `RUNTIME_KEY_MAP`),
+ * and then only that key is read: a snapshot carries the voice key of its own
+ * vendor only (contract §3.4, pipeline ADR 0029), so another vendor's key is
+ * never read in its place. A snapshot that names no known vendor takes
+ * whichever per-vendor key is present. Own keys only, non-empty string ids
+ * only; null when there is none. The id is the identity, never its
+ * `boot_report` label: a label can change between boots.
+ */
+export function voiceIdOf(snapshot: Record<string, unknown>): { key: string; id: string } | null {
+  const byVendor = FLAT_KEYS['tts.voice'];
+  if (typeof byVendor !== 'object') return null;
+  const vendor = Object.hasOwn(snapshot, 'TTS_PROVIDER') ? snapshot['TTS_PROVIDER'] : undefined;
+  const keys =
+    typeof vendor === 'string' && Object.hasOwn(byVendor, vendor)
+      ? [byVendor[vendor]]
+      : Object.values(byVendor);
+  for (const key of keys) {
+    if (key === undefined || !Object.hasOwn(snapshot, key)) continue;
+    const id = snapshot[key];
+    if (typeof id === 'string' && id !== '') return { key, id };
+  }
+  return null;
+}
+
 export function groupKey(
   call: DashboardCall,
   turn: DashboardTurn,
@@ -374,6 +421,7 @@ export function groupKey(
   const snapshot = parseSnapshot(call.config_snapshot);
   if (snapshot === null) return UNKNOWN_GROUP;
   if (grouping === 'config') return snapshotIdentity(snapshot);
+  if (grouping === 'voice') return voiceIdOf(snapshot)?.id ?? UNKNOWN_GROUP;
   const key = grouping.slice('key:'.length);
   // The key comes from the query string, so it can name a prototype property:
   // `key:__proto__` would otherwise fold every call into one group and
@@ -397,24 +445,6 @@ export function groupKey(
  */
 export function renderValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
-}
-
-/**
- * Every key any snapshot in the window carries, sorted — the `key:` options.
- * `runtime` is not one of them: it is an object, and the only value under it
- * this console reads is offered as the derived `runtime.version` instead
- * (ADR 0009). A renamed key is offered under its new spelling only.
- */
-export function snapshotKeys(calls: DashboardCall[]): string[] {
-  const keys = new Set<string>();
-  for (const call of calls) {
-    const snapshot = parseSnapshot(call.config_snapshot);
-    if (snapshot === null) continue;
-    for (const key of Object.keys(snapshot)) {
-      if (key !== 'runtime') keys.add(canonicalKey(key));
-    }
-  }
-  return [...keys].sort();
 }
 
 /**
@@ -461,6 +491,18 @@ export function differingKeys(snapshots: Array<Record<string, unknown> | null>):
   );
   if (versions.size > 1) differing.push(RUNTIME_VERSION_KEY);
   return differing;
+}
+
+/**
+ * The LLM model a call was configured with — its snapshot's `OPENROUTER_MODEL`,
+ * own key only — for the Overview's unpriced models (ADR 0015 decision 7): a
+ * call with no turn rows (trap 1) still paid for its LLM. Null when the
+ * snapshot is missing or the key is absent or not a non-empty string.
+ */
+export function configuredLlmOf(configSnapshot: unknown): string | null {
+  const snapshot = parseSnapshot(configSnapshot);
+  const model = snapshot === null ? undefined : lookup(snapshot, 'OPENROUTER_MODEL');
+  return typeof model === 'string' && model !== '' ? model : null;
 }
 
 /** How a snapshot value reads in a cell; an absent key is not a null one (§3.4). */

@@ -18,11 +18,12 @@
  * `src/interval-lane.ts` assigns.
  */
 
-import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
+import { useRef, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react';
 import { formatClock, formatNumber } from '@/calls';
 import {
   NO_TRAIL_LANE_CAVEAT,
   UNSUPPORTED_OPACITY,
+  laneLegend,
   segmentLabel,
   segmentStyle,
   segmentTitle,
@@ -31,6 +32,9 @@ import {
 import { TARGETS } from '@/latency';
 import { barScaleMs, type GreetingSpan, type TurnBar, type TurnSpan } from '@/playback';
 import Caveat, { Hint } from '@/ui/caveat';
+import { termFor, type Term as GlossaryTerm } from '@/ui/glossary';
+import Term from '@/ui/term';
+import Tooltip from '@/ui/tooltip';
 import { usePlayback } from './playback-provider';
 
 /** Arrow keys move by five seconds, page keys by fifteen — a review's step sizes. */
@@ -44,6 +48,9 @@ const BLOCK_LANE_HEIGHT = 34;
 const BAR_LANE_HEIGHT = 64;
 /** How much of the bar lane the target line leaves above it for the overshoot. */
 const BAR_PLOT_HEIGHT = 40;
+
+/** The lower lane's label: `pipeline_ms`, from the glossary (ADR 0013). */
+const PIPELINE_TERM = termFor('span', 'pipeline_ms') as GlossaryTerm;
 
 /**
  * A turn's block wears the state the operator is looking for: an ordinary turn
@@ -147,8 +154,7 @@ export default function CallAxis({
   }
 
   /** A turn's block, so its bar sits exactly under it. */
-  const spanOfTurn = (idx: number): TurnSpan | undefined =>
-    spans.find((span) => span.idx === idx);
+  const spanOfTurn = (idx: number): TurnSpan | undefined => spans.find((span) => span.idx === idx);
 
   return (
     <div className="flex flex-col gap-3">
@@ -163,7 +169,9 @@ export default function CallAxis({
             once, so it is the label's tooltip, not a paragraph under the axis. */}
         <span className="text-[length:var(--size-ui)] font-semibold">
           {intervals === null ? (
-            <Hint hint={`one block per turn, from speech_start_ms to playback_end, placed to within ~100 ms of the audio and only ever late${greeting === null ? '' : '; the quieter first block is the greeting, which has no turn row and so no bar'}`}>
+            <Hint
+              hint={`one block per turn, from speech_start_ms to playback_end, placed to within ~100 ms of the audio and only ever late${greeting === null ? '' : '; the quieter first block is the greeting, which has no turn row and so no bar'}`}
+            >
               Turns
             </Hint>
           ) : (
@@ -190,7 +198,7 @@ export default function CallAxis({
           onPointerMove={onPointerMove}
           onKeyDown={onKeyDown}
           style={{ height: `${String(BLOCK_LANE_HEIGHT)}px` }}
-          className="relative w-full cursor-pointer touch-none overflow-hidden rounded-xs border border-border-hairline bg-surface-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
+          className="relative w-full cursor-pointer touch-none rounded-xs border border-border-hairline bg-surface-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
         >
           {intervals === null ? (
             <TurnBlocks
@@ -206,54 +214,59 @@ export default function CallAxis({
               const { background, border } = segmentStyle(segment.kind, segment.failed);
               const left = pct(segment.fromMs);
               return (
-                <button
+                <LaneTip
                   // The trail can hold two intervals with the same offsets (an
                   // empty wait before a reply), so the key is the position.
                   key={`${String(segment.fromMs)}-${String(index)}`}
-                  type="button"
-                  // Seek first: a seek clears the selection
-                  // (`playback-provider.tsx`), and the click's own turn must be
-                  // the one left standing. A negative offset is clamped here,
-                  // for the axis has no negative side (ADR 0006) — the table
-                  // still prints it.
-                  onClick={() => {
-                    seek(Math.max(0, segment.fromMs));
-                    if (segment.turnIdx !== null) select(segment.turnIdx);
-                  }}
-                  aria-label={segmentLabel(segment)}
-                  title={segmentTitle(segment)}
+                  tip={segmentTitle(segment)}
                   // A one-pixel minimum: an interval of a few milliseconds — the
                   // sliver between a `turn_end` and the reply it started — is
                   // still a stretch of the call that happened.
-                  className="absolute top-1.5 bottom-1.5 grid min-w-px place-items-center rounded-[1px] font-num text-[length:var(--size-eyebrow)] font-semibold text-text-on-accent"
-                  style={{
-                    left: `${String(left)}%`,
-                    width: `${String(Math.max(0.4, pct(segment.toMs) - left))}%`,
-                    background,
-                    ...(border === null ? {} : { border }),
-                    // Past the trail's hole nothing is supported (§8 rule 7) —
-                    // muted, never hidden.
-                    ...(segment.unsupported ? { opacity: UNSUPPORTED_OPACITY } : {}),
-                  }}
+                  className="absolute top-1.5 bottom-1.5 min-w-px"
+                  left={left}
+                  width={Math.max(0.4, pct(segment.toMs) - left)}
                 >
-                  {/* The turn number stays on the reply it belongs to; no other
+                  <button
+                      type="button"
+                      // Seek first: a seek clears the selection
+                      // (`playback-provider.tsx`), and the click's own turn must be
+                      // the one left standing. A negative offset is clamped here,
+                      // for the axis has no negative side (ADR 0006) — the table
+                      // still prints it.
+                      onClick={() => {
+                        seek(Math.max(0, segment.fromMs));
+                        if (segment.turnIdx !== null) select(segment.turnIdx);
+                      }}
+                      aria-label={segmentLabel(segment)}
+                      className="grid h-full w-full place-items-center overflow-hidden rounded-[1px] font-num text-[length:var(--size-eyebrow)] font-semibold text-text-on-accent"
+                      style={{
+                        background,
+                        ...(border === null ? {} : { border }),
+                        // Past the trail's hole nothing is supported (§8 rule 7) —
+                        // muted, never hidden.
+                        ...(segment.unsupported ? { opacity: UNSUPPORTED_OPACITY } : {}),
+                      }}
+                    >
+                      {/* The turn number stays on the reply it belongs to; no other
                       holder owns a turn row to number. */}
-                  <span className="overflow-hidden">
-                    {segment.kind === 'reply' && segment.turnIdx !== null
-                      ? formatNumber(segment.turnIdx)
-                      : ''}
-                  </span>
-                </button>
+                      <span className="overflow-hidden">
+                        {segment.kind === 'reply' && segment.turnIdx !== null
+                          ? formatNumber(segment.turnIdx)
+                          : ''}
+                      </span>
+                    </button>
+                </LaneTip>
               );
             })
           )}
         </div>
 
-        <code className="text-[length:var(--size-ui)] font-semibold">
-          <Hint hint={`one bar per turn, taller is slower; red above the line missed the ${formatNumber(TARGETS.pipelineP95Ms)} ms target, a P95 over many calls, so on one turn a hint and not a verdict; a dashed outline is a reply that never became audible, never a zero`}>
-            pipeline_ms
-          </Hint>
-        </code>
+        <span className="text-[length:var(--size-ui)] font-semibold">
+          <Term
+            term={PIPELINE_TERM}
+            hint={`one bar per turn, taller is slower; red above the line missed the ${formatNumber(TARGETS.pipelineP95Ms)} ms target, a P95 over many calls, so on one turn a hint and not a verdict; a dashed outline is a reply that never became audible, never a zero`}
+          />
+        </span>
 
         <div className="relative w-full" style={{ height: `${String(BAR_LANE_HEIGHT)}px` }}>
           {/* The target, drawn once across the lane: anything above it missed it. */}
@@ -274,63 +287,70 @@ export default function CallAxis({
             const left = pct(span.startMs);
             const width = Math.max(0.4, pct(span.endMs) - left);
             const targetHeight = barHeight(TARGETS.pipelineP95Ms);
-            const height = bar.measured && bar.pipelineMs !== null ? barHeight(bar.pipelineMs) : targetHeight;
-            const over = bar.measured && bar.pipelineMs !== null && bar.pipelineMs > TARGETS.pipelineP95Ms;
+            const height =
+              bar.measured && bar.pipelineMs !== null ? barHeight(bar.pipelineMs) : targetHeight;
+            const over =
+              bar.measured && bar.pipelineMs !== null && bar.pipelineMs > TARGETS.pipelineP95Ms;
             return (
-              <button
+              <LaneTip
                 key={bar.idx}
-                type="button"
-                onClick={() => {
-                  seek(span.startMs);
-                  select(bar.idx);
-                }}
-                aria-label={`Turn ${formatNumber(bar.idx)}, pipeline_ms ${
-                  bar.measured && bar.pipelineMs !== null
-                    ? `${formatNumber(bar.pipelineMs)} ms`
-                    : 'not measured'
-                }`}
-                title={
+                tip={
                   bar.measured && bar.pipelineMs !== null
                     ? `Turn ${formatNumber(bar.idx)} · ${formatNumber(bar.pipelineMs)} ms`
                     : `Turn ${formatNumber(bar.idx)} · not measured — the reply never became audible`
                 }
-                className="absolute bottom-0 flex flex-col justify-end"
-                style={{ left: `${String(left)}%`, width: `${String(width)}%`, height: '100%' }}
+                className="absolute bottom-0 h-full"
+                left={left}
+                width={width}
               >
-                {/* The value over its bar, as the artboard writes it: a number
-                    read off a height is a number nobody quotes. */}
-                <span
-                  className={`mb-0.5 truncate text-center font-num text-[length:var(--size-eyebrow)] leading-[1.3] tabular-nums ${
-                    over ? 'font-semibold text-error' : 'text-text-muted'
-                  }`}
-                >
-                  {bar.measured && bar.pipelineMs !== null ? formatNumber(bar.pipelineMs) : '—'}
-                </span>
-                {bar.measured ? (
-                  <span
-                    className="relative w-full rounded-t-xs"
-                    style={{ height: `${String(height)}px`, background: 'var(--chart-1)' }}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      seek(span.startMs);
+                      select(bar.idx);
+                    }}
+                    aria-label={`Turn ${formatNumber(bar.idx)}, ${PIPELINE_TERM.name} ${
+                      bar.measured && bar.pipelineMs !== null
+                        ? `${formatNumber(bar.pipelineMs)} ms`
+                        : 'not measured'
+                    }`}
+                    className="flex h-full w-full flex-col justify-end"
                   >
-                    {over ? (
-                      // The overshoot on top of the bar, not beside it: the
-                      // bar's height is still the value.
+                    {/* The value over its bar, as the artboard writes it: a number
+                    read off a height is a number nobody quotes. */}
+                    <span
+                      className={`mb-0.5 truncate text-center font-num text-[length:var(--size-eyebrow)] leading-[1.3] tabular-nums ${
+                        over ? 'font-semibold text-error' : 'text-text-muted'
+                      }`}
+                    >
+                      {bar.measured && bar.pipelineMs !== null ? formatNumber(bar.pipelineMs) : '—'}
+                    </span>
+                    {bar.measured ? (
                       <span
-                        aria-hidden="true"
-                        className="absolute top-0 right-0 left-0 rounded-t-xs bg-error"
-                        style={{ height: `${String(height - targetHeight)}px` }}
+                        className="relative w-full rounded-t-xs"
+                        style={{ height: `${String(height)}px`, background: 'var(--chart-1)' }}
+                      >
+                        {over ? (
+                          // The overshoot on top of the bar, not beside it: the
+                          // bar's height is still the value.
+                          <span
+                            aria-hidden="true"
+                            className="absolute top-0 right-0 left-0 rounded-t-xs bg-error"
+                            style={{ height: `${String(height - targetHeight)}px` }}
+                          />
+                        ) : null}
+                      </span>
+                    ) : (
+                      // A reply that never became audible, or a negative value
+                      // (contract §3.2): an outline to the target's height, never a
+                      // bar of zero, which would read as an instant reply.
+                      <span
+                        className="w-full rounded-t-xs border border-b-0 border-dashed border-border-dashed"
+                        style={{ height: `${String(height)}px` }}
                       />
-                    ) : null}
-                  </span>
-                ) : (
-                  // A reply that never became audible, or a negative value
-                  // (contract §3.2): an outline to the target's height, never a
-                  // bar of zero, which would read as an instant reply.
-                  <span
-                    className="w-full rounded-t-xs border border-b-0 border-dashed border-border-dashed"
-                    style={{ height: `${String(height)}px` }}
-                  />
-                )}
-              </button>
+                    )}
+                  </button>
+              </LaneTip>
             );
           })}
         </div>
@@ -365,6 +385,8 @@ export default function CallAxis({
         />
       </div>
 
+      <LaneLegend intervals={intervals} />
+
       {/* The trail drives the lane, so the call has no event trail to draw one
           from: the verdict is `absent`, or there is no `recording_started_at`
           to place the records on (ADR 0010 decision 3). */}
@@ -382,8 +404,8 @@ export default function CallAxis({
       {intervals !== null || unplaced.length === 0 ? null : (
         <Caveat>
           not placed on the recording: turn{unplaced.length === 1 ? '' : 's'}{' '}
-          {unplaced.map((idx) => formatNumber(idx)).join(', ')} — no{' '}
-          <code>speech_start_ms</code>, or the call has no <code>recording_started_at</code>
+          {unplaced.map((idx) => formatNumber(idx)).join(', ')} — no <code>speech_start_ms</code>,
+          or the call has no <code>recording_started_at</code>
         </Caveat>
       )}
     </div>
@@ -424,42 +446,127 @@ function TurnBlocks({
       {greeting === null ? null : (
         // The greeting has no `turn` row and no `pipeline_ms`: a quieter
         // block, and no bar under it.
-        <div
-          aria-hidden="true"
+        <LaneTip
+          tip={`Greeting · ${formatClock(greeting.startMs)} → ${formatClock(greeting.endMs)} · no turn row, so no bar`}
           className="absolute inset-y-0 min-w-px"
-          style={{
-            left: `${String(pct(greeting.startMs))}%`,
-            width: `${String(Math.max(0.4, pct(greeting.endMs) - pct(greeting.startMs)))}%`,
-            background: 'var(--action-ghost-hover)',
-            borderRight: '1px solid var(--border-strong)',
-          }}
-          title={`Greeting · ${formatClock(greeting.startMs)} → ${formatClock(greeting.endMs)} · no turn row, so no bar`}
-        />
+          left={pct(greeting.startMs)}
+          width={Math.max(0.4, pct(greeting.endMs) - pct(greeting.startMs))}
+        >
+          {/* Decoration: the hover reads the tooltip; the lane's slider is
+              what a keyboard or screen reader moves through. */}
+          <div
+            aria-hidden="true"
+            className="h-full w-full"
+            style={{
+              background: 'var(--action-ghost-hover)',
+              borderRight: '1px solid var(--border-strong)',
+            }}
+          />
+        </LaneTip>
       )}
       {spans.map((span) => (
-        <button
+        <LaneTip
           key={span.idx}
-          type="button"
-          // Seek first: a seek clears the selection (`playback-provider.tsx`),
-          // and the click's own turn must be the one left standing.
-          onClick={() => {
-            seek(span.startMs);
-            select(span.idx);
-          }}
-          aria-label={`Play turn ${formatNumber(span.idx)}`}
+          tip={`Turn ${formatNumber(span.idx)} · ${formatClock(span.startMs)} → ${formatClock(span.endMs)}`}
           // A one-pixel minimum: a turn whose block collapsed (a reversed
           // clock, `src/playback.ts`) is still a turn that happened.
-          className="absolute top-1.5 bottom-1.5 grid min-w-px place-items-center rounded-[1px] font-num text-[length:var(--size-eyebrow)] font-semibold text-text-on-accent"
-          style={{
-            left: `${String(pct(span.startMs))}%`,
-            width: `${String(Math.max(0.4, pct(span.endMs) - pct(span.startMs)))}%`,
-            background: blockColour(span),
-          }}
-          title={`Turn ${formatNumber(span.idx)} · ${formatClock(span.startMs)} → ${formatClock(span.endMs)}`}
+          className="absolute top-1.5 bottom-1.5 min-w-px"
+          left={pct(span.startMs)}
+          width={Math.max(0.4, pct(span.endMs) - pct(span.startMs))}
         >
-          <span className="overflow-hidden">{formatNumber(span.idx)}</span>
-        </button>
+            <button
+              type="button"
+              // Seek first: a seek clears the selection (`playback-provider.tsx`),
+              // and the click's own turn must be the one left standing.
+              onClick={() => {
+                seek(span.startMs);
+                select(span.idx);
+              }}
+              aria-label={`Play turn ${formatNumber(span.idx)}`}
+              className="grid h-full w-full place-items-center overflow-hidden rounded-[1px] font-num text-[length:var(--size-eyebrow)] font-semibold text-text-on-accent"
+              style={{ background: blockColour(span) }}
+            >
+              <span className="overflow-hidden">{formatNumber(span.idx)}</span>
+            </button>
+        </LaneTip>
       ))}
     </>
+  );
+}
+
+/**
+ * The drawn tooltip (ADR 0014) on a positioned lane box: the box is placed by
+ * `left` and `width` (percent of the lane), and its child — the block's own
+ * button — is the tooltip's trigger (`Tooltip asChild`), so the control is one
+ * tab stop. A box in the right half of the lane ends its tooltip at its own
+ * right edge, so the last blocks of a call never push the page sideways.
+ */
+function LaneTip({
+  tip,
+  className,
+  left,
+  width,
+  children,
+}: {
+  tip: string;
+  className: string;
+  /** Where the box starts, in percent of the lane. */
+  left: number;
+  /** How wide it is, in percent of the lane. */
+  width: number;
+  children: ReactElement<Record<string, unknown>>;
+}) {
+  return (
+    <div className={className} style={{ left: `${String(left)}%`, width: `${String(width)}%` }}>
+      <Tooltip tip={tip} align={left + width / 2 > 50 ? 'end' : 'center'} asChild className="h-full w-full">
+        {children}
+      </Tooltip>
+    </div>
+  );
+}
+
+/**
+ * The key under the two lanes: a swatch per holder kind this call has
+ * (`laneLegend`), the hatch when a segment wears it, and the target line of
+ * the lower lane. The fallback lane of turn blocks has no holders to key.
+ */
+function LaneLegend({ intervals }: { intervals: LaneSegment[] | null }) {
+  const legend = laneLegend(intervals ?? []);
+  return (
+    <div className="flex flex-wrap items-start gap-x-4 gap-y-2 text-[length:var(--size-eyebrow)] text-text-muted">
+      {legend.swatches.map((swatch) => (
+        <span key={swatch.kind} className="inline-flex items-start gap-1.5">
+          <span
+            aria-hidden="true"
+            className="mt-[3px] inline-block h-2.5 w-3.5 shrink-0 rounded-[2px]"
+            style={{
+              background: swatch.style.background,
+              ...(swatch.style.border === null ? {} : { border: swatch.style.border }),
+            }}
+          />
+          <Term term={swatch.term} />
+        </span>
+      ))}
+      {legend.hatch ? (
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className="inline-block h-2.5 w-3.5 shrink-0 rounded-[2px]"
+            style={{
+              background:
+                'repeating-linear-gradient(135deg, var(--text-muted) 0 3px, var(--surface-card) 3px 6px)',
+            }}
+          />
+          hatched — nothing audible: a reply being prepared, or the recogniser not listening
+        </span>
+      ) : null}
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          aria-hidden="true"
+          className="inline-block w-3.5 border-t border-dashed border-border-strong"
+        />
+        target P95 &lt; {formatNumber(TARGETS.pipelineP95Ms)} ms
+      </span>
+    </div>
   );
 }

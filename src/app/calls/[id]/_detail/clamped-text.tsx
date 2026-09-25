@@ -1,8 +1,8 @@
 'use client';
 
 /*
- * A long snapshot value — a prompt, a canned line, an object — cut to three
- * lines, with "Show all" offered only when the cut actually hides something.
+ * A long snapshot value — a prompt, a canned line, an object — cut to two
+ * lines, with "show all" offered only when the cut actually hides something.
  * Whether it does depends on the width the text lands in, so it is measured in
  * the browser (and re-measured when the width changes) rather than guessed from
  * a character count.
@@ -29,7 +29,7 @@ export default function ClampedText({ text, className }: { text: string; classNa
     <>
       <p
         ref={ref}
-        className={`m-0 whitespace-pre-wrap [overflow-wrap:anywhere] ${open ? '' : 'line-clamp-3'} ${className}`}
+        className={`m-0 whitespace-pre-wrap [overflow-wrap:anywhere] ${open ? '' : 'line-clamp-2'} ${className}`}
       >
         {text}
       </p>
@@ -40,7 +40,7 @@ export default function ClampedText({ text, className }: { text: string; classNa
           onClick={() => { setOpen(!open); }}
           className="mt-0.5 cursor-pointer text-[length:var(--size-eyebrow)] font-medium text-text-link hover:underline"
         >
-          {open ? 'Show less' : 'Show all'}
+          {open ? 'show less' : 'show all'}
         </button>
       ) : null}
     </>

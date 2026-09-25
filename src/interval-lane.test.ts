@@ -11,7 +11,10 @@ import {
   VERDICT_BADGE,
   annotationHistorySummary,
   gapNote,
+  heardNote,
   holderTone,
+  laneLegend,
+  rowTint,
   rowAtPlayhead,
   segmentLabel,
   segmentStyle,
@@ -224,35 +227,92 @@ describe('the card’s fixed wording', () => {
   });
 });
 
-describe('the chart library stays in the one chart (ADR 0001)', () => {
-  /*
-   * The lanes, the interval segments and the bars are CSS boxes over offsets the
-   * server already computed; Recharts is an SVG chart library with its own
-   * layout pass, and a second file importing it is a second way this screen can
-   * disagree with the axis about where a millisecond sits.
-   */
-  const ALLOWED = new Set(['src/app/calls/[id]/waterfall.tsx']);
+describe('laneLegend — one swatch per holder kind the call has', () => {
+  it('lists the kinds present, in HOLDER_KINDS order, labelled by the glossary', () => {
+    const legend = laneLegend([{ kind: 'caller' }, { kind: 'reply' }, { kind: 'greeting' }, { kind: 'reply' }]);
+    expect(legend.swatches.map((swatch) => swatch.kind)).toEqual(['greeting', 'reply', 'caller']);
+    expect(legend.swatches.map((swatch) => swatch.term.name)).toEqual([
+      'Fonnus · greeting',
+      'Fonnus · reply',
+      'Caller',
+    ]);
+    expect(legend.swatches[0]?.style).toEqual(segmentStyle('greeting', false));
+    expect(legend.hatch).toBe(false);
+  });
 
-  it('imports recharts in the waterfall alone', () => {
+  it('keys the hatch only when a waiting or deaf segment wears it', () => {
+    expect(laneLegend([{ kind: 'waiting' }]).hatch).toBe(true);
+    expect(laneLegend([{ kind: 'deaf' }]).hatch).toBe(true);
+    expect(laneLegend([{ kind: 'silence' }]).hatch).toBe(false);
+  });
+
+  it('has no swatch at all for a lane with no intervals', () => {
+    expect(laneLegend([])).toEqual({ swatches: [], hatch: false });
+  });
+});
+
+describe('rowTint — the Intervals row ground by side', () => {
+  it('puts every bot kind on the card ground, the caller on a wash, silence and deaf neutral', () => {
+    for (const kind of ['greeting', 'canned', 'waiting', 'reply'] as const) {
+      expect(rowTint(kind)).toBe('var(--surface-card)');
+    }
+    expect(rowTint('caller')).toContain('var(--chart-2)');
+    expect(rowTint('silence')).toBe('var(--surface-page)');
+    expect(rowTint('deaf')).toBe('var(--surface-page)');
+    // Alias tokens only (ADR 0003).
+    for (const kind of KINDS) expect(rowTint(kind)).not.toMatch(/#[0-9a-f]{3,8}/i);
+  });
+});
+
+describe('heardNote — the sound-instant fact as a note under "What was heard"', () => {
+  const line = 'sound at 1.20';
+  const base = { energyMs: [1_200], unheard: false, finals: [] as unknown[], overtaken: [] as unknown[] };
+
+  it('notes sound the recogniser recognised nothing in', () => {
+    expect(heardNote(base, line)).toBe(line);
+  });
+
+  it('notes sound that fell while the feed was muted, even beside a recognised text', () => {
+    const muted = 'sound at 1.20 (unheard — feed muted)';
+    expect(heardNote({ ...base, unheard: true, finals: [{}] }, muted)).toBe(muted);
+  });
+
+  it('says nothing when the sound is behind a recognised text, or there was no sound', () => {
+    expect(heardNote({ ...base, finals: [{}] }, line)).toBeNull();
+    expect(heardNote({ ...base, overtaken: [{}] }, line)).toBeNull();
+    expect(heardNote({ ...base, energyMs: [] }, '—')).toBeNull();
+  });
+});
+
+describe('the chart library is gone (ADR 0014)', () => {
+  /*
+   * Every chart of the console is CSS boxes over offsets the server already
+   * computed (the capsule tracks of ADR 0014 decision 7); recharts left
+   * package.json with the waterfall, and an import of it would be a second
+   * layout pass that can disagree with the axis about where a millisecond sits.
+   */
+  it('no file under src/ imports recharts', () => {
     const root = fileURLToPath(new URL('.', import.meta.url));
     const offenders: string[] = [];
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
-        const rel = `src/${relative(root, full).split(sep).join('/')}`;
         if (entry.isDirectory()) walk(full);
-        else if (
-          /\.tsx?$/.test(entry.name) &&
-          !entry.name.endsWith('.test.ts') &&
-          !ALLOWED.has(rel)
-        ) {
-          if (/from 'recharts'|from "recharts"/.test(readFileSync(full, 'utf8'))) {
-            offenders.push(rel);
+        else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
+          if (/from ['"]recharts(\/[^'"]*)?['"]|import\(['"]recharts/.test(readFileSync(full, 'utf8'))) {
+            offenders.push(`src/${relative(root, full).split(sep).join('/')}`);
           }
         }
       }
     };
     walk(root);
     expect(offenders).toEqual([]);
+  });
+
+  it('recharts is not a dependency', () => {
+    const manifest = JSON.parse(
+      readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
+    ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    expect(Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })).not.toContain('recharts');
   });
 });

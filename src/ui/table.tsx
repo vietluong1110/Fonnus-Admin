@@ -46,7 +46,14 @@ export function Th({
         align === 'end' ? 'text-right' : 'text-left'
       }`}
     >
-      {hint === undefined ? children : <Hint hint={hint}>{children}</Hint>}
+      {/* Below the header: the table's scroll wrapper clips above it (ADR 0014). */}
+      {hint === undefined ? (
+        children
+      ) : (
+        <Hint hint={hint} side="bottom" align={align === 'end' ? 'end' : 'center'}>
+          {children}
+        </Hint>
+      )}
     </th>
   );
 }

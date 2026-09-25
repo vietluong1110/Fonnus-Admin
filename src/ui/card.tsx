@@ -23,10 +23,11 @@ export default function Card({
   children,
 }: {
   tone?: keyof typeof TONE_CLASS;
-  title?: string;
+  /** A string, or a heading that carries its own tooltip (a `Hint`). */
+  title?: ReactNode;
   /** Heading level of `title`: 3 for a card nested under a page section's h2. */
   level?: 2 | 3;
-  sub?: string;
+  sub?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
 }) {

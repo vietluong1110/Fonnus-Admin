@@ -7,6 +7,8 @@ import {
   CALL_STATE_CAVEAT,
   CALL_STATE_LABEL,
   CALL_STATE_TONE,
+  CALL_TIME_ZONE_LABEL,
+  CALL_TIME_ZONE_OFFSET,
   CONSENT_OUTCOMES,
   END_REASONS,
   UNKNOWN_VOCABULARY_TONE,
@@ -15,6 +17,8 @@ import {
   endReasonTone,
   formatCount,
   formatClock,
+  formatDay,
+  formatDayShort,
   formatDuration,
   formatMs,
   formatWhen,
@@ -29,6 +33,7 @@ import {
   isUnconsentedOutcome,
   isUuid,
   maskPhone,
+  meanPipelineMs,
   parseCostVnd,
   showCallerData,
   shortSha,
@@ -306,14 +311,14 @@ describe('formatWhen — pinned to Asia/Ho_Chi_Minh', () => {
   const instant = new Date('2026-09-05T07:03:12Z');
 
   it('renders the clinic-local time with its offset', () => {
-    expect(formatWhen(instant)).toBe('2026-09-05 14:03:12 +07');
+    expect(formatWhen(instant)).toBe('14:03:12 05-09-2026 (GMT+07)');
   });
 
   it('renders the same string whatever the process TZ says', () => {
     try {
       for (const zone of ['UTC', 'America/New_York', 'Australia/Sydney']) {
         vi.stubEnv('TZ', zone);
-        expect(formatWhen(instant)).toBe('2026-09-05 14:03:12 +07');
+        expect(formatWhen(instant)).toBe('14:03:12 05-09-2026 (GMT+07)');
       }
     } finally {
       vi.unstubAllEnvs();
@@ -321,7 +326,44 @@ describe('formatWhen — pinned to Asia/Ho_Chi_Minh', () => {
   });
 
   it('crosses midnight the way the clinic does, not the way UTC does', () => {
-    expect(formatWhen(new Date('2026-09-05T18:30:00Z'))).toBe('2026-09-06 01:30:00 +07');
+    expect(formatWhen(new Date('2026-09-05T18:30:00Z'))).toBe('01:30:00 06-09-2026 (GMT+07)');
+  });
+});
+
+describe('formatDay and formatDayShort — the clinic-local day', () => {
+  it('reads dd-mm-yyyy and dd-mm', () => {
+    const instant = new Date('2026-09-05T07:03:12Z');
+    expect(formatDay(instant)).toBe('05-09-2026');
+    expect(formatDayShort(instant)).toBe('05-09');
+  });
+
+  it('takes the clinic day across UTC midnight', () => {
+    const instant = new Date('2026-09-05T18:30:00Z');
+    expect(formatDay(instant)).toBe('06-09-2026');
+    expect(formatDayShort(instant)).toBe('06-09');
+  });
+
+  it('pins one offset constant and its on-screen label', () => {
+    expect(CALL_TIME_ZONE_OFFSET).toBe('+07:00');
+    expect(CALL_TIME_ZONE_LABEL).toBe('GMT+07');
+  });
+});
+
+describe('meanPipelineMs', () => {
+  it('averages the non-null, non-negative values and says how many it stands on', () => {
+    expect(
+      meanPipelineMs([
+        { pipeline_ms: 1000 },
+        { pipeline_ms: null },
+        { pipeline_ms: -40 },
+        { pipeline_ms: 2000 },
+      ]),
+    ).toEqual({ value: 1500, over: 2 });
+  });
+
+  it('has no value when no turn was measured', () => {
+    expect(meanPipelineMs([])).toEqual({ value: null, over: 0 });
+    expect(meanPipelineMs([{ pipeline_ms: null }])).toEqual({ value: null, over: 0 });
   });
 });
 

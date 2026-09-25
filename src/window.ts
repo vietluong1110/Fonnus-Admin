@@ -9,7 +9,7 @@
  * names and `custom` are the console's own, settled with the operator.
  */
 
-import { CALL_TIME_ZONE } from './calls';
+import { CALL_TIME_ZONE, CALL_TIME_ZONE_OFFSET } from './calls';
 
 const DAY_MS = 86_400_000;
 
@@ -27,15 +27,14 @@ export const DEFAULT_SINCE = '7d';
  */
 export const MAX_WINDOW_DAYS = 366;
 
-/**
+/*
  * A date-only bound (`2026-09-01`) is a day in the clinic's zone, the zone
- * every screen pins — the same fact `src/calls.ts` prints as the `+07` suffix:
- * Vietnam has run one offset with no daylight saving since 1975, so the bound
- * is resolved with a constant offset rather than a per-instant lookup. A test
- * pins the constant against `Intl` in `CALL_TIME_ZONE`, so a zone that ever
- * moved would fail the suite rather than shift a window silently.
+ * every screen pins: Vietnam has run one offset with no daylight saving since
+ * 1975, so the bound is resolved with `CALL_TIME_ZONE_OFFSET` from
+ * `src/calls.ts` rather than a per-instant lookup. A test pins the constant
+ * against `Intl` in `CALL_TIME_ZONE`, so a zone that ever moved would fail the
+ * suite rather than shift a window silently.
  */
-const CALL_TIME_ZONE_OFFSET = '+07:00';
 
 /** A query string key can arrive repeated; the first value is the answer. */
 function first(value: string | string[] | undefined): string | undefined {

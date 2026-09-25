@@ -11,10 +11,19 @@
  */
 
 import { isFetchable } from './artifacts';
-import { CALL_TIME_ZONE, isConsentGranted } from './calls';
+import {
+  CALL_TIME_ZONE,
+  CALL_TIME_ZONE_OFFSET,
+  formatDay,
+  isConsentGranted,
+  isKnownFailedLeg,
+  isKnownFailedStage,
+  UNKNOWN_VOCABULARY_TITLE,
+} from './calls';
 import type { Scope } from './calls-scope';
 import { bucketKey, dayKey, foldKey, percentiles, windowBuckets } from './dashboard';
-import type { CallScopeRow } from './queries/calls';
+import type { CallScopeRow, FailedTurn } from './queries/calls';
+import { failureChip } from './ui/glossary';
 import { bucketUnit, type BucketUnit, type Window } from './window';
 
 /** The row fields each function here needs, so a test fixture stays small. */
@@ -188,42 +197,21 @@ export function dayBands<T extends Pick<StatRow, 'started_at' | 'ended_at'>>(
   return bands;
 }
 
-/*
- * The band heading of the artboard: `Wed 9 Sep`, in the clinic's zone. The
- * parts are assembled rather than formatted whole because no locale writes them
- * in that order: `en-US` puts the month first, and `en-GB` abbreviates
- * September as "Sept". The day and the zone are the data; the order is the
- * artboard's.
- */
-const BAND_PARTS = new Intl.DateTimeFormat('en-US', {
-  timeZone: CALL_TIME_ZONE,
-  weekday: 'short',
-  day: 'numeric',
-  month: 'short',
-});
-
-function formatBandDate(at: Date): string {
-  const parts = new Map<string, string>(
-    BAND_PARTS.formatToParts(at).map((part) => [part.type, part.value]),
-  );
-  const at2 = (type: string): string => parts.get(type) ?? '';
-  return `${at2('weekday')} ${at2('day')} ${at2('month')}`;
-}
-
 /** A `YYYY-MM-DD` day key read back as the instant its midnight is here. */
 function dayStart(day: string): Date {
-  return new Date(`${day}T00:00:00+07:00`);
+  return new Date(`${day}T00:00:00${CALL_TIME_ZONE_OFFSET}`);
 }
 
-/** `Today · Wed 9 Sep` for the day the operator is in, `Tue 8 Sep` for the rest. */
+/** `Today · 09-09-2026` for the day the operator is in, `08-09-2026` for the rest. */
 export function formatDayBand(day: string, now: Date): string {
-  const label = formatBandDate(dayStart(day));
+  const label = formatDay(dayStart(day));
   return day === dayKey(now) ? `Today · ${label}` : label;
 }
 
 /**
- * The turn strip of one row: one tick per turn on record, `true` where that
- * turn failed (`failed_leg IS NOT NULL`, trap 7 — never `interrupted`).
+ * The turn strip of one row: one tick per turn on record, the failed turn's
+ * row where that turn failed (`failed_leg IS NOT NULL`, trap 7 — never
+ * `interrupted`) and null where it did not.
  *
  * `null` is the strip's third answer, "none — not consented": a call with no
  * turn rows and no grant on record never had its turns written (trap 1), which
@@ -237,14 +225,28 @@ export function formatDayBand(day: string, now: Date): string {
  * assumption would show an extra tick rather than hide a failure.
  */
 export function turnTicks(
-  row: Pick<CallScopeRow, 'turn_count' | 'failed_turn_idx' | 'outcome'>,
-): boolean[] | null {
-  if (row.turn_count <= 0 && row.failed_turn_idx.length === 0) {
+  row: Pick<CallScopeRow, 'turn_count' | 'failed_turns' | 'outcome'>,
+): (FailedTurn | null)[] | null {
+  if (row.turn_count <= 0 && row.failed_turns.length === 0) {
     return isConsentGranted(row.outcome) ? [] : null;
   }
-  const failed = new Set(row.failed_turn_idx);
-  const length = Math.max(row.turn_count, ...row.failed_turn_idx);
-  return Array.from({ length }, (_, i) => failed.has(i + 1));
+  const failed = new Map(row.failed_turns.map((turn) => [turn.idx, turn]));
+  const length = Math.max(row.turn_count, ...failed.keys());
+  return Array.from({ length }, (_, i) => failed.get(i + 1) ?? null);
+}
+
+/**
+ * What a failed tick says: the turn, and the failure as the glossary's chip
+ * (`failureChip`, ADR 0013) with the stored pair beside it. A leg or a stage
+ * outside the contract's list is said to be (the ⚠ of every other screen).
+ */
+export function failedTickTip(turn: FailedTurn): string {
+  const chip = failureChip(turn.failed_leg, turn.failed_stage);
+  const known =
+    isKnownFailedLeg(turn.failed_leg) &&
+    (turn.failed_stage === null || isKnownFailedStage(turn.failed_stage));
+  const text = `turn ${String(turn.idx)} — ${chip?.name ?? turn.failed_leg} (${chip?.code ?? turn.failed_leg})`;
+  return known ? text : `${text} ⚠ ${UNKNOWN_VOCABULARY_TITLE}`;
 }
 
 /** The phrase the strip carries instead of zero ticks (console vocabulary). */
@@ -263,18 +265,18 @@ const PRESET_PHRASE: Record<string, string> = {
 };
 
 /**
- * How one window reads in a sentence — `in the last 7 days`, `since Fri 12 Sep`,
- * `from Fri 12 Sep to Thu 18 Sep`. Overview's heading and the Calls heading both
+ * How one window reads in a sentence — `in the last 7 days`, `since 12-09-2026`,
+ * `from 12-09-2026 to 18-09-2026`. Overview's heading and the Calls heading both
  * call it, so the two screens describe the same window in the same words.
  */
 export function windowPhrase(window: Window): string {
   const { preset, since, until } = window;
   const phrase = PRESET_PHRASE[preset];
   if (phrase !== undefined) return `in ${phrase}`;
-  if (until === null) return `since ${formatBandDate(since)}`;
+  if (until === null) return `since ${formatDay(since)}`;
   // `until` is the midnight after the last included day (ADR 0006); the phrase
   // names the day the operator asked for, not the bound the SQL uses.
-  return `from ${formatBandDate(since)} to ${formatBandDate(new Date(until.getTime() - 1))}`;
+  return `from ${formatDay(since)} to ${formatDay(new Date(until.getTime() - 1))}`;
 }
 
 /**

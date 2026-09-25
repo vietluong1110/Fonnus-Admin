@@ -125,9 +125,10 @@ export interface EndOfTurnRow {
 
 /**
  * The three end-of-turn spans, always all three and always in this order, on
- * the same axis as `waterfallRows` so they can be drawn under the legs. Same
- * two null rules: a reversed or half-stamped pair has no span, and a span with
- * no `speech_end` to place it from has no offset (it is listed, not drawn).
+ * an axis whose origin is `speech_end` so they can be drawn under the legs. A
+ * reversed or half-stamped pair has no span, and a span with no `speech_end`
+ * to place it from — or one that starts before it — has no offset (it is
+ * listed, not drawn).
  *
  * Two readings the caller of this function must carry on screen, both §3.2:
  * on an `interrupted` turn `playback_end` is the last lull before the barge-in,
@@ -211,45 +212,4 @@ export function parseMarks(value: unknown): Partial<Record<Stage, number>> {
     if (typeof at === 'number' && Number.isFinite(at)) marks[stage] = at;
   }
   return marks;
-}
-
-export interface WaterfallRow {
-  leg: LegName;
-  from: Stage;
-  to: Stage;
-  /** Where the leg starts on an axis whose origin is `speech_end`. */
-  offsetMs: number | null;
-  spanMs: number | null;
-  partition: boolean;
-}
-
-/**
- * One row per leg, in `LEGS` order, placed on a single axis that starts at
- * `speech_end` — so the bars read as one turn's timeline rather than six
- * independent durations.
- */
-export function waterfallRows(marks: Partial<Record<Stage, number>>): WaterfallRow[] {
-  // Where a leg starts on the axis. Null when it cannot be placed: no
-  // `speech_end` to measure from (the pipeline deliberately leaves it out when
-  // the audio clock has no origin — `effect-runner.ts`, "an invented speech_end
-  // is worse than a missing one"), or a start that pre-dates it, which is the
-  // same clock fault as a reversed span. The leg may still have a span.
-  const placement = (origin: number | undefined, start: number | undefined): number | null => {
-    if (origin === undefined || start === undefined) return null;
-    const offset = start - origin;
-    return offset >= 0 ? offset : null;
-  };
-  const origin = marks.speech_end;
-  const partition: readonly string[] = PARTITION_LEGS;
-  return LEGS.map((leg) => {
-    const start = marks[leg.from];
-    return {
-      leg: leg.name,
-      from: leg.from,
-      to: leg.to,
-      offsetMs: placement(origin, start),
-      spanMs: spanOf(start, marks[leg.to]) ?? null,
-      partition: partition.includes(leg.name),
-    };
-  });
 }

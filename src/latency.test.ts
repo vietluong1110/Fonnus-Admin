@@ -10,7 +10,6 @@ import {
   legSpans,
   parseMarks,
   spanOf,
-  waterfallRows,
   type Stage,
 } from './latency';
 
@@ -119,50 +118,6 @@ describe('parseMarks — the jsonb trust boundary', () => {
     for (const junk of [null, undefined, 42, 'marks', [1, 2, 3], true]) {
       expect(parseMarks(junk)).toEqual({});
     }
-  });
-});
-
-describe('waterfallRows', () => {
-  it('places every leg on one axis whose origin is speech_end', () => {
-    expect(waterfallRows(FULL)).toEqual([
-      { leg: 'stt_emit', from: 'speech_end', to: 'stt_final', offsetMs: 0, spanMs: 180, partition: false },
-      { leg: 'endpoint_wait', from: 'speech_end', to: 'endpoint_decision', offsetMs: 0, spanMs: 400, partition: true },
-      { leg: 'llm_ttft', from: 'endpoint_decision', to: 'llm_first_token', offsetMs: 400, spanMs: 500, partition: true },
-      { leg: 'tts_ttfb', from: 'llm_first_token', to: 'tts_first_byte', offsetMs: 900, spanMs: 250, partition: true },
-      { leg: 'send', from: 'tts_first_byte', to: 'first_audio_out', offsetMs: 1_150, spanMs: 110, partition: true },
-      { leg: 'playback', from: 'first_audio_out', to: 'playback_start', offsetMs: 1_260, spanMs: 60, partition: false },
-    ]);
-  });
-
-  it('has no offset for a leg whose start was never stamped', () => {
-    const rows = waterfallRows({ speech_end: T0, stt_final: T0 + 100 });
-    expect(rows.find((row) => row.leg === 'llm_ttft')).toEqual({
-      leg: 'llm_ttft',
-      from: 'endpoint_decision',
-      to: 'llm_first_token',
-      offsetMs: null,
-      spanMs: null,
-      partition: true,
-    });
-  });
-
-  it('has no offset at all when speech_end is missing', () => {
-    const rows = waterfallRows({ endpoint_decision: T0, llm_first_token: T0 + 300 });
-    expect(rows.every((row) => row.offsetMs === null)).toBe(true);
-    expect(rows.find((row) => row.leg === 'llm_ttft')?.spanMs).toBe(300);
-  });
-
-  it('keeps the span but drops the placement of a leg that starts before speech_end', () => {
-    const rows = waterfallRows({ speech_end: T0 + 500, endpoint_decision: T0, llm_first_token: T0 + 300 });
-    const leg = rows.find((row) => row.leg === 'llm_ttft');
-    expect(leg?.spanMs).toBe(300);
-    expect(leg?.offsetMs).toBeNull();
-  });
-
-  it('returns six rows of nulls for a turn that stamped nothing', () => {
-    const rows = waterfallRows(parseMarks({}));
-    expect(rows).toHaveLength(6);
-    expect(rows.every((row) => row.spanMs === null && row.offsetMs === null)).toBe(true);
   });
 });
 

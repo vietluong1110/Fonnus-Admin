@@ -14,7 +14,8 @@
   connections open. The connection is the `console` role only (ADR 0017); the app has no
   write path to lose.
 - **Recharts** for the waterfall and the percentile trends — declarative, React-native,
-  enough for bars and lines; nothing here needs a canvas.
+  enough for bars and lines; nothing here needs a canvas. Amended by ADR 0014 decision 5:
+  Recharts was removed, and every chart is hand-drawn from tokens.
 - **Tailwind CSS v4** for styling — it is what `create-next-app` sets up, so the scaffold
   carries no styling decision of its own, and the tables, badges and caveat lines every
   screen repeats are written once as utility classes rather than as a growing stylesheet.

@@ -26,14 +26,22 @@ export interface CallListRow {
   outcome: string | null;
 }
 
-/** The call list's aggregate over `turn`: which turns of this call failed. */
+/** One failed turn of a call: its `idx` and the pair that says what failed (contract §3.1, trap 7). */
+export interface FailedTurn {
+  idx: number;
+  failed_leg: string;
+  /** Null under a set leg is a provider error, which had no deadline to trip. */
+  failed_stage: string | null;
+}
+
+/** The call list's aggregate over `turn`: which turns of this call failed, and how. */
 export interface CallScopeRow extends CallListRow {
   /**
-   * The `idx` of every turn with a non-null `failed_leg`, ascending — `[]` when
+   * Every turn with a non-null `failed_leg`, ascending by `idx` — `[]` when
    * none failed and when the call has no turn rows at all (trap 1: an
    * unconsented call has none, however much the caller spoke).
    */
-  failed_turn_idx: number[];
+  failed_turns: FailedTurn[];
 }
 
 /*
@@ -54,10 +62,13 @@ const SCOPE_SELECT = `select call_log.id,
             call_log.artifact_state,
             call_log.artifact_key_prefix,
             consent_record.outcome,
-            coalesce((select json_agg(t.idx order by t.idx)
+            coalesce((select json_agg(json_build_object('idx', t.idx,
+                                                        'failed_leg', t.failed_leg,
+                                                        'failed_stage', t.failed_stage)
+                                      order by t.idx)
                         from turn t
                        where t.call_id = call_log.id
-                         and t.failed_leg is not null), '[]'::json) as failed_turn_idx
+                         and t.failed_leg is not null), '[]'::json) as failed_turns
        from call_log
        left join consent_record on consent_record.call_id = call_log.id`;
 

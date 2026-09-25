@@ -69,9 +69,9 @@ describe('parseWindow — the URL contract of ADR 0006', () => {
   });
 
   it('pins the zone the date-only bounds are resolved in against Intl', () => {
-    // The offset is written as a constant in `src/window.ts`; if Vietnam ever
-    // moved its clock, this is the test that fails rather than every window
-    // shifting by an hour in silence.
+    // The offset is a constant, `CALL_TIME_ZONE_OFFSET` in `src/calls.ts`; if
+    // Vietnam ever moved its clock, this is the test that fails rather than
+    // every window shifting by an hour in silence.
     const window = parseWindow({ since: '2026-09-01', until: '2026-09-10' }, NOW);
     expect(inZone(window.since)).toBe('2026-09-01 00:00');
     expect(inZone(window.until as Date)).toBe('2026-09-11 00:00');

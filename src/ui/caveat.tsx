@@ -7,33 +7,26 @@
  */
 
 import type { ReactNode } from 'react';
+import Tooltip from './tooltip';
 
+/**
+ * A caller that truncates a caveat to one line and needs the full text wraps
+ * it in `Tooltip` (ADR 0014 decision 1: no `title` attribute).
+ */
 export default function Caveat({
   children,
   as = 'p',
   className,
-  title,
 }: {
   children: ReactNode;
   as?: 'span' | 'p';
   /** Layout only — `truncate` on a one-line meta row, never a colour. */
   className?: string;
-  /** The untruncated text, for the caveats a row truncates to one line. */
-  title?: string;
 }) {
   const tone = 'text-[length:var(--size-eyebrow)] leading-[1.4] font-normal text-text-muted';
   const extra = className === undefined ? '' : ` ${className}`;
-  if (as === 'span')
-    return (
-      <span className={`${tone}${extra}`} title={title}>
-        {children}
-      </span>
-    );
-  return (
-    <p className={`mb-0 ${tone}${extra}`} title={title}>
-      {children}
-    </p>
-  );
+  if (as === 'span') return <span className={`${tone}${extra}`}>{children}</span>;
+  return <p className={`mb-0 ${tone}${extra}`}>{children}</p>;
 }
 
 /**
@@ -42,13 +35,28 @@ export default function Caveat({
  * a dotted underline and the meaning is its tooltip, so a header row or a
  * stat keeps one line while the fact is still one hover away.
  */
-export function Hint({ hint, children }: { hint: string; children: ReactNode }) {
+export function Hint({
+  hint,
+  side,
+  align,
+  children,
+}: {
+  hint: string;
+  /** `bottom` for a label at the top of a clipping box (a table header). */
+  side?: 'top' | 'bottom';
+  /** `end` for a label at the right edge of a card or a table, `start` at the window's left edge. */
+  align?: 'start' | 'center' | 'end';
+  children: ReactNode;
+}) {
   return (
-    <span
-      title={hint}
-      className="cursor-help underline decoration-border-strong decoration-dotted underline-offset-[3px]"
+    <Tooltip
+      tip={hint}
+      {...(side === undefined ? {} : { side })}
+      {...(align === undefined ? {} : { align })}
     >
-      {children}
-    </span>
+      <span className="cursor-help underline decoration-border-strong decoration-dotted underline-offset-[3px]">
+        {children}
+      </span>
+    </Tooltip>
   );
 }

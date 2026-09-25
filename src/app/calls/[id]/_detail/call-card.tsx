@@ -1,11 +1,11 @@
 /*
  * The Call card inside the collapsed "Pipeline detail" block: the row's own
  * facts that no other part of the page states, three to a line — who and where
- * (id, caller number, DID), when (start, end, the recording's origin), and what
- * it used (STT audio, TTS output, cost). The models are in the "Ran on" strip,
- * the greeting latency in the call's stat strip, the disclosure time in the
- * Consent card; the artifact columns are not shown, because `artifact_state`
- * already decides the player and a path on the box is nothing to act on.
+ * (id, caller number, DID), when (start, end, the recording's origin), and how
+ * soon the greeting played. The models are in the "Ran on" strip, the cost in
+ * the call's stat strip, the disclosure time in the Consent card; the artifact
+ * columns are not shown, because `artifact_state` already decides the player
+ * and a path on the box is nothing to act on.
  *
  * This is the ONE file in the app that renders `call_log.caller_phone_e164`
  * unmasked (ADR 0008): the operator opens this block on purpose, and everywhere
@@ -14,13 +14,16 @@
  * this path.
  */
 
-import { CALL_STATE_LABEL, formatCount, formatMs, formatNumber, formatWhen, parseCostVnd } from '@/calls';
+import { CALL_STATE_LABEL, formatNumber, formatWhen } from '@/calls';
 import type { CallDetailRow } from '@/queries/calls';
-import Caveat from '@/ui/caveat';
 import Field from '@/ui/field';
+import { termFor, type Term as GlossaryTerm } from '@/ui/glossary';
+import Term from '@/ui/term';
+
+/** `call_log.greeting_first_audio_ms`, named by the glossary (`glossary.test.ts` holds it present). */
+const GREETING_TERM = termFor('span', 'greeting_first_audio_ms') as GlossaryTerm;
 
 export default function CallCard({ call }: { call: CallDetailRow }) {
-  const cost = parseCostVnd(call.total_cost_vnd);
   return (
     <dl className="m-0 grid grid-cols-2 gap-4 md:grid-cols-3">
       <Field label="Call id" hint="The FreeSWITCH channel UUID; the head's button copies it">
@@ -46,14 +49,16 @@ export default function CallCard({ call }: { call: CallDetailRow }) {
           ? 'not on record'
           : formatWhen(call.recording_started_at)}
       </Field>
-      <Field label="STT audio">{formatMs(call.stt_audio_ms)}</Field>
-      <Field label="TTS output">
-        {formatCount(call.tts_chars)} chars · {formatCount(call.tts_bytes)} bytes
-      </Field>
-      <Field label="Cost">
-        {cost === null ? 'unpriced' : `≥ ${formatNumber(cost)} ₫`}
-        <Caveat>floor — unpriced models count 0</Caveat>
-      </Field>
+      <div className="min-w-0">
+        <dt className="text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted">
+          <Term term={GREETING_TERM} layout="inline" />
+        </dt>
+        <dd className="mt-0.5 font-num text-[length:var(--size-ui)] leading-[1.5]">
+          {call.greeting_first_audio_ms === null
+            ? 'not measured'
+            : `${formatNumber(call.greeting_first_audio_ms)} ms`}
+        </dd>
+      </div>
     </dl>
   );
 }

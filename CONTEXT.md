@@ -48,37 +48,43 @@ caveats; the decisions stay with the person reading it.
    A search box finds a phone suffix or an id prefix across all history, outside the
    window. Pages of 100.
 2. **Call detail** (`/calls/<id>`) — built for the call review, non-technical reader first:
-   the head (masked number, when, how it ended), then **the call** — the recording player
-   over two lanes on the recording's axis, the greeting and each turn's voice on one, the
-   turn's `pipeline_ms` as a bar on the other, with the playhead — beside the transcript as
-   chat bubbles (caller left, assistant right, each with its voice length; a click seeks the
-   audio); under it the **waterfall of the six latency legs** of the turn being heard
-   (`stt_emit`, `endpoint_wait`, `llm_ttft`, `tts_ttfb`, `send`, `playback` —
-   `../Fonnus/PIPELINE_ARCHITECTURE.md` §6) with the two headline spans against their
-   ADR 0007 targets and the thinking span (`llm_first_reasoning → llm_first_token`) drawn
-   under them; the per-turn research detail (the turn table, marks, the config snapshot
-   grouped by leg and vendor, `PROVIDERS` read as `real` / `fake`, the consent record, the full
-   number and the identity fields, cost) sits below in a collapsed "Pipeline detail"
-   section. The upper lane of that axis, and the **Intervals** card under it (row A1b, ADR
-   0010), are drawn from the sequence of contiguous intervals contract §8 derives from
-   `call_event` — who held the line, what the caller's line carried, what the recogniser
-   returned — with the trail's completeness verdict above the card, so a non-turn line, an
-   utterance that returned nothing and an overtaken partial become visible; beside them, since
-   row A7, the fourth fact of contract §8: what a person who heard the call recorded about
-   that stretch (`call_annotation` — the current rows only, on every interval they overlap,
-   their texts under the same consent rule; the history of corrections and retractions
-   folded under the table). The turn table stays under it as the per-turn latency
-   view, and the bucket (W2-L1) serves the verbatim files behind a step.
+   the head (masked number, when, how it ended), the "Ran on" strip (models, voice, config
+   row), then **the call** — the recording player over two lanes on the recording's axis
+   with a legend, the greeting and each turn's voice on one, the turn's `pipeline_ms` as a
+   bar on the other, with the playhead — and five figures: call duration, number of turns,
+   total cost and cost per minute (list price, ADR 0015), average turn latency (the mean of
+   `pipeline_ms`); then the **transcript** as chat bubbles (caller left, assistant right; a
+   click on the bubble selects the turn and seeks, the play glyph plays that utterance and
+   stops) beside **the selected turn** — the six latency legs (`stt_emit`, `endpoint_wait`,
+   `llm_ttft`, `tts_ttfb`, `send`, `playback` — `../Fonnus/PIPELINE_ARCHITECTURE.md` §6),
+   the two headline spans against their ADR 0007 targets, the thinking span
+   (`llm_first_reasoning → llm_first_token`) and the three end-of-turn spans, drawn as
+   capsule tracks on one scale with the playhead, and the turn's LLM and TTS cost and
+   tokens under them. Under those, the **Intervals** card (row A1b, ADR 0010), drawn from
+   the sequence of contiguous intervals contract §8 derives from `call_event` — who held
+   the line and what the recogniser returned, with the caller-line facts (sound heard while
+   nothing was recognised, sound while the feed was muted) noted inside the latter — with
+   the trail's completeness verdict above it, so a non-turn line, an utterance that
+   returned nothing and an overtaken partial become visible; rows are tinted by side
+   (Fonnus, caller); the annotations of row A7 (`call_annotation` — the current rows on the
+   intervals they overlap, texts under the consent rule, the history of corrections and
+   retractions) sit under the table. The per-turn research detail (the turn table with
+   per-turn cost and latency, the config snapshot by group with each leaf's plain name, the
+   consent record, the full number and the identity fields) sits last in a collapsed
+   "Pipeline detail" section, and the bucket (W2-L1) serves the verbatim files behind a step.
 3. **Overview** (`/`) — over the same window: P50 / P95 / max per leg against the ADR 0007
    targets, calls per bucket (one hour for `24h`, one day up to 45 days, one week beyond;
    the buckets cover the whole window, edge buckets marked partial), the reply's
    composition, how calls ended (end reason and consent outcome), turn failures by leg and
-   stage, the window's cost floor, the turns outside the percentile, and the same latency
-   numbers **compared by configuration** — by one flat key of `call_log.config_snapshot`
-   (default `OPENROUTER_MODEL`) or by `runtime.version`, the console-edited row a call ran
-   under (ADR 0009) — so a change to an endpointing or flush setting, or a console config
-   edit, is visible as a step and not guessed at. Every pipeline change from W3 on is one
-   snapshot, and this comparison is how it is judged.
+   stage, the window's cost (list price, the unpriced models named), the turns that never
+   became audible, and the same latency numbers **compared by configuration** — one of
+   eight groupings offered on screen (LLM, STT and TTS model, voice, reasoning effort, STT
+   and TTS vendor, and `runtime.version`, the console-edited row a call ran under; ADR 0009,
+   default `OPENROUTER_MODEL`; any other flat key of `call_log.config_snapshot` still works
+   from the URL) — so a change to an endpointing or flush setting, or a console config edit,
+   is visible as a step and not guessed at. Changing the grouping re-renders that card in
+   place. Every pipeline change from W3 on is one snapshot, and this comparison is how it is
+   judged.
 4. **Audio and per-sentence views** — the call itself plays on the detail page (row A5,
    ADR 0004: the browser reads `call.wav` straight from the bucket through a short-lived
    presigned URL; the playhead drives the transcript and the waterfall, and no new pipeline
@@ -179,9 +185,13 @@ the browser plays it from the bucket through a URL presigned for 15 minutes by t
 
 ### Language
 
-The UI is in English for v1 (one operator, an engineer). Call content is Vietnamese and is
-rendered verbatim. Pipeline vocabulary appears on screen as-is (`endpoint_wait`, not a
-translation), with a one-line plain-language gloss where a term first appears.
+The UI is in English for v1 (the internal team). Call content is Vietnamese and is rendered
+verbatim. Since row A19 (ADR 0013) every pipeline term is shown as a pair: a plain-language
+name first ("End-of-speech wait") and the pipeline's own identifier always beside or under it
+(`endpoint_wait`), never replaced — the identifier is what a hypothesis and a pipeline commit
+are written in. The names live in one glossary module and nowhere else; model ids, voice ids
+and build SHAs have no friendly name and appear verbatim. A one-sentence description of the
+term is its tooltip.
 
 ### Look and feel — the product's design system, by copy
 
@@ -203,7 +213,12 @@ Rendering rules that follow: warm cream ground, rounded cards on it, one accent 
 anything clickable, no dark mode, sentence case everywhere. Caveats (cost floor,
 consented-only, first-sentence-only, retention age) use muted text next to their number —
 once per column, in the header — never the accent: the accent is for actions, not warnings.
-A dashed border means "no content yet", never a button.
+A dashed border means "no content yet", never a button. Tooltips and dropdowns are drawn by
+the console, not the browser (ADR 0014): a tooltip opens at once on hover and on keyboard
+focus, and a dropdown is the Web-UI's listbox over a native `<select>` that still submits
+with scripts off. Horizontal charts share one shape — a fully rounded capsule track with a
+fixed label column, the span, and target and playhead marks — and vertical bar charts write
+each value above its column.
 
 The artboards draw one state each — the 7-day window, the Custom chip closed, no
 Configuration screen — so a screen is built for its range of states, not for the drawing's
@@ -219,7 +234,7 @@ explanatory note never sits beside an input competing for its width.
 |---|---|---|
 | Framework | Next.js (App Router, TypeScript) | One container; server components query Postgres directly; a login and a tenant filter are additions, not a rewrite |
 | Database access | `pg` (node-postgres) with hand-written SQL | The read contract is the schema; an ORM copy would drift. Pool bounds mirror the pipeline's `app/src/persistence/db.ts` |
-| Charts | Recharts | Waterfall and percentile charts without hand-drawn SVG |
+| Charts | Hand-drawn (`src/ui/hbar.tsx`, `src/ui/vbars.tsx`) | Recharts was removed in row A19 (ADR 0014): every chart is a capsule track or a column chart, drawn from tokens, no client bundle |
 | Toolchain | pnpm 11, Node 22, strict TypeScript, ESLint flat config with `strictTypeChecked` | Same as `../Fonnus/app` so a reader moves between the repos without re-learning |
 | Reverse proxy | Caddy | Automatic TLS, `basic_auth` in three lines |
 

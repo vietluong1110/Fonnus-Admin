@@ -313,11 +313,15 @@ export function formatClock(ms: number): string {
 /** The clinic's zone, pinned once for every screen — never the process's. */
 export const CALL_TIME_ZONE = 'Asia/Ho_Chi_Minh';
 
-// Vietnam has run one offset with no daylight saving since 1975, so the suffix
+// Vietnam has run one offset with no daylight saving since 1975, so the offset
 // is a constant rather than a per-instant lookup. It is written out because the
 // stored instants are absolute (contract §3) and a reader must not have to
-// guess which clock a screen shows.
-const CALL_TIME_ZONE_SUFFIX = '+07';
+// guess which clock a screen shows. `src/window.ts` and `src/dashboard.ts`
+// derive their zone arithmetic from this one constant.
+export const CALL_TIME_ZONE_OFFSET = '+07:00';
+
+/** How the offset reads on screen, beside a clock time. */
+export const CALL_TIME_ZONE_LABEL = 'GMT+07';
 
 // Pinned to the clinic's zone, never the process's: the console may run on a
 // box set to UTC and the operator still reads the call in local time.
@@ -332,13 +336,48 @@ const WHEN = new Intl.DateTimeFormat('en-GB', {
   hourCycle: 'h23',
 });
 
-/** `2026-09-05 14:03:12 +07`, whatever the process `TZ` is. */
-export function formatWhen(date: Date): string {
+function whenParts(date: Date): (type: string) => string {
   const parts = new Map<string, string>(
     WHEN.formatToParts(date).map((part) => [part.type, part.value]),
   );
-  const at = (type: string): string => parts.get(type) ?? '';
-  return `${at('year')}-${at('month')}-${at('day')} ${at('hour')}:${at('minute')}:${at('second')} ${CALL_TIME_ZONE_SUFFIX}`;
+  return (type) => parts.get(type) ?? '';
+}
+
+/** `14:03:12 05-09-2026 (GMT+07)`, whatever the process `TZ` is. */
+export function formatWhen(date: Date): string {
+  const at = whenParts(date);
+  return `${at('hour')}:${at('minute')}:${at('second')} ${at('day')}-${at('month')}-${at('year')} (${CALL_TIME_ZONE_LABEL})`;
+}
+
+/** The clinic-local day, `05-09-2026`. */
+export function formatDay(date: Date): string {
+  const at = whenParts(date);
+  return `${at('day')}-${at('month')}-${at('year')}`;
+}
+
+/** The clinic-local day without its year, `05-09` — axes and the Custom pill. */
+export function formatDayShort(date: Date): string {
+  const at = whenParts(date);
+  return `${at('day')}-${at('month')}`;
+}
+
+/**
+ * The mean `pipeline_ms` of a call's turns and how many turns it stands on. A
+ * null is a turn with no measurement and a negative value a clock fault
+ * (contract §3.2); both are left out rather than read as 0.
+ */
+export function meanPipelineMs(turns: readonly { pipeline_ms: number | null }[]): {
+  value: number | null;
+  over: number;
+} {
+  let sum = 0;
+  let over = 0;
+  for (const turn of turns) {
+    if (turn.pipeline_ms === null || turn.pipeline_ms < 0) continue;
+    sum += turn.pipeline_ms;
+    over += 1;
+  }
+  return { value: over === 0 ? null : sum / over, over };
 }
 
 /** Space-grouped so long millisecond figures stay readable: `1 234`. */

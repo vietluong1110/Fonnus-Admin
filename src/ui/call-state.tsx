@@ -14,6 +14,7 @@
 import { CALL_STATE_CAVEAT, CALL_STATE_LABEL, CALL_STATE_TONE, type CallState } from '@/calls';
 import Badge from '@/ui/badge';
 import Caveat from '@/ui/caveat';
+import Tooltip from '@/ui/tooltip';
 
 export default function CallStateBlock({
   state,
@@ -30,9 +31,9 @@ export default function CallStateBlock({
 
   if (compact) {
     return (
-      <Badge tone={tone} title={caveat}>
-        {label}
-      </Badge>
+      <Tooltip tip={caveat}>
+        <Badge tone={tone}>{label}</Badge>
+      </Tooltip>
     );
   }
 

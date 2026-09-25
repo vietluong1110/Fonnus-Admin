@@ -32,41 +32,49 @@
  * the designed fallback, and the `<noscript>` under each provider says so.
  */
 
-import { Fragment, useActionState, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { useActionState, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import {
-  mergedVoices,
   providerOptions,
-  voiceList,
   voiceUncheckable,
-  type BootReportVoice,
   type Offered,
 } from '@/boot-report';
 import {
   isSetText,
-  mergeBranches,
   valueAt,
   vendorsOf,
-  type BranchMerge,
   type Field,
   type Layer,
 } from '@/configuration/document';
-import { GROUPS, type Group } from '@/configuration/groups';
+import { GROUPS, displayGroupOf, type Group } from '@/configuration/groups';
+import {
+  optionLabel,
+  reasoningAdvice,
+  rowsOn,
+  tabLabel,
+  voiceCaption,
+  voiceSuggestions,
+} from '@/configuration/rows';
 import { renderValue } from '@/dashboard';
 import Badge from '@/ui/badge';
 import Button from '@/ui/button';
 import Card from '@/ui/card';
 import { PILL, PILL_OFF, PILL_ON } from '@/ui/chip';
 import Caveat, { Hint } from '@/ui/caveat';
+import { termFor, type Term as GlossaryTerm } from '@/ui/glossary';
 import Input, { CONTROL } from '@/ui/input';
+import Listbox, { type ListboxOption } from '@/ui/listbox';
 import Overlay, { closeProps } from '@/ui/overlay';
-import Select from '@/ui/select';
 import { Table, Td, Th } from '@/ui/table';
+import Term from '@/ui/term';
 import Textarea from '@/ui/textarea';
+import Tooltip from '@/ui/tooltip';
 import { submitConfiguration, type FormState } from './actions';
 
 const FORM_ID = 'configuration-form';
 const BOOT_FORM_ID = 'configuration-boot';
 const GREETING_FORM_ID = 'configuration-restore-greeting';
+/** The leaf the disclosure banner's own form replaces with the shipped text. */
+const GREETING_PATH = 'text.greeting';
 
 /** The store never changes: "is script running" is answered once and stays. */
 const subscribeToNothing = (): (() => void) => () => undefined;
@@ -76,6 +84,10 @@ const BOOT_OPTION = 'boot value';
 
 /** A voice id no boot report lists: named by what it is, since the id means nothing to read. */
 const UNLISTED_VOICE = 'unlisted voice';
+
+/** The review's refusal consequence: a refused row is never applied (contract §2, §7). */
+const REFUSED =
+  'Save comes back once these are fixed: the pipeline would refuse this row whole, and the next call would run on boot config';
 
 /** Rule 3 of `docs/redesign.md` §4.2, on the screen beside the Save button. */
 const EFFECT = 'takes effect on the next call answered; no call in progress changes';
@@ -267,23 +279,6 @@ function EditStep({
     ),
   );
 
-  /**
-   * The leaves one group renders: with script, the chosen vendor's branch only;
-   * without it, every branch, each path once — a path several branches share
-   * (`stt.model`, `tts.params.speed`) is one control carrying the union of what
-   * those branches offer, not the first branch's alone.
-   */
-  const visible = (of: Group): BranchMerge[] => {
-    const byPath = new Map<string, Field[]>();
-    for (const field of fields) {
-      if (field.group !== of || !live(field)) continue;
-      const branches = byPath.get(field.path);
-      if (branches === undefined) byPath.set(field.path, [field]);
-      else branches.push(field);
-    }
-    return [...byPath.values()].map(mergeBranches);
-  };
-
   // The tab is in the address bar too (`?group=`), so a reload or a pasted
   // link opens on it; replacing the entry, not pushing one, because a tab is
   // not a page the back button should step through.
@@ -341,11 +336,15 @@ function EditStep({
             <input type="hidden" name="group" value="text" />
             <input type="hidden" name="from" value={JSON.stringify(from)} />
             {Object.entries(state.values)
-              .filter(([path]) => path !== 'text.greeting')
+              .filter(([path]) => path !== GREETING_PATH)
               .map(([path, value]) => (
                 <input key={path} type="hidden" name={path} value={value} />
               ))}
-            <input type="hidden" name="text.greeting" value={shippedText['greeting'] ?? ''} />
+            <input
+              type="hidden"
+              name={GREETING_PATH}
+              value={shippedText[GREETING_PATH.slice('text.'.length)] ?? ''}
+            />
             {editable ? (
               <div>
                 <Button type="submit" name="intent" value="review" disabled={pending}>
@@ -373,7 +372,7 @@ function EditStep({
         className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-surface-page py-2"
       >
         {GROUPS.map((of, index) => {
-          const count = [...changed].filter((path) => path.startsWith(`${of}.`)).length;
+          const count = [...changed].filter((path) => displayGroupOf(path) === of).length;
           const on = of === group;
           return (
             <button
@@ -392,13 +391,11 @@ function EditStep({
               }}
               className={`${PILL} ${on ? PILL_ON : PILL_OFF} cursor-pointer`}
             >
-              {of}
+              {tabLabel(of)}
               {count === 0 ? null : (
-                <span
-                  className={`font-num tabular-nums ${on ? 'opacity-75' : 'text-text-link'}`}
-                  title={`${String(count)} pending`}
-                >
+                <span className={`font-num tabular-nums ${on ? 'opacity-75' : 'text-text-link'}`}>
                   {count}
+                  <span className="sr-only"> pending</span>
                 </span>
               )}
             </button>
@@ -425,11 +422,11 @@ function EditStep({
             data-config-panel
             className={of === group ? undefined : 'hidden'}
           >
-            <Card title={of}>
+            <Card title={tabLabel(of)}>
               <AsOfBoot group={of} offered={offered} />
               <div className="flex flex-col">
                 <HeaderRow />
-                {visible(of).map(({ field, vendorBounds }) => {
+                {rowsOn(fields, of, live).map(({ field, vendorBounds }) => {
                   const perVendor = vendorsOf(fields, field.path) !== null;
                   const provider = providerOf(field.group);
                   return (
@@ -592,14 +589,51 @@ function HeaderRow() {
 /** The mark of a leaf changed in this session and not saved yet. */
 function PendingMark() {
   return (
-    <span
-      role="img"
-      aria-label="pending"
-      title="Pending: changed in this session, not saved yet"
-      className="inline-block size-2 shrink-0 rounded-full bg-action-primary"
-    />
+    <Tooltip tip="Pending: changed in this session, not saved yet">
+      <span
+        role="img"
+        aria-label="pending"
+        className="inline-block size-2 shrink-0 rounded-full bg-action-primary"
+      />
+    </Tooltip>
   );
 }
+
+/**
+ * The rollback button, itself the trigger of its drawn tooltip
+ * (`Tooltip asChild`), so it stays one tab stop. Ends at the button's right
+ * edge, the card's.
+ */
+function RollbackButton({
+  path,
+  words,
+  onRollback,
+}: {
+  path: string;
+  words: string;
+  onRollback: () => void;
+}) {
+  return (
+    <Tooltip
+      tip={`Rollback to ${words}`}
+      align="end"
+      asChild
+      className="col-start-2 row-start-1 size-7 justify-self-end md:col-start-4"
+    >
+      <button
+        type="button"
+        onClick={onRollback}
+        aria-label={`Rollback ${path}`}
+        className="inline-flex size-full cursor-pointer items-center justify-center rounded-sm text-[16px] leading-none text-text-link hover:bg-[var(--action-secondary-hover)] focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+      >
+        ↺
+      </button>
+    </Tooltip>
+  );
+}
+
+/** Past this many characters a last-call value is likely cut by its column, so its tooltip holds it whole. */
+const LAST_CALL_FITS = 36;
 
 function FieldRow({
   field,
@@ -634,35 +668,36 @@ function FieldRow({
 }) {
   const { path } = field;
   const isProvider = path === 'stt.provider' || path === 'tts.provider';
-  // The leaf name alone: the group is the tab, and the full path, the snapshot
-  // key and the bounds are the name's tooltip — read once, so they do not take
-  // a second line on each of 55 rows.
-  const leaf = path.slice(path.lastIndexOf('.') + 1);
   const long = isLong(field);
+  // ADR 0013: the glossary's name first, the path and its snapshot key under
+  // it; the name's tooltip is the description, then the facts of this row.
+  const term = rowTerm(field);
+  const hint = rowHint({
+    description: term.description,
+    field,
+    vendorBounds,
+    isProvider,
+    ranOn,
+    snapshotRecorded,
+    offered,
+    boot,
+  });
 
   const name = (
-    <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2">
-      <label htmlFor={path} className="min-w-0 truncate text-[length:var(--size-ui)] font-medium">
-        <Hint
-          hint={nameHint({ field, vendorBounds, isProvider, ranOn, snapshotRecorded, offered, boot })}
-        >
-          {leaf}
-        </Hint>
+    <div className="col-start-1 row-start-1 flex min-w-0 items-start gap-2">
+      <label htmlFor={path} className="min-w-0 text-[length:var(--size-ui)] font-medium">
+        <Term term={term} {...(hint === '' ? {} : { hint })} />
       </label>
-      {isPending ? <PendingMark /> : null}
+      {isPending ? (
+        <span className="mt-1.5 inline-flex">
+          <PendingMark />
+        </span>
+      ) : null}
     </div>
   );
 
   const rollback = isPending ? (
-    <button
-      type="button"
-      onClick={onRollback}
-      title={`Rollback to ${rollbackWords}`}
-      aria-label={`Rollback ${path} to ${rollbackWords}`}
-      className="col-start-2 row-start-1 flex size-7 cursor-pointer items-center justify-center justify-self-end rounded-sm text-[16px] leading-none text-text-link hover:bg-[var(--action-secondary-hover)] focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)] md:col-start-4"
-    >
-      ↺
-    </button>
+    <RollbackButton path={path} words={rollbackWords} onRollback={onRollback} />
   ) : null;
 
   const lastCall = lastCallText(ranOn, snapshotRecorded);
@@ -673,14 +708,34 @@ function FieldRow({
     ) : null;
   // Only beside a value: "—" came from no layer, and "not recorded" has none.
   const layer = snapshotRecorded && ranOn?.value != null ? layerText(ranOn.layer) : null;
-  // The voice id stays reachable on hover, for whoever has to look it up.
+  // The voice id stays reachable on hover, for whoever has to look it up; a
+  // long value is there whole.
   const voiceId = ranOn?.label !== undefined && ranOn.value !== null ? ` (${ranOn.value})` : '';
-  const lastCallTitle = `${lastCall}${voiceId}${layer === null ? '' : ` · ${layer}`}`;
+  const lastCallTip =
+    voiceId !== '' || lastCall.length > LAST_CALL_FITS ? `${lastCall}${voiceId}` : null;
+  const lastCallValue =
+    lastCallTip === null ? (
+      lastCall
+    ) : (
+      <Tooltip tip={lastCallTip} className="min-w-0 max-w-full">
+        <span className="truncate">{lastCall}</span>
+      </Tooltip>
+    );
   const layerCaption =
     layer === null ? null : (
-      <Caveat as="span" className="ml-2 font-ui">
+      <Caveat as="span" className="ml-2 shrink-0 font-ui">
         {layer}
       </Caveat>
+    );
+  const advice = reasoningAdvice(path, value);
+  const adviceLine =
+    advice === null ? null : (
+      // Advice only (brief gap G4): the schema accepts the value, and nothing
+      // here blocks the review or the save.
+      <p className="col-span-2 mb-0 flex items-baseline gap-2 text-[length:var(--size-ui)] md:col-span-2 md:col-start-2">
+        <Badge tone="warning">advice</Badge>
+        <span className="min-w-0">{advice}</span>
+      </p>
     );
 
   if (long) {
@@ -691,6 +746,7 @@ function FieldRow({
         <div className="col-span-2 md:col-span-2 md:col-start-2 md:row-start-1">
           <LongControl
             field={field}
+            heading={term.name}
             value={value}
             onValue={onValue}
             boot={boot}
@@ -698,11 +754,9 @@ function FieldRow({
             editable={editable}
           />
         </div>
-        <p
-          className="col-span-2 mb-0 truncate text-[length:var(--size-eyebrow)] text-text-muted md:col-span-2 md:col-start-2"
-          title={lastCallTitle}
-        >
-          last call: {lastCall}
+        <p className="col-span-2 mb-0 flex min-w-0 items-baseline text-[length:var(--size-eyebrow)] text-text-muted md:col-span-2 md:col-start-2">
+          <span className="shrink-0">last call:&nbsp;</span>
+          {lastCallValue}
           {layerCaption}
         </p>
       </div>
@@ -725,16 +779,14 @@ function FieldRow({
           width={controlWidth(field)}
         />
       </div>
-      <span
-        className="col-span-2 truncate font-num text-[length:var(--size-ui)] tabular-nums text-text-muted md:col-span-1 md:col-start-3 md:row-start-1"
-        title={lastCallTitle}
-      >
+      <span className="col-span-2 flex min-w-0 items-baseline font-num text-[length:var(--size-ui)] tabular-nums text-text-muted md:col-span-1 md:col-start-3 md:row-start-1">
         {/* The column head is hidden below `md`, so the value names itself. */}
-        <span className="font-ui md:hidden">last call: </span>
-        {lastCall}
+        <span className="shrink-0 font-ui md:hidden">last call:&nbsp;</span>
+        {lastCallValue}
         {layerCaption}
       </span>
       {labelCaveat}
+      {adviceLine}
     </div>
   );
 }
@@ -785,12 +837,45 @@ function layerText(layer: Layer | null): string | null {
 }
 
 /**
- * The name's tooltip, one fact per line: the full path, the snapshot key the
- * last call's value was read under, the leaf's own bounds, the per-vendor bounds a merged
- * control cannot carry, what the kind of box expects, and where a boot value
- * shown on the row came from.
+ * The snapshot key a row names under its path (`FLAT_KEYS`, contract §7): the
+ * leaf's own; for a per-vendor leaf, the chosen vendor's; on the no-script
+ * merged row, which serves every vendor, each vendor's.
  */
-function nameHint({
+function flatKeyText(field: Field): string {
+  const { flatKey, vendor } = field;
+  if (typeof flatKey === 'string') return flatKey;
+  const own = vendor === null ? undefined : flatKey[vendor];
+  return own ?? [...new Set(Object.values(flatKey))].join(' / ');
+}
+
+/**
+ * A row's label (ADR 0013): the glossary's name and description, with the
+ * leaf's path and snapshot key as the pipeline term under the name. The
+ * glossary names every `FLAT_KEYS` path (`glossary.test.ts`); a path it did not
+ * would still get its row, named by the path itself.
+ */
+function rowTerm(field: Field): GlossaryTerm {
+  const code = `${field.path} · ${flatKeyText(field)}`;
+  const term = termFor('configLeaf', field.path);
+  return term === null ? { name: field.path, code } : { ...term, code };
+}
+
+/** A fact that starts lowercase, as the first word of a sentence. */
+function sentence(text: string): string {
+  const upper = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  return /[.!?]$/.test(upper) ? upper : `${upper}.`;
+}
+
+/**
+ * The name's tooltip: the glossary's description, then the facts of this row
+ * the screen does not show — the leaf's own bounds, the per-vendor bounds a
+ * merged control cannot carry, what the kind of box expects, which vendors are
+ * offered, why a voice id cannot be checked, the key the last call's value was
+ * read under when it is not the one on screen, and where a boot value shown on
+ * the row came from.
+ */
+function rowHint({
+  description,
   field,
   vendorBounds,
   isProvider,
@@ -799,6 +884,7 @@ function nameHint({
   offered,
   boot,
 }: {
+  description: string | undefined;
   field: Field;
   vendorBounds: string | null;
   isProvider: boolean;
@@ -807,39 +893,25 @@ function nameHint({
   offered: Offered | null;
   boot: string | null;
 }): string {
-  const lines = [field.path];
-  if (typeof field.flatKey === 'string') {
-    lines.push(`snapshot key ${field.flatKey}`);
-  } else if (ranOn?.key != null) {
-    // The key the value beside it was read under — the last call's vendor, not
-    // the one this form selects (ADR 0012 D9).
-    lines.push(`snapshot key ${ranOn.key}`);
-  } else {
-    const perVendor = `snapshot key per vendor: ${Object.entries(field.flatKey)
-      .map(([vendor, key]) => `${vendor} ${key}`)
-      .join(', ')}`;
-    const leg = field.group === 'tts' ? 'TTS_PROVIDER' : 'STT_PROVIDER';
-    lines.push(
-      snapshotRecorded ? `${perVendor} (the last call's snapshot names no ${leg})` : perVendor,
-    );
-  }
-  if (field.min !== null) {
-    lines.push(`${field.minExclusive ? 'greater than' : 'at least'} ${String(field.min)}`);
-  }
-  if (field.max !== null) {
-    lines.push(`${field.maxExclusive ? 'less than' : 'at most'} ${String(field.max)}`);
-  }
-  // A merged control carries no bound of its own: each vendor bounds the leaf
-  // its own way.
-  if (vendorBounds !== null) lines.push(vendorBounds);
+  const lines = description === undefined ? [] : [sentence(description)];
+  const bounds = [
+    field.min === null
+      ? null
+      : `${field.minExclusive ? 'greater than' : 'at least'} ${String(field.min)}`,
+    field.max === null ? null : `${field.maxExclusive ? 'less than' : 'at most'} ${String(field.max)}`,
+    // A merged control carries no bound of its own: each vendor bounds the
+    // leaf its own way.
+    vendorBounds,
+  ].filter((bound): bound is string => bound !== null);
+  if (bounds.length > 0) lines.push(`Allowed: ${bounds.join(', ')}.`);
   if (field.kind === 'list') {
     lines.push(
       field.path === 'llm.params.stop'
-        ? 'one entry per line; a stop sequence that itself contains a line break cannot be written here'
-        : 'one entry per line',
+        ? 'One entry per line; a stop sequence that itself contains a line break cannot be written here.'
+        : 'One entry per line.',
     );
   }
-  if (field.kind === 'record') lines.push('a JSON object, as stored');
+  if (field.kind === 'record') lines.push('A JSON object, as stored.');
   // Rule 4 of `docs/redesign.md` §4.2 (ADR 0012 D3): the vendors of the box's
   // newest boot report when there is one, every vendor when there is none.
   if (isProvider) {
@@ -849,18 +921,48 @@ function nameHint({
         : `Offered: the vendors this box's newest boot report lists, ${offered.asOf}. A row naming another is refused whole, and those calls run on boot config.`,
     );
   }
-  // D4: why the voice is a text box, when it is one.
   if (field.path === 'tts.voice') {
-    const vendors = field.vendor === null ? (offered?.vendors.tts ?? []) : [field.vendor];
-    const uncheckable = voiceUncheckable(offered, vendors);
-    if (uncheckable !== null && voiceControl(field, offered) === null) lines.push(uncheckable);
+    const uncheckable = voiceUncheckable(offered, voiceVendors(field, offered));
+    if (uncheckable !== null) lines.push(sentence(uncheckable));
+  }
+  // A per-vendor leaf: the key the value beside it was read under is the last
+  // call's vendor's, which need not be the one this form selects (ADR 0012 D9).
+  if (typeof field.flatKey !== 'string') {
+    const leg = field.group === 'tts' ? 'TTS_PROVIDER' : 'STT_PROVIDER';
+    if (ranOn?.key != null) {
+      if (ranOn.key !== flatKeyText(field)) {
+        lines.push(`The last call's value was read under ${ranOn.key}.`);
+      }
+    } else if (snapshotRecorded) {
+      lines.push(`The last call's snapshot names no ${leg}, so it shows no value here.`);
+    }
   }
   if (boot !== null) {
     lines.push(
       'The boot value shown is what the last call ran from boot config; a box restarted since then may boot with another.',
     );
   }
-  return lines.join('\n');
+  return lines.join(' ');
+}
+
+/** The TTS vendors whose voices a `tts.voice` row serves: its own branch's, or every offered one's on the merged row. */
+function voiceVendors(field: Field, offered: Offered | null): string[] {
+  return field.vendor === null ? (offered?.vendors.tts ?? []) : [field.vendor];
+}
+
+/**
+ * A stored value the select does not offer — a row written by hand, or a
+ * catalogue the pipeline has moved on from (trap 6) — as its own option rather
+ * than dropped, so the select does not silently change the row's value to the
+ * first legal one. Null when the value is blank or offered.
+ */
+function unknownOption(
+  value: string,
+  options: readonly string[],
+  reason = 'not a value this build offers',
+): ListboxOption | null {
+  if (value === '' || options.includes(value)) return null;
+  return { value, label: `${value} — ${reason}` };
 }
 
 function Control({
@@ -887,124 +989,109 @@ function Control({
   // An empty box says what applies instead of saying nothing; the same words
   // are a select's first option.
   const bootText = bootWords(boot, 24);
+  const listId = `${path}-voices`;
 
-  if (isProvider) {
-    const schema = field.options ?? [];
-    const options = providerOptions(schema, offered, field.group === 'tts' ? 'tts' : 'stt');
-    return (
-      <>
-        <div className={width}>
-          <Select
-            id={path}
-            name={path}
-            value={value}
-            disabled={!editable}
-            onChange={(event) => {
-              onValue(event.target.value);
-            }}
-          >
-            <option value="">{bootText}</option>
-            {/* The stored value, kept selectable so the select does not quietly
-                change the row: outside the schema, the schema's words; inside
-                it but outside the report, the report's (ADR 0012 D3). */}
-            <Unknown
-              value={value}
-              options={options}
-              reason={
-                offered !== null && schema.includes(value)
-                  ? `not offered by this box (${offered.asOfAt})`
-                  : undefined
-              }
-            />
-            {options.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <noscript>
-          <Caveat>
-            without JavaScript every vendor&apos;s parameters are shown at once; a parameter of
-            a vendor this row does not name refuses the whole row at review, which is where
-            you will read it
-          </Caveat>
-        </noscript>
-      </>
-    );
-  }
-
-  const voice = voiceControl(field, offered);
-  if (voice !== null) {
-    // D4: labels shown, ids written; "boot value" first, which leaves the leaf
-    // unset and names the voice boot config speaks with when the list marks one.
-    const ids = voice.groups.flatMap(({ list }) => list.map((entry) => entry.id));
-    // The merged control names no default: which vendor's applies depends on
-    // the provider the row names, which that control cannot know.
-    const defaultLabel = voice.merged
-      ? undefined
-      : voice.groups[0]?.list.find((entry) => entry.is_default)?.label;
-    return (
-      <div className={width}>
-        <Select
-          id={path}
-          name={path}
-          value={value}
-          disabled={!editable}
-          onChange={(event) => {
-            onValue(event.target.value);
-          }}
-        >
-          <option value="">
-            {defaultLabel === undefined ? bootText : `${BOOT_OPTION} (${defaultLabel})`}
-          </option>
-          <Unknown
-            value={value}
-            options={ids}
-            reason={voice.unknownReason}
-            name={voiceName(offered, value)}
-          />
-          {voice.merged ? (
-            // Without script every vendor's voices at once, one group each
-            // (ADR 0011 D4); `offeredIssues` refuses another vendor's id at review.
-            voice.groups.map(({ vendor, list }) => (
-              <optgroup key={vendor} label={vendor}>
-                <VoiceOptions list={list} />
-              </optgroup>
-            ))
-          ) : (
-            <VoiceOptions list={voice.groups[0]?.list ?? []} />
-          )}
-        </Select>
-      </div>
-    );
-  }
-
-  if (kind === 'boolean' || kind === 'enum') {
+  if (isProvider || kind === 'boolean' || kind === 'enum') {
     // A boolean is a two-option select, never a checkbox: an HTML checkbox
     // submits `on`, which the copied schema refuses, and an unticked one
     // submits nothing at all — which would read as "not set" (contract §3.4:
     // absent ≠ false).
-    const options = kind === 'boolean' ? ['true', 'false'] : (field.options ?? []);
+    const schema = kind === 'boolean' ? ['true', 'false'] : (field.options ?? []);
+    const offeredValues = isProvider
+      ? providerOptions(schema, offered, field.group === 'tts' ? 'tts' : 'stt')
+      : schema;
+    // The stored value, kept selectable: outside the schema, the schema's
+    // words; a vendor inside it but outside the report, the report's (ADR 0012 D3).
+    const unknown = unknownOption(
+      value,
+      offeredValues,
+      isProvider && offered !== null && schema.includes(value)
+        ? `not offered by this box (${offered.asOfAt})`
+        : undefined,
+    );
+    const options: ListboxOption[] = [
+      { value: '', label: bootText },
+      ...(unknown === null ? [] : [unknown]),
+      ...offeredValues.map((option) => ({ value: option, label: optionLabel(path, option) })),
+    ];
     return (
-      <div className={width}>
-        <Select
+      <>
+        <div className={width}>
+          <Listbox
+            id={path}
+            name={path}
+            value={value}
+            disabled={!editable}
+            options={options}
+            onChange={(event) => {
+              onValue(event.target.value);
+            }}
+          />
+        </div>
+        {isProvider ? (
+          <noscript>
+            <Caveat>
+              without JavaScript every vendor&apos;s parameters are shown at once; a parameter of
+              a vendor this row does not name refuses the whole row at review, which is where
+              you will read it
+            </Caveat>
+          </noscript>
+        ) : null}
+      </>
+    );
+  }
+
+  if (path === 'tts.voice') {
+    // ADR 0014 decision 6: a text box in every state, the boot report's voices
+    // offered as suggestions — labels shown, ids written — so an id the report
+    // has not seen can still be pasted; `offeredIssues` refuses one outside the
+    // list at review.
+    const vendors = voiceVendors(field, offered);
+    const suggestions = voiceSuggestions(offered, vendors);
+    // "boot value" names the voice boot config speaks with when the one
+    // vendor's list marks it; the merged row cannot know which vendor applies.
+    const defaultLabel =
+      vendors.length === 1
+        ? offered?.voices[vendors[0] ?? '']?.find((entry) => entry.is_default)?.label
+        : undefined;
+    const caption = voiceCaption(
+      value,
+      suggestions,
+      offered === null
+        ? UNLISTED_VOICE
+        : vendors.length === 1
+          ? `not in this box's ${vendors[0] ?? ''} voice list (${offered.asOfAt})`
+          : `not in this box's voice lists (${offered.asOfAt})`,
+      voiceUncheckable(offered, vendors),
+    );
+    return (
+      <div className={`${width} flex flex-col gap-1`}>
+        <Input
           id={path}
           name={path}
           value={value}
+          list={suggestions.length === 0 ? undefined : listId}
+          autoComplete="off"
+          placeholder={defaultLabel === undefined ? bootWords(boot) : `${BOOT_OPTION} (${defaultLabel})`}
           disabled={!editable}
           onChange={(event) => {
             onValue(event.target.value);
           }}
-        >
-          <option value="">{bootText}</option>
-          <Unknown value={value} options={options} />
-          {options.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </Select>
+        />
+        {suggestions.length === 0 ? null : (
+          <datalist id={listId}>
+            {suggestions.map((entry) => (
+              <option key={entry.value} value={entry.value}>
+                {entry.label}
+              </option>
+            ))}
+          </datalist>
+        )}
+        {caption === null ? null : caption.tone === 'label' ? (
+          <span className="text-[length:var(--size-eyebrow)] text-text-muted">{caption.text}</span>
+        ) : (
+          <Caveat>{caption.text}</Caveat>
+        )}
       </div>
     );
   }
@@ -1070,6 +1157,7 @@ function previewOf(value: string, kind: Field['kind']): string {
  */
 function LongControl({
   field,
+  heading,
   value,
   onValue,
   boot,
@@ -1077,6 +1165,8 @@ function LongControl({
   editable,
 }: {
   field: Field;
+  /** The row's name, which the editor is titled with. */
+  heading: string;
   value: string;
   onValue: (next: string) => void;
   boot: string | null;
@@ -1112,9 +1202,9 @@ function LongControl({
         <span className="shrink-0 font-medium text-text-link">{editable ? 'edit' : 'view'}</span>
       </button>
 
-      <Overlay id={editor} title={path}>
+      <Overlay id={editor} title={heading}>
         <Textarea
-          aria-label={path}
+          aria-label={heading}
           name={path}
           rows={kind === 'textarea' ? 18 : 10}
           value={value}
@@ -1157,71 +1247,12 @@ function LongControl({
   );
 }
 
-/**
- * A stored value the schema does not offer — a row written by hand, or a
- * catalogue the pipeline has moved on from (trap 6). It is offered as its own
- * option rather than dropped, so the select does not silently change the row's
- * value to the first legal one.
- */
-function Unknown({
-  value,
-  options,
-  reason = 'not a value this build offers',
-  name = value,
-}: {
-  value: string;
-  options: readonly string[];
-  /** Why it is not offered; the schema's words unless a boot report is the reason (ADR 0012 D3, D4). */
-  reason?: string | undefined;
-  /** What the option shows for the value; the value itself unless it is an id no one reads. */
-  name?: string;
-}) {
-  if (value === '' || options.includes(value)) return null;
-  return (
-    <option value={value}>
-      {name} — {reason}
-    </option>
-  );
-}
-
-/** One voice list as options: the label shown, the id written, `.env` order kept. */
-function VoiceOptions({ list }: { list: readonly BootReportVoice[] }) {
-  return list.map((entry) => (
-    <option key={entry.id} value={entry.id}>
-      {entry.label}
-    </option>
-  ));
-}
-
-/**
- * Whether `tts.voice` is a select, and of what (ADR 0012 D4): with script, the
- * field is the chosen vendor's branch and the select is that vendor's list;
- * without it, the field is the merged one and the select is every offered
- * vendor's list, one group each. Null — the text box — with no report, or a
- * vendor whose list the report does not carry.
- */
-function voiceControl(
-  field: Field,
-  offered: Offered | null,
-): { groups: { vendor: string; list: BootReportVoice[] }[]; merged: boolean; unknownReason: string } | null {
-  if (field.path !== 'tts.voice' || offered === null) return null;
-  if (field.vendor === null) {
-    const groups = mergedVoices(offered);
-    return groups === null
-      ? null
-      : { groups, merged: true, unknownReason: `not in this box's voice lists (${offered.asOfAt})` };
-  }
-  const list = voiceList(offered, field.vendor);
-  return list === null
-    ? null
-    : {
-        groups: [{ vendor: field.vendor, list }],
-        merged: false,
-        unknownReason: `not in this box's ${field.vendor} voice list (${offered.asOfAt})`,
-      };
-}
-
 /* ---------------------------------------------------------------- review */
+
+/** A diff line's label: the glossary's name over the path; the path alone names one it lacks. */
+function diffTerm(path: string): GlossaryTerm {
+  return termFor('configLeaf', path) ?? { name: path, code: path };
+}
 
 /** A value longer than this, or on more than one line, is clamped with a "show all". */
 const LONG_VALUE = 140;
@@ -1322,9 +1353,10 @@ function ReviewStep({
               </div>
             ))}
           </div>
-          {/* The pipeline runs this same schema on the row, so a row it refuses
-              would leave every call on boot config. */}
-          <Caveat>Save comes back once these are fixed: the pipeline would refuse this row too</Caveat>
+          {/* The pipeline runs this same schema, and the same voice and vendor
+              checks, on the row: one it refuses leaves every call on boot config
+              until a newer row lands (contract §7). */}
+          <Caveat>{REFUSED}</Caveat>
         </Card>
       ) : null}
 
@@ -1374,19 +1406,8 @@ function ReviewStep({
                 return (
                   <tr key={entry.path}>
                     <Td>
-                      {/* A narrow column breaks a path at its dots first. */}
-                      <span className="[overflow-wrap:anywhere]">
-                        {entry.path.split('.').map((part, index) => (
-                          <Fragment key={`${String(index)}:${part}`}>
-                            {index === 0 ? null : (
-                              <>
-                                .<wbr />
-                              </>
-                            )}
-                            {part}
-                          </Fragment>
-                        ))}
-                      </span>
+                      {/* The same pair as the form's row (ADR 0013): name, then path. */}
+                      <Term term={diffTerm(entry.path)} />
                       {long ? (
                         <>
                           <button
@@ -1396,7 +1417,7 @@ function ReviewStep({
                           >
                             show all
                           </button>
-                          <Overlay id={full} title={entry.path}>
+                          <Overlay id={full} title={diffTerm(entry.path).name}>
                             <div className="grid gap-4 md:grid-cols-2">
                               {[
                                 { label: 'before', text: before, absent: beforeAbsent },

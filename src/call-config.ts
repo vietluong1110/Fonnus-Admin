@@ -67,8 +67,12 @@ export function ranOnOf(
   };
 }
 
-/** Every flat snapshot key the runtime document can set, to the path that sets it. */
-const PATH_OF_KEY: ReadonlyMap<string, string> = new Map(
+/**
+ * Every flat snapshot key the runtime document can set, to the path that sets
+ * it — `FLAT_KEYS` reversed. A per-vendor path maps each of its keys back to
+ * the one path.
+ */
+export const PATH_OF_KEY: ReadonlyMap<string, string> = new Map(
   Object.entries(FLAT_KEYS).flatMap(([path, key]) =>
     typeof key === 'string'
       ? [[key, path] as const]

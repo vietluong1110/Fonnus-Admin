@@ -10,12 +10,15 @@
  * screen — hours for `24h`, days up to 45, weeks past that.
  */
 
+import type { ReactNode } from 'react';
 import { formatNumber } from '@/calls';
 import type { BucketUnit, Dashboard } from '@/dashboard';
 import Card from '@/ui/card';
-import Caveat from '@/ui/caveat';
+import Caveat, { Hint } from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
 import VBars, { hourLabelAt } from '@/ui/vbars';
+import { floorMark } from '@/cost';
+import { costTip } from './overview';
 
 /** The faded half of the stack, derived from the chart alias (ADR 0003). */
 const NOT_CONSENTED = 'color-mix(in srgb, var(--chart-1) 28%, transparent)';
@@ -29,7 +32,14 @@ const TITLE: Record<BucketUnit, string> = {
   week: 'Calls per week',
 };
 
-export default function CallsPerDay({ data }: { data: Dashboard }) {
+export default function CallsPerDay({
+  data,
+  unpriced,
+}: {
+  data: Dashboard;
+  /** The models the window ran on with no price row (`unpricedInWindow`, ADR 0015). */
+  unpriced: readonly string[];
+}) {
   const totals = data.callsByBucket.map((bucket) => bucket.consented + bucket.notConsented);
   const share = data.calls === 0 ? null : Math.round((data.consentedCalls / data.calls) * 100);
   const bars = data.callsByBucket.map((bucket, index) => ({
@@ -56,20 +66,28 @@ export default function CallsPerDay({ data }: { data: Dashboard }) {
       <div className="grid grid-cols-3 gap-2.5">
         <Figure label="Calls" value={formatNumber(data.calls)} />
         <Figure label="Consented" value={share === null ? '—' : String(share)} unit="%" />
-        {/* Trap 3: the figure is a floor while any model the calls ran on has
-            no price row — the label says "floor" and its tooltip says why —
-            and the calls that carried no parseable figure are missing from it,
-            which is counted directly under the number whenever there are any. */}
-        <div title="a floor while any model is unpriced">
-          {data.costFloorVnd === null ? (
-            <Figure label="Cost floor" value="not on record" />
-          ) : (
-            <Figure
-              label="Cost floor"
-              value={formatNumber(Math.round(data.costFloorVnd))}
-              unit="₫"
-            />
-          )}
+        {/* Trap 3, ADR 0015 decision 7: the window's sum of the stored
+            totals, whose tooltip says the pipeline computed them and which
+            models the window ran on without a price row; while there is one,
+            "floor" sits beside the number, so it reads as a floor exactly
+            when it is one. The calls that carried no parseable figure
+            are missing from it, counted directly under the number. It is the
+            card's right edge, so the tooltip ends there. */}
+        <div>
+          <Figure
+            label={
+              <Hint hint={costTip(unpriced)} align="end">
+                Cost (list price)
+              </Hint>
+            }
+            value={
+              data.costFloorVnd === null
+                ? 'not on record'
+                : formatNumber(Math.round(data.costFloorVnd))
+            }
+            {...(data.costFloorVnd === null ? {} : { unit: '₫' })}
+            {...(data.costFloorVnd === null ? {} : { mark: floorMark(unpriced) })}
+          />
           {data.unpricedCalls > 0 ? (
             <Caveat>
               {formatNumber(data.unpricedCalls)} call{data.unpricedCalls === 1 ? '' : 's'} without
@@ -109,7 +127,18 @@ function Legend({ tone, label }: { tone: string; label: string }) {
   );
 }
 
-function Figure({ label, value, unit }: { label: string; value: string; unit?: string }) {
+function Figure({
+  label,
+  value,
+  unit,
+  mark = null,
+}: {
+  label: ReactNode;
+  value: string;
+  unit?: string;
+  /** A caveat word the figure is never read without ("floor"), muted beside it. */
+  mark?: string | null;
+}) {
   return (
     <div>
       <div className="text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted">{label}</div>
@@ -117,6 +146,11 @@ function Figure({ label, value, unit }: { label: string; value: string; unit?: s
         {value}
         {unit === undefined ? null : (
           <span className="text-[13px] font-medium text-text-muted"> {unit}</span>
+        )}
+        {mark === null ? null : (
+          <Caveat as="span" className="ml-1.5 font-ui">
+            {mark}
+          </Caveat>
         )}
       </div>
     </div>

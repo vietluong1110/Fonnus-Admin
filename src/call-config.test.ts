@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { keysFromRow, ranOnOf } from './call-config';
+import { FLAT_KEYS } from './configuration/flat-keys';
+import { keysFromRow, PATH_OF_KEY, ranOnOf } from './call-config';
 
 /** A call that ran under row #42, which set the LLM model and the Soniox endpointing delay. */
 const SNAPSHOT: Record<string, unknown> = {
@@ -99,5 +100,17 @@ describe('keysFromRow', () => {
     const keys = keysFromRow(SNAPSHOT);
     expect(keys.has('runtime')).toBe(false);
     expect(keys.has('FONNUS_BUILD_SHA')).toBe(false);
+  });
+});
+
+describe('PATH_OF_KEY', () => {
+  it('reverses FLAT_KEYS, one flat key to its path, a per-vendor path from each of its keys', () => {
+    expect(PATH_OF_KEY.get('MAX_CALL_DURATION_SEC')).toBe('turn.max_call_duration_sec');
+    expect(PATH_OF_KEY.get('DEEPGRAM_MODEL')).toBe('stt.model');
+    expect(PATH_OF_KEY.get('SONIOX_MODEL')).toBe('stt.model');
+    expect(PATH_OF_KEY.get('NOT_A_KEY')).toBeUndefined();
+    // Every key of the table, and nothing else, has a path.
+    const keys = Object.values(FLAT_KEYS).flatMap((key) => (typeof key === 'string' ? [key] : Object.values(key)));
+    expect([...PATH_OF_KEY.keys()].sort()).toEqual([...keys].sort());
   });
 });

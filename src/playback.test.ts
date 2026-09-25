@@ -5,13 +5,16 @@ import {
   bubbleView,
   currentTurnIdx,
   greetingSpan,
+  leavesSelection,
   recordingOffsetMs,
+  SEEK_SLACK_MS,
   parseTurnParam,
   turnBars,
   turnAt,
   turnSpans,
-  waterfallPlayheadMs,
-  type TurnSpan,
+  playRangeOf,
+  watchRangeEnd,
+  type RangeClock,
 } from './playback';
 import { TARGETS, type Stage } from './latency';
 import type { TurnRow } from './queries/calls';
@@ -49,13 +52,6 @@ function turn(overrides: Partial<TurnRow> = {}): TurnRow {
 /** Marks as wall-clock instants, written as offsets from the origin for readability. */
 function marksAt(offsets: Partial<Record<Stage, number>>): Record<string, number> {
   return Object.fromEntries(Object.entries(offsets).map(([stage, ms]) => [stage, ORIGIN + ms]));
-}
-
-/** The one span of a single-turn fixture, so a test can read it without an index check. */
-function placeOne(overrides: Partial<TurnRow>): TurnSpan {
-  const span = turnSpans([turn(overrides)], STARTED_AT).placed[0];
-  if (span === undefined) throw new Error('the fixture turn was not placed');
-  return span;
 }
 
 describe('recordingOffsetMs — copied from ../Fonnus/app/src/recording/artifact-recorder.ts', () => {
@@ -151,7 +147,7 @@ describe('turnSpans — docs/upstream.md §Artifacts, "placing a turn on the rec
     expect(unplaced).toEqual([]);
   });
 
-  it('has a null speechEndMs when marks.speech_end is absent — the waterfall axis has no origin', () => {
+  it('has a null speechEndMs when marks.speech_end is absent', () => {
     const { placed } = turnSpans(
       [turn({ idx: 0, speech_start_ms: 100, marks: marksAt({ playback_end: 2_000 }) })],
       STARTED_AT,
@@ -235,21 +231,42 @@ describe('turnAt — the turn under the playhead', () => {
   });
 });
 
-describe('waterfallPlayheadMs — the axis of src/latency.ts waterfallRows starts at speech_end', () => {
-  const withSpeechEnd = placeOne({ speech_start_ms: 1_000, marks: marksAt({ speech_end: 1_500, playback_end: 4_000 }) });
-  const withoutSpeechEnd = placeOne({ speech_start_ms: 6_000, marks: marksAt({ playback_end: 9_000 }) });
-
-  it('measures the playhead from the turn speech_end place', () => {
-    expect(waterfallPlayheadMs(2_400, withSpeechEnd)).toBe(900);
+describe('playRangeOf — what a bubble\'s play glyph plays, per side', () => {
+  const spoken = turn({
+    speech_start_ms: 1_000,
+    speech_end_ms: 1_800,
+    marks: marksAt({ first_audio_out: 2_400, playback_start: 2_600, playback_end: 5_400 }),
   });
 
-  it('is null when the turn has no speech_end mark — the chart draws no line', () => {
-    expect(waterfallPlayheadMs(7_000, withoutSpeechEnd)).toBeNull();
+  it('plays the caller from speech_start_ms to speech_end_ms, both already recording offsets', () => {
+    expect(playRangeOf(spoken, 'caller', STARTED_AT)).toEqual({ fromMs: 1_000, toMs: 1_800 });
   });
 
-  it('goes negative before speech_end and past the chart domain after it, without clamping', () => {
-    expect(waterfallPlayheadMs(1_200, withSpeechEnd)).toBe(-300);
-    expect(waterfallPlayheadMs(600_000, withSpeechEnd)).toBe(598_500);
+  it('plays the assistant from first_audio_out to playback_end, placed through the origin', () => {
+    expect(playRangeOf(spoken, 'assistant', STARTED_AT)).toEqual({ fromMs: 2_400, toMs: 5_400 });
+  });
+
+  it('starts the assistant at playback_start when first_audio_out was never stamped', () => {
+    const late = turn({ marks: marksAt({ playback_start: 2_600, playback_end: 5_400 }) });
+    expect(playRangeOf(late, 'assistant', STARTED_AT)).toEqual({ fromMs: 2_600, toMs: 5_400 });
+  });
+
+  it('stops an interrupted reply at playback_end, the last lull before the cut', () => {
+    // Contract §3.2. The next turn's speech_start_ms is taken on an unmuted line
+    // only, so it falls after the cut and is never read here — nor on a reply
+    // that failed mid-way (trap 7), where the degraded line follows.
+    const cut = turn({ ...spoken, interrupted: true });
+    expect(playRangeOf(cut, 'assistant', STARTED_AT)).toEqual({ fromMs: 2_400, toMs: 5_400 });
+    const failed = turn({ ...spoken, interrupted: true, failed_leg: 'tts', failed_stage: 'idle' });
+    expect(playRangeOf(failed, 'assistant', STARTED_AT)).toEqual({ fromMs: 2_400, toMs: 5_400 });
+  });
+
+  it('has nothing to play with a missing end, a reversed pair, or no recorder clock', () => {
+    expect(playRangeOf(turn({ speech_start_ms: 1_000 }), 'caller', STARTED_AT)).toBeNull();
+    expect(playRangeOf(turn({ marks: marksAt({ first_audio_out: 2_400 }) }), 'assistant', STARTED_AT)).toBeNull();
+    expect(playRangeOf(turn({ speech_start_ms: 1_800, speech_end_ms: 1_000 }), 'caller', STARTED_AT)).toBeNull();
+    expect(playRangeOf(spoken, 'caller', null)).toBeNull();
+    expect(playRangeOf(spoken, 'assistant', null)).toBeNull();
   });
 });
 
@@ -332,9 +349,9 @@ describe('currentTurnIdx — which turn the screen is on', () => {
   });
 
   it('lets a click on an unplaced turn win while the playhead sits inside a placed one', () => {
-    // Turn 1 is placed, turn 2 is not (no speech offset): the provider clears the
-    // selection on every playhead move, so a selection that is still set was
-    // made after the last move and is what the operator wants to read.
+    // Turn 1 is placed, turn 2 is not (no speech offset): an unplaced turn has
+    // no block for the playhead to leave, so its selection is what the
+    // operator wants to read until the next click.
     const mixed = turnSpans(
       [
         turn({ idx: 1, speech_start_ms: 1_000, marks: marksAt({ playback_end: 4_000 }) }),
@@ -423,7 +440,7 @@ describe('bubbleView — the consent gate on the bubble (trap 4, ADR 0005)', () 
     expect(view.callerWithheld).toBe(false);
   });
 
-  it('seeks the assistant bubble to the place of first_audio_out, playback_start as fallback', () => {
+  it('seeks a bubble click to the turn start and plays each side over its own range', () => {
     const placed = turnSpans(
       [turn({ idx: 0, speech_start_ms: 1_000, marks: marksAt({ playback_end: 6_000 }) })],
       STARTED_AT,
@@ -437,15 +454,26 @@ describe('bubbleView — the consent gate on the bubble (trap 4, ADR 0005)', () 
       }),
       { ...context('granted', 'on'), span: placed },
     );
-    expect(view.callerSeekMs).toBe(1_000);
-    expect(view.assistantSeekMs).toBe(2_400);
+    expect(view.seekMs).toBe(1_000);
+    expect(view.callerRange).toEqual({ fromMs: 1_000, toMs: 1_800 });
+    expect(view.assistantRange).toEqual({ fromMs: 2_400, toMs: 5_400 });
     expect(view.assistantLengthMs).toBe(3_000);
 
     const fallback = bubbleView(
       turn({ idx: 0, marks: marksAt({ playback_start: 2_600, playback_end: 5_400 }) }),
       context('granted', 'on'),
     );
-    expect(fallback.assistantSeekMs).toBe(2_600);
+    expect(fallback.assistantRange).toEqual({ fromMs: 2_600, toMs: 5_400 });
+
+    const cut = bubbleView(
+      turn({
+        idx: 0,
+        interrupted: true,
+        marks: marksAt({ first_audio_out: 2_400, playback_end: 5_400 }),
+      }),
+      context('granted', 'on'),
+    );
+    expect(cut.assistantRange).toEqual({ fromMs: 2_400, toMs: 5_400 });
   });
 
   it('has no seek at all when the call has no recorder clock', () => {
@@ -453,8 +481,9 @@ describe('bubbleView — the consent gate on the bubble (trap 4, ADR 0005)', () 
       turn({ idx: 0, speech_start_ms: 1_000, marks: marksAt({ first_audio_out: 2_400 }) }),
       { ...context('granted', 'on'), recordingStartedAt: null },
     );
-    expect(view.callerSeekMs).toBeNull();
-    expect(view.assistantSeekMs).toBeNull();
+    expect(view.seekMs).toBeNull();
+    expect(view.callerRange).toBeNull();
+    expect(view.assistantRange).toBeNull();
   });
 
   it('flags an outcome outside the contract vocabulary rather than reading it as normal', () => {
@@ -572,5 +601,140 @@ describe('parseTurnParam — the ?turn=<idx> arrival (ADR 0006)', () => {
 
   it('selects nothing on a call with no turns on record (trap 1)', () => {
     expect(parseTurnParam('0', [])).toBeNull();
+  });
+});
+
+describe('leavesSelection — when a playhead move ends the selection', () => {
+  const spans = turnSpans(
+    [
+      turn({ idx: 0, speech_start_ms: 1_000, marks: marksAt({ playback_end: 4_000 }) }),
+      turn({ idx: 1, speech_start_ms: 6_000, marks: marksAt({ playback_end: 9_000 }) }),
+      turn({ idx: 2, speech_start_ms: null }),
+    ],
+    STARTED_AT,
+  ).placed;
+
+  it('keeps the selection while the playhead is inside the selected turn', () => {
+    expect(leavesSelection(spans, 1, 6_000)).toBe(false);
+    expect(leavesSelection(spans, 1, 7_500)).toBe(false);
+    expect(leavesSelection(spans, 1, 9_000)).toBe(false);
+  });
+
+  it('forgives a seek that lands a frame early or late', () => {
+    expect(leavesSelection(spans, 1, 6_000 - SEEK_SLACK_MS)).toBe(false);
+    expect(leavesSelection(spans, 1, 9_000 + SEEK_SLACK_MS)).toBe(false);
+  });
+
+  it('ends it once the playhead is outside the turn', () => {
+    expect(leavesSelection(spans, 1, 2_000)).toBe(true);
+    expect(leavesSelection(spans, 1, 9_500)).toBe(true);
+    expect(leavesSelection(spans, 0, 6_000)).toBe(true);
+  });
+
+  it('has nothing to end with no selection, or a selected turn with no block', () => {
+    expect(leavesSelection(spans, null, 2_000)).toBe(false);
+    expect(leavesSelection(spans, 2, 2_000)).toBe(false);
+    expect(leavesSelection([], 1, 2_000)).toBe(false);
+  });
+});
+
+describe('watchRangeEnd — playing one range and stopping at its end', () => {
+  /**
+   * A frame clock the test steps by hand, an audio whose position it sets,
+   * and the player's `seeking` / `timeupdate` events it fires.
+   */
+  function fakeClock(startMs: number) {
+    let position = startMs;
+    let next = 1;
+    const frames = new Map<number, () => void>();
+    const listeners = { seeking: new Set<() => void>(), timeupdate: new Set<() => void>() };
+    const pauses: number[] = [];
+    const clock: RangeClock = {
+      positionMs: () => position,
+      pause: () => pauses.push(position),
+      frame: (callback) => {
+        const handle = next++;
+        frames.set(handle, callback);
+        return handle;
+      },
+      cancelFrame: (handle) => frames.delete(handle),
+      on: (event, callback) => {
+        listeners[event].add(callback);
+        return () => listeners[event].delete(callback);
+      },
+    };
+    const step = (toMs: number): void => {
+      position = toMs;
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback();
+    };
+    const fire = (event: 'seeking' | 'timeupdate', atMs: number): void => {
+      position = atMs;
+      for (const callback of [...listeners[event]]) callback();
+    };
+    const listening = (): number => listeners.seeking.size + listeners.timeupdate.size;
+    return { clock, step, fire, pauses, pending: () => frames.size, listening };
+  }
+
+  it('pauses on the first frame at or past the end, and stops watching', () => {
+    const fake = fakeClock(1_000);
+    watchRangeEnd(fake.clock, 1_000, 2_000);
+    fake.step(1_500);
+    expect(fake.pauses).toEqual([]);
+    fake.step(2_010);
+    expect(fake.pauses).toEqual([2_010]);
+    expect(fake.pending()).toBe(0);
+    expect(fake.listening()).toBe(0);
+  });
+
+  it('pauses even when the first check after a stall finds the audio far past the end', () => {
+    // A background tab: no frame for seconds while the audio played on.
+    const fake = fakeClock(1_000);
+    watchRangeEnd(fake.clock, 1_000, 2_000);
+    fake.step(9_000);
+    expect(fake.pauses).toEqual([9_000]);
+  });
+
+  it('pauses on timeupdate when the frames have stopped', () => {
+    const fake = fakeClock(1_000);
+    watchRangeEnd(fake.clock, 1_000, 2_000);
+    fake.fire('timeupdate', 1_800);
+    expect(fake.pauses).toEqual([]);
+    fake.fire('timeupdate', 2_240);
+    expect(fake.pauses).toEqual([2_240]);
+    expect(fake.pending()).toBe(0);
+    expect(fake.listening()).toBe(0);
+  });
+
+  it('is cancelled by the returned function — another seek or a pause', () => {
+    const fake = fakeClock(1_000);
+    const cancel = watchRangeEnd(fake.clock, 1_000, 2_000);
+    fake.step(1_200);
+    cancel();
+    expect(fake.pending()).toBe(0);
+    expect(fake.listening()).toBe(0);
+    fake.step(2_500);
+    expect(fake.pauses).toEqual([]);
+  });
+
+  it('lets go without pausing on a native seek elsewhere, wherever it lands', () => {
+    for (const target of [5_000, 1_500, 200]) {
+      const fake = fakeClock(1_000);
+      watchRangeEnd(fake.clock, 1_000, 2_000);
+      fake.fire('seeking', target);
+      fake.step(target + 3_000);
+      expect(fake.pauses).toEqual([]);
+      expect(fake.pending()).toBe(0);
+      expect(fake.listening()).toBe(0);
+    }
+  });
+
+  it("keeps watching through the range's own seek to its start, whose event fires late", () => {
+    const fake = fakeClock(1_000);
+    watchRangeEnd(fake.clock, 1_000, 2_000);
+    fake.fire('seeking', 1_000 + SEEK_SLACK_MS);
+    fake.step(2_050);
+    expect(fake.pauses).toEqual([2_050]);
   });
 });

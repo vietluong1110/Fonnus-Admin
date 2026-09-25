@@ -13,7 +13,8 @@
 
 import { formatNumber } from '@/calls';
 import { windowPhrase } from '@/calls-stats';
-import { GROUPINGS, type Grouping, RUNTIME_VERSION_KEY, aggregate, parseGroup, snapshotKeys } from '@/dashboard';
+import { unpricedInWindow } from '@/cost';
+import { aggregate, configuredLlmOf, parseGroup } from '@/dashboard';
 import { TARGETS } from '@/latency';
 import { dashboardWindow } from '@/queries/dashboard';
 import Badge from '@/ui/badge';
@@ -56,15 +57,14 @@ export default async function OverviewPage({
   const data = aggregate(calls, turns, grouping, window, now);
   const callsById = new Map(calls.map((call) => [call.id, call]));
 
-  // The `key:` options are the keys the window's own snapshots carry, plus the
-  // one derived path (ADR 0009). A grouping asked for by hand that none of them
-  // has is kept in the list, so the select still shows what is being rendered.
-  const options: Grouping[] = [
-    ...GROUPINGS,
-    `key:${RUNTIME_VERSION_KEY}`,
-    ...snapshotKeys(calls).map((key): Grouping => `key:${key}`),
-  ];
-  if (!options.includes(grouping)) options.push(grouping);
+  // The models the window ran on that the copied price table cannot price
+  // (ADR 0015 decision 7), named in the cost figure's tooltip. Each call's
+  // configured OPENROUTER_MODEL counts too: an unconsented call has no turn
+  // rows to name its LLM (trap 1), yet its stored total paid for it.
+  const unpriced = unpricedInWindow(
+    calls.map((call) => ({ ...call, configured_llm: configuredLlmOf(call.config_snapshot) })),
+    turns,
+  );
 
   // Trap 1 / CONTEXT.md trap 6: every percentile on this screen is drawn from
   // turn rows, and an unconsented call has none. The sentence is said ONCE, in
@@ -128,7 +128,7 @@ export default async function OverviewPage({
 
       <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] items-stretch gap-[18px] max-[1100px]:grid-cols-1">
         <ReplyLatency data={data} scales={scales} />
-        <CallsPerDay data={data} />
+        <CallsPerDay data={data} unpriced={unpriced} />
       </div>
 
       <ReplyComposition data={data} />
@@ -141,7 +141,6 @@ export default async function OverviewPage({
       <Configurations
         data={data}
         grouping={grouping}
-        options={options}
         hidden={{
           since: window.spec,
           ...(window.until === null ? {} : { until: first(params.until) ?? '' }),

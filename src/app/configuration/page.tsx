@@ -46,6 +46,7 @@ import Button from '@/ui/button';
 import Card from '@/ui/card';
 import Caveat from '@/ui/caveat';
 import EmptyState from '@/ui/empty-state';
+import Listbox from '@/ui/listbox';
 import Overlay from '@/ui/overlay';
 import PageHead from '@/ui/page-head';
 import ConfigurationForm, { type LastCall } from './configuration-form';
@@ -222,18 +223,19 @@ export default async function ConfigurationPage({
           </label>
           {/* A GET form, so the tenant is in the URL like every other input
               (ADR 0006) and a screen is a pasteable address. */}
-          <select
-            id="tenant-picker"
-            name="tenant"
-            defaultValue={tenant}
-            className="rounded-sm border border-border-hairline bg-surface-card px-3 py-2 text-[length:var(--size-ui)]"
-          >
-            {tenantRows.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.clinic_name === null ? row.id : `${row.clinic_name} (${row.id})`}
-              </option>
-            ))}
-          </select>
+          <div className="min-w-[240px]">
+            {/* The drawn listbox over a native select (ADR 0014 decisions 3–4):
+                with scripts off the select is what renders and submits. */}
+            <Listbox
+              id="tenant-picker"
+              name="tenant"
+              defaultValue={tenant}
+              options={tenantRows.map((row) => ({
+                value: row.id,
+                label: row.clinic_name === null ? row.id : `${row.clinic_name} (${row.id})`,
+              }))}
+            />
+          </div>
           <button
             type="submit"
             className="rounded-sm border border-transparent bg-action-primary px-4 py-2 text-[length:var(--size-ui)] font-medium text-text-on-accent"

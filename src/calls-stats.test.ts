@@ -4,6 +4,7 @@ import {
   callDurationMs,
   callStats,
   dayBands,
+  failedTickTip,
   formatDayBand,
   formatTimeOfDay,
   callsTimeline,
@@ -11,7 +12,9 @@ import {
   turnTicks,
   windowPhrase,
 } from './calls-stats';
+import { UNKNOWN_VOCABULARY_TITLE } from './calls';
 import type { CallScopeRow } from './queries/calls';
+import { failureChip } from './ui/glossary';
 import { parseWindow } from './window';
 
 /** One scope row; every field the Calls screen reads has a harmless default. */
@@ -27,7 +30,7 @@ function call(over: Partial<CallScopeRow> = {}): CallScopeRow {
     artifact_state: 'archived',
     artifact_key_prefix: 'calls/2026-09-09/abc',
     outcome: 'granted',
-    failed_turn_idx: [],
+    failed_turns: [],
     ...over,
   };
 }
@@ -127,7 +130,7 @@ describe('callsTimeline — the window’s own buckets, in the clinic zone', () 
     );
     expect(unit).toBe('day');
     expect(bars).toHaveLength(8);
-    expect(bars.at(-1)).toMatchObject({ label: '9/9', value: 2, partial: true });
+    expect(bars.at(-1)).toMatchObject({ label: '09-09', value: 2, partial: true });
     expect(bars.reduce((sum, bar) => sum + bar.value, 0)).toBe(3);
   });
 
@@ -203,19 +206,20 @@ describe('formatDayBand', () => {
   const now = new Date('2026-09-09T10:00:00Z');
 
   it('names today as today and every other day by its date', () => {
-    expect(formatDayBand('2026-09-09', now)).toBe('Today · Wed 9 Sep');
-    expect(formatDayBand('2026-09-08', now)).toBe('Tue 8 Sep');
+    expect(formatDayBand('2026-09-09', now)).toBe('Today · 09-09-2026');
+    expect(formatDayBand('2026-09-08', now)).toBe('08-09-2026');
   });
 });
 
 describe('turnTicks — trap 1 and trap 7', () => {
   it('draws one tick per turn on record and paints the failed ones', () => {
     // `idx` runs from 1 (contract §3), so idx 3 is the third tick.
-    expect(turnTicks(call({ turn_count: 4, failed_turn_idx: [3] }))).toEqual([
-      false,
-      false,
-      true,
-      false,
+    const failed = { idx: 3, failed_leg: 'llm', failed_stage: 'idle' };
+    expect(turnTicks(call({ turn_count: 4, failed_turns: [failed] }))).toEqual([
+      null,
+      null,
+      failed,
+      null,
     ]);
   });
 
@@ -231,7 +235,31 @@ describe('turnTicks — trap 1 and trap 7', () => {
   });
 
   it('never hides a failed turn behind a short turn_count', () => {
-    expect(turnTicks(call({ turn_count: 1, failed_turn_idx: [1, 2] }))).toEqual([true, true]);
+    const one = { idx: 1, failed_leg: 'llm', failed_stage: 'ttfb' };
+    const two = { idx: 2, failed_leg: 'tts', failed_stage: null };
+    expect(turnTicks(call({ turn_count: 1, failed_turns: [one, two] }))).toEqual([one, two]);
+  });
+});
+
+describe('failedTickTip — the failed tick names its failure through the glossary', () => {
+  it('says the turn and the failure chip, with the stored pair beside it', () => {
+    const chip = failureChip('llm', 'idle');
+    expect(failedTickTip({ idx: 3, failed_leg: 'llm', failed_stage: 'idle' })).toBe(
+      `turn 3 — ${chip?.name ?? ''} (llm · idle)`,
+    );
+  });
+
+  it('reads a null stage as a provider error', () => {
+    expect(failedTickTip({ idx: 1, failed_leg: 'tts', failed_stage: null })).toBe(
+      `turn 1 — ${failureChip('tts', null)?.name ?? ''} (tts)`,
+    );
+  });
+
+  it('keeps the ⚠ for a value outside the contract', () => {
+    expect(failedTickTip({ idx: 2, failed_leg: 'llm', failed_stage: 'brand_new' })).toContain(
+      `⚠ ${UNKNOWN_VOCABULARY_TITLE}`,
+    );
+    expect(failedTickTip({ idx: 2, failed_leg: 'llm', failed_stage: 'brand_new' })).toContain('brand_new');
   });
 });
 
@@ -265,7 +293,7 @@ describe('scopeHeading', () => {
         },
         33,
       ),
-    ).toBe('33 calls from Tue 1 Sep to Thu 10 Sep');
+    ).toBe('33 calls from 01-09-2026 to 10-09-2026');
   });
 
   it('says a search is all time, whatever the window says', () => {
@@ -298,7 +326,7 @@ describe('windowPhrase', () => {
       preset: 'custom' as const,
       spec: '2026-09-01',
     };
-    expect(windowPhrase(custom)).toBe('from Tue 1 Sep to Thu 10 Sep');
-    expect(windowPhrase({ ...custom, until: null })).toBe('since Tue 1 Sep');
+    expect(windowPhrase(custom)).toBe('from 01-09-2026 to 10-09-2026');
+    expect(windowPhrase({ ...custom, until: null })).toBe('since 01-09-2026');
   });
 });

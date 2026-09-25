@@ -129,8 +129,9 @@ describe('the account footer in the shell (ADR 0007 decision 6)', () => {
   // both of its endings, and the rule that it is muted and never accented.
   it('draws both endings of the line, with the reason for the missing one', () => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(layout())?.[0] ?? '';
-    expect(footer).toContain('console · ');
-    expect(footer).toContain("account ?? 'no account'");
+    expect(footer).toContain('console ·');
+    expect(footer).toContain('account ?? (');
+    expect(footer).toContain('no account');
     expect(footer).toContain('did not come through the reverse proxy');
   });
 

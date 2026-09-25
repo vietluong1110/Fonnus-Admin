@@ -15,8 +15,9 @@
  * This module is pure: no Next.js, no React, no database.
  */
 import { formatNumber } from '@/calls';
-import type { HolderKind, TrailVerdict, TrailVerdictKind } from '@/intervals';
+import { HOLDER_KINDS, type HolderKind, type TrailVerdict, type TrailVerdictKind } from '@/intervals';
 import type { BadgeTone } from '@/ui/badge';
+import { holderTerm, type Term } from '@/ui/glossary';
 
 /** One interval as the lane draws it — the facts a coloured box can carry. */
 export interface LaneSegment {
@@ -72,6 +73,67 @@ export function segmentStyle(
     case 'deaf':
       return { background: hatch('var(--chart-3)'), border: null };
   }
+}
+
+/** One swatch of the lane's legend: a holder kind the call actually has. */
+export interface LegendSwatch {
+  kind: HolderKind;
+  term: Term;
+  style: { background: string; border: string | null };
+}
+
+/**
+ * The legend under the two lanes: one swatch per holder kind present on this
+ * call, in `HOLDER_KINDS` order and labelled by the glossary, plus whether the
+ * hatch needs its key — only a `waiting` or `deaf` segment wears one. A kind
+ * the call never had is not listed: the legend explains this call's colours.
+ */
+export function laneLegend(segments: readonly { kind: HolderKind }[]): {
+  swatches: LegendSwatch[];
+  hatch: boolean;
+} {
+  const present = new Set(segments.map((segment) => segment.kind));
+  const swatches = HOLDER_KINDS.filter((kind) => present.has(kind)).map((kind) => ({
+    kind,
+    term: holderTerm({ kind, label: kind, turnIdx: null }),
+    style: segmentStyle(kind, false),
+  }));
+  return { swatches, hatch: present.has('waiting') || present.has('deaf') };
+}
+
+/**
+ * The ground of one row of the Intervals table, by side: the bot's kinds on
+ * the card ground, the caller on a faint wash of its own chart voice, and the
+ * two kinds nobody spoke in on the page ground.
+ */
+export function rowTint(kind: HolderKind): string {
+  switch (kind) {
+    case 'greeting':
+    case 'canned':
+    case 'waiting':
+    case 'reply':
+      return 'var(--surface-card)';
+    case 'caller':
+      return 'color-mix(in srgb, var(--chart-2) 10%, transparent)';
+    case 'silence':
+    case 'deaf':
+      return 'var(--surface-page)';
+  }
+}
+
+/**
+ * The sound-instant line as a note under "What was heard", or null: it is a
+ * finding only when the caller's line carried sound and the recogniser
+ * recognised nothing in the interval, or when the sound fell while the feed was
+ * muted. Sound behind a recognised text is the text itself, said once.
+ */
+export function heardNote(
+  interval: { energyMs: readonly number[]; unheard: boolean; finals: readonly unknown[]; overtaken: readonly unknown[] },
+  callerLine: string,
+): string | null {
+  if (interval.energyMs.length === 0) return null;
+  const recognised = interval.finals.length > 0 || interval.overtaken.length > 0;
+  return recognised && !interval.unheard ? null : callerLine;
 }
 
 /** What a segment fades to past the trail's hole: shown, never hidden (§8 rule 7). */

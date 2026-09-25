@@ -26,6 +26,7 @@ export default function Stat({
   size = 'md',
   hint,
   caveat,
+  note,
 }: {
   label: string;
   value: string;
@@ -37,6 +38,8 @@ export default function Stat({
   hint?: string;
   /** What the reader must see beside the figure every time. */
   caveat?: string;
+  /** A caveat word on the figure's own line ("floor", "not finalized"), muted. */
+  note?: string | null;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -53,6 +56,7 @@ export default function Stat({
         {unit === undefined ? null : (
           <span className="font-num text-[length:var(--size-body-sm)] text-text-muted">{unit}</span>
         )}
+        {note === undefined || note === null ? null : <Caveat as="span">{note}</Caveat>}
       </div>
       {delta === undefined ? null : (
         <div className={`font-num text-[length:var(--size-ui)] tabular-nums ${DELTA_TONE[deltaTone]}`}>

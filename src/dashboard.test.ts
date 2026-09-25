@@ -5,6 +5,7 @@ import {
   MAX_WINDOW_DAYS,
   aggregate,
   bucketKey,
+  configuredLlmOf,
   dayKey,
   dayLabel,
   differingKeys,
@@ -13,8 +14,8 @@ import {
   parseSince,
   parseWindow,
   percentiles,
-  snapshotKeys,
   snapshotValue,
+  voiceIdOf,
   weekKey,
   windowBuckets,
 } from './dashboard';
@@ -108,8 +109,8 @@ describe('parseSince — copied from ../Fonnus/tools/report-calls.ts', () => {
 
 describe('dayLabel', () => {
   it('writes a day key the way the charts label it', () => {
-    expect(dayLabel('2026-09-05')).toBe('5/9');
-    expect(dayLabel('2026-12-31')).toBe('31/12');
+    expect(dayLabel('2026-09-05')).toBe('05-09');
+    expect(dayLabel('2026-12-31')).toBe('31-12');
   });
 });
 
@@ -267,6 +268,25 @@ describe('grouping', () => {
     expect(groupKey(call(), turn({ llm_model: null }), 'llm_model')).toBe('unknown');
   });
 
+  it('groups by the voice key of the call\'s own TTS vendor', () => {
+    const snapshot = (extra: Record<string, unknown>) => call({ config_snapshot: extra });
+    expect(
+      groupKey(snapshot({ TTS_PROVIDER: 'cartesia', CARTESIA_VOICE_ID: 'c-1', ELEVENLABS_VOICE_ID: 'e-1' }), turn(), 'voice'),
+    ).toBe('c-1');
+    expect(
+      groupKey(snapshot({ TTS_PROVIDER: 'elevenlabs', CARTESIA_VOICE_ID: 'c-1', ELEVENLABS_VOICE_ID: 'e-1' }), turn(), 'voice'),
+    ).toBe('e-1');
+    // The vendor's own key missing is no answer, never the other vendor's id.
+    expect(groupKey(snapshot({ TTS_PROVIDER: 'cartesia', ELEVENLABS_VOICE_ID: 'e-1' }), turn(), 'voice')).toBe(
+      'unknown',
+    );
+    // No known vendor: whichever of the two is present (docs/upstream.md §Overview).
+    expect(groupKey(snapshot({ ELEVENLABS_VOICE_ID: 'e-1' }), turn(), 'voice')).toBe('e-1');
+    expect(groupKey(snapshot({ TTS_PROVIDER: 'fake' }), turn(), 'voice')).toBe('unknown');
+    expect(groupKey(call({ config_snapshot: null }), turn(), 'voice')).toBe('unknown');
+    expect(parseGroup('voice')).toBe('voice');
+  });
+
   it('reads own keys only, so a prototype property is no group', () => {
     // The key comes from the query string: `__proto__` would otherwise fold
     // every call into one group and `constructor` into a function's group.
@@ -383,13 +403,53 @@ describe('grouping', () => {
       groupKey(call({ config_snapshot: { BARGE_IN_ENABLED: false } }), turn(), 'key:BARGE_IN_ENABLED'),
     ).toBe('false');
   });
+});
 
-  it('lists the snapshot keys the window carries, sorted', () => {
-    expect(snapshotKeys([call(), call({ config_snapshot: null })])).toEqual([
-      'FONNUS_BUILD_SHA',
-      'FONNUS_ENV',
-      'TTS_FLUSH_MS',
-    ]);
+describe('voiceIdOf — the one voice rule of the Overview and the call detail', () => {
+  it("reads the key of the snapshot's own TTS_PROVIDER vendor", () => {
+    expect(voiceIdOf({ TTS_PROVIDER: 'cartesia', CARTESIA_VOICE_ID: 'c-1' })).toEqual({
+      key: 'CARTESIA_VOICE_ID',
+      id: 'c-1',
+    });
+    expect(voiceIdOf({ TTS_PROVIDER: 'elevenlabs', ELEVENLABS_VOICE_ID: 'e-1' })).toEqual({
+      key: 'ELEVENLABS_VOICE_ID',
+      id: 'e-1',
+    });
+  });
+
+  it('takes whichever voice key is present when no known vendor is named', () => {
+    expect(voiceIdOf({ ELEVENLABS_VOICE_ID: 'e-1' })).toEqual({ key: 'ELEVENLABS_VOICE_ID', id: 'e-1' });
+    expect(voiceIdOf({ TTS_PROVIDER: 'fake', CARTESIA_VOICE_ID: 'c-1' })).toEqual({
+      key: 'CARTESIA_VOICE_ID',
+      id: 'c-1',
+    });
+    expect(voiceIdOf({ TTS_PROVIDER: 'fake' })).toBeNull();
+  });
+
+  it("never falls back to another vendor's key when the named vendor's key is absent", () => {
+    expect(voiceIdOf({ TTS_PROVIDER: 'cartesia', ELEVENLABS_VOICE_ID: 'e-1' })).toBeNull();
+    expect(voiceIdOf({ TTS_PROVIDER: 'elevenlabs', CARTESIA_VOICE_ID: 'c-1' })).toBeNull();
+  });
+
+  it('reads own keys only and non-empty string ids only', () => {
+    // A vendor named after a prototype property is no known vendor, and an
+    // inherited property is no key.
+    expect(voiceIdOf({ TTS_PROVIDER: 'constructor' })).toBeNull();
+    expect(voiceIdOf({ TTS_PROVIDER: '__proto__' })).toBeNull();
+    expect(voiceIdOf(Object.create({ CARTESIA_VOICE_ID: 'inherited' }) as Record<string, unknown>)).toBeNull();
+    expect(voiceIdOf({ TTS_PROVIDER: 'cartesia', CARTESIA_VOICE_ID: 7 })).toBeNull();
+    expect(voiceIdOf({ TTS_PROVIDER: 'cartesia', CARTESIA_VOICE_ID: '' })).toBeNull();
+  });
+});
+
+describe('configuredLlmOf', () => {
+  it("reads the snapshot's own OPENROUTER_MODEL as a non-empty string", () => {
+    expect(configuredLlmOf({ OPENROUTER_MODEL: 'openai/gpt-oss-120b' })).toBe('openai/gpt-oss-120b');
+    expect(configuredLlmOf({ OPENROUTER_MODEL: '' })).toBeNull();
+    expect(configuredLlmOf({ OPENROUTER_MODEL: 7 })).toBeNull();
+    expect(configuredLlmOf({})).toBeNull();
+    expect(configuredLlmOf(null)).toBeNull();
+    expect(configuredLlmOf(Object.create({ OPENROUTER_MODEL: 'inherited' }))).toBeNull();
   });
 });
 
@@ -508,12 +568,12 @@ describe('aggregate', () => {
       '2026-09-06',
       '2026-09-07',
     ]);
-    expect(d.latencyByBucket.map((bucket) => bucket.label)).toEqual(['5/9', '6/9', '7/9']);
+    expect(d.latencyByBucket.map((bucket) => bucket.label)).toEqual(['05-09', '06-09', '07-09']);
     expect(d.latencyByBucket[0]?.turns).toBe(2);
     expect(d.latencyByBucket[0]?.pipelineP95).toBe(800);
     expect(d.latencyByBucket[1]).toEqual({
       key: '2026-09-06',
-      label: '6/9',
+      label: '06-09',
       partial: false,
       turns: 0,
       perceivedP95: null,
@@ -591,9 +651,9 @@ describe('aggregate', () => {
     // chart, a bucket with no call is a zero: nobody rang is a measurement.
     const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     expect(d.callsByBucket).toEqual([
-      { key: '2026-09-05', label: '5/9', partial: false, consented: 1, notConsented: 0 },
-      { key: '2026-09-06', label: '6/9', partial: false, consented: 0, notConsented: 1 },
-      { key: '2026-09-07', label: '7/9', partial: false, consented: 1, notConsented: 0 },
+      { key: '2026-09-05', label: '05-09', partial: false, consented: 1, notConsented: 0 },
+      { key: '2026-09-06', label: '06-09', partial: false, consented: 0, notConsented: 1 },
+      { key: '2026-09-07', label: '07-09', partial: false, consented: 1, notConsented: 0 },
     ]);
   });
 
@@ -618,8 +678,8 @@ describe('aggregate', () => {
     );
     expect(d.callsByBucket).toHaveLength(7);
     expect(d.callsByBucket.map((bucket) => bucket.consented)).toEqual([0, 0, 1, 0, 1, 0, 0]);
-    expect(d.callsByBucket[0]?.label).toBe('1/9');
-    expect(d.callsByBucket[6]?.label).toBe('7/9');
+    expect(d.callsByBucket[0]?.label).toBe('01-09');
+    expect(d.callsByBucket[6]?.label).toBe('07-09');
   });
 
   it('draws a 24h window as hours in the clinic zone', () => {
@@ -728,7 +788,7 @@ describe('aggregate', () => {
     // 10 June 2026 is a Wednesday: its week starts Monday the 8th. The last
     // bucket is the week of Monday 7 September, the one `until` ends inside.
     expect(d.callsByBucket[0]?.key).toBe('2026-06-08');
-    expect(d.callsByBucket[0]?.label).toBe('8/6');
+    expect(d.callsByBucket[0]?.label).toBe('08-06');
     expect(d.callsByBucket.at(-1)?.key).toBe('2026-09-07');
     expect(d.callsByBucket).toHaveLength(14);
     // The call on 5 September (a Saturday) lands in the week of Monday the 31st.
@@ -750,8 +810,8 @@ describe('aggregate', () => {
       NOW,
     );
     expect(late.callsByBucket).toEqual([
-      { key: '2026-09-04', label: '4/9', partial: false, consented: 0, notConsented: 0 },
-      { key: '2026-09-05', label: '5/9', partial: false, consented: 1, notConsented: 0 },
+      { key: '2026-09-04', label: '04-09', partial: false, consented: 0, notConsented: 0 },
+      { key: '2026-09-05', label: '05-09', partial: false, consented: 1, notConsented: 0 },
     ]);
   });
 

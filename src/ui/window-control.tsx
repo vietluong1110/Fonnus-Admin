@@ -13,7 +13,7 @@
  * clicking anywhere else closes the panel; a half-typed range is dropped, not
  * left open to swallow the next keystroke.
  *
- * The fields are `dd / mm / yyyy`, typed or picked from the calendar, whatever
+ * The fields are `dd-mm-yyyy`, typed or picked from the calendar, whatever
  * the browser's locale — a native date input prints its own order and cannot
  * be told otherwise. They open filled: a custom window shows its own days, and
  * any other opens on the current month with the first day blank and today as
@@ -26,20 +26,14 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type KeyboardEvent, type SyntheticEvent } from 'react';
-import { CALL_TIME_ZONE } from '@/calls';
+import { formatDayShort } from '@/calls';
 import { WINDOW_PRESETS, dayParts, partsIso, windowHref, type DayParts, type Window } from '@/window';
 import { PILL, PILL_OFF, PILL_ON } from './chip';
 import { CONTROL } from './input';
+import Tooltip from './tooltip';
 
 /** Inert, not hidden: the operator sees the window the search is ignoring. */
 const DISABLED = 'border-border-hairline bg-surface-card font-medium text-text-muted opacity-60';
-
-/** The pill's own short form of a day — `12 Sep`, in the clinic's zone. */
-const SHORT_DAY = new Intl.DateTimeFormat('en-GB', {
-  timeZone: CALL_TIME_ZONE,
-  day: 'numeric',
-  month: 'short',
-});
 
 /**
  * What the Custom pill says. The panel is closed on load, so the range has to
@@ -48,9 +42,11 @@ const SHORT_DAY = new Intl.DateTimeFormat('en-GB', {
  */
 function customLabel(window: Window): string {
   if (window.preset !== 'custom') return 'Custom';
-  const since = SHORT_DAY.format(window.since);
+  // `formatDayShort`: the pill's own short form of a day, `12-09`, in the
+  // clinic's zone.
+  const since = formatDayShort(window.since);
   if (window.until === null) return `since ${since}`;
-  return `${since} – ${SHORT_DAY.format(lastDay(window.until))}`;
+  return `${since} – ${formatDayShort(lastDay(window.until))}`;
 }
 
 /** What the fields open with — see the header for the rule. */
@@ -102,15 +98,22 @@ export default function WindowControl({
   }, [open]);
 
   if (disabled) {
-    return (
-      <div className="flex items-center gap-2" title={disabledNote}>
+    const pills = (
+      <>
         {WINDOW_PRESETS.map((preset) => (
           <span key={preset} className={`${PILL} ${DISABLED}`}>
             {preset}
           </span>
         ))}
         <span className={`${PILL} ${DISABLED}`}>Custom</span>
-      </div>
+      </>
+    );
+    return disabledNote === undefined ? (
+      <div className="flex items-center gap-2">{pills}</div>
+    ) : (
+      <Tooltip tip={disabledNote} className="items-center gap-2">
+        {pills}
+      </Tooltip>
     );
   }
 
@@ -202,7 +205,7 @@ function RangePanel({
             the panel's width (`src/window-control.test.ts`). */}
         <DayField
           label="To"
-          title="last day included"
+          hint="last day included"
           value={range.to}
           onChange={(to) => { setRange((was) => ({ ...was, to })); }}
         />
@@ -231,19 +234,20 @@ const SEGMENTS = [
 ] as const;
 
 /**
- * One day as `dd / mm / yyyy`: three digit fields that advance on their own
+ * One day as `dd-mm-yyyy`: three digit fields that advance on their own
  * once full and step back on Backspace from an empty one, plus a calendar
  * button that opens the browser's own picker and writes its choice back.
  */
 function DayField({
   label,
-  title,
+  hint,
   value,
   onChange,
   autoFocusBlank = false,
 }: {
   label: string;
-  title?: string;
+  /** A fact about the field, as the label's tooltip — never prose in the panel. */
+  hint?: string;
   value: DayParts;
   onChange: (next: DayParts) => void;
   /** Focus the first blank part on mount — the one the operator came to fill. */
@@ -279,9 +283,13 @@ function DayField({
 
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[length:var(--size-eyebrow)] text-text-muted" title={title}>
-        {label}
-      </span>
+      {hint === undefined ? (
+        <span className="text-[length:var(--size-eyebrow)] text-text-muted">{label}</span>
+      ) : (
+        <Tooltip tip={hint} className="self-start">
+          <span className="text-[length:var(--size-eyebrow)] text-text-muted">{label}</span>
+        </Tooltip>
+      )}
       <div
         role="group"
         aria-label={label}
@@ -289,7 +297,7 @@ function DayField({
       >
         {SEGMENTS.map((segment, index) => (
           <span key={segment.key} className="flex items-center gap-0.5">
-            {index === 0 ? null : <span className="text-text-muted">/</span>}
+            {index === 0 ? null : <span className="text-text-muted">-</span>}
             <input
               ref={(element) => {
                 inputs.current[index] = element;

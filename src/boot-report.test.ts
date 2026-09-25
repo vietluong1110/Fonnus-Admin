@@ -289,12 +289,18 @@ describe('voiceFact — the call detail’s effective voice (D6, D8)', () => {
     expect(voiceFact({ TTS_PROVIDER: 'elevenlabs', CARTESIA_VOICE_ID: 'linh' }, REPORT)).toBeNull();
   });
 
-  it('says nothing without a snapshot, a TTS_PROVIDER, a known vendor or a string id', () => {
+  it('says nothing without a snapshot or a non-empty string id', () => {
     expect(voiceFact(null, REPORT)).toBeNull();
-    expect(voiceFact({ CARTESIA_VOICE_ID: 'linh' }, REPORT)).toBeNull();
-    expect(voiceFact({ TTS_PROVIDER: 'fake', CARTESIA_VOICE_ID: 'linh' }, REPORT)).toBeNull();
+    expect(voiceFact({ TTS_PROVIDER: 'fake' }, REPORT)).toBeNull();
     expect(voiceFact({ TTS_PROVIDER: 'cartesia', CARTESIA_VOICE_ID: 7 }, REPORT)).toBeNull();
     expect(voiceFact({ TTS_PROVIDER: 'cartesia', CARTESIA_VOICE_ID: '' }, REPORT)).toBeNull();
+  });
+
+  it('reads the present voice key when the snapshot names no known vendor, as the Overview does', () => {
+    expect(voiceFact({ CARTESIA_VOICE_ID: 'linh' }, REPORT)?.id).toBe('linh');
+    expect(voiceFact({ TTS_PROVIDER: 'fake', ELEVENLABS_VOICE_ID: 'ngoc' }, REPORT)?.key).toBe(
+      'ELEVENLABS_VOICE_ID',
+    );
   });
 
   it('gives the bare id, and no caveat, when no report is there', () => {

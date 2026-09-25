@@ -26,7 +26,7 @@ function row(over: Partial<CallScopeRow> & { id: string }): CallScopeRow {
     artifact_state: null,
     artifact_key_prefix: null,
     outcome: 'granted',
-    failed_turn_idx: [],
+    failed_turns: [],
     ...over,
   };
 }
@@ -45,13 +45,17 @@ const ROWS: CallScopeRow[] = [
   row({ id: 'a', artifact_state: 'archived', artifact_key_prefix: 'calls/a' }),
   row({
     id: 'b',
-    failed_turn_idx: [2],
+    failed_turns: [{ idx: 2, failed_leg: 'llm', failed_stage: 'idle' }],
     artifact_state: 'archived',
     artifact_key_prefix: 'calls/b',
   }),
   row({ id: 'c', outcome: null, end_reason: null }),
   row({ id: 'd', outcome: 'hung_up_before_consent', turn_count: 0 }),
-  row({ id: 'e', end_reason: 'max_duration', failed_turn_idx: [0, 3] }),
+  row({ id: 'e', end_reason: 'max_duration', failed_turns: [
+      { idx: 0, failed_leg: 'tts', failed_stage: null },
+      { idx: 3, failed_leg: 'llm', failed_stage: 'total' },
+    ],
+  }),
   row({ id: 'f' }),
 ];
 

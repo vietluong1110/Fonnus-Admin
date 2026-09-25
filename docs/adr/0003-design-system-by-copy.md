@@ -34,8 +34,9 @@ publishes no package; the only way to consume it is to copy files, and this ADR 
    (lockup, nav, active item in terracotta with cream text), a content column of
    `max-width: 1180px` on the page surface, icon-rail collapse at ≤ 900 px. The phone-width
    bottom tab bar is not copied — one operator on a laptop.
-6. **Recharts stays** for charts (ADR 0001); the Web-UI has none. Chart series read
-   `--chart-1/2/3` at runtime; no hex is written in a component.
+6. **Charts are hand-drawn from tokens** (`VBars`, `HBar`); no chart library (amended by
+   ADR 0014 decision 5, which removed Recharts). Chart series read `--chart-1/2/3` at
+   runtime; no hex is written in a component.
 7. **Icons** are the Web-UI's own inline-SVG glyphs (`visual-language.md`: one terracotta
    accent per glyph, no stock set); only the glyphs a screen uses are copied.
 

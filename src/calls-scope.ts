@@ -101,7 +101,7 @@ export function parseChips(params: Record<string, string | string[] | undefined>
 export function chipHolds(row: CallScopeRow, chip: Chip): boolean {
   switch (chip) {
     case 'failed_turn':
-      return row.failed_turn_idx.length > 0;
+      return row.failed_turns.length > 0;
     case 'not_finalized':
       return row.outcome === null;
     case 'unconsented':

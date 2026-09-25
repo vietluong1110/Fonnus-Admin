@@ -13,7 +13,12 @@
  * (trap 8).
  */
 
-import { RETRACTION_LABEL, STANDING_CURRENT, type AnnotationHistoryRow } from '@/annotations';
+import {
+  RETRACTION_LABEL,
+  STANDING_CURRENT,
+  type AnnotationCellItem,
+  type AnnotationHistoryRow,
+} from '@/annotations';
 import { formatWhen } from '@/calls';
 import {
   INTERVALS_CARD_TITLE,
@@ -35,15 +40,25 @@ import EmptyState from '@/ui/empty-state';
 import Vocabulary from '@/ui/vocabulary';
 import IntervalRows, { type IntervalRow } from './interval-rows';
 
+/** One current annotation and the intervals it lands on (contract §8: every one it overlaps). */
+export interface CurrentAnnotation {
+  item: AnnotationCellItem;
+  /** `from–to` of each overlapped interval, in seconds, as the table prints them. */
+  overlaps: string[];
+}
+
 export default function IntervalsCard({
   verdict,
   rows,
+  current,
   history,
   cannedSilent,
   anyUnheard,
 }: {
   verdict: TrailVerdict;
   rows: IntervalRow[];
+  /** The current annotations, texts already gated by `intervalCells`. */
+  current: CurrentAnnotation[];
   /** Every `call_annotation` row of the call, current and history (PLAN row A7). */
   history: AnnotationHistoryRow[];
   /** A canned line whose synthesis produced no audio — ISSUES L10-260917-1. */
@@ -95,11 +110,12 @@ export default function IntervalsCard({
       )}
 
       {/*
-       * The history on demand, never inline (`console-call-view.md`
-       * §Annotations): the table shows the current rows, and who corrected or
-       * withdrew which row is what an investigator opens this for. Rendered
-       * only when the call has a row at all — and outside the verdict branch,
-       * so a call whose trail is absent still shows what a person wrote.
+       * The annotations on demand, under the table (`console-call-view.md`
+       * §Annotations): the current rows with the intervals they land on, then
+       * the whole history — who corrected or withdrew which row is what an
+       * investigator opens this for. Rendered only when the call has a row at
+       * all, and outside the verdict branch, so a call whose trail is absent
+       * still shows what a person wrote.
        */}
       {history.length === 0 ? null : (
         <details className="text-[length:var(--size-ui)]">
@@ -109,7 +125,29 @@ export default function IntervalsCard({
               history.filter((row) => row.standing === STANDING_CURRENT).length,
             )}
           </summary>
-          <div className="mt-2 flex flex-col gap-3">
+          <Caveat>{INTERVAL_CAVEATS.annotation}</Caveat>
+          {current.length === 0 ? null : (
+            <div className="mt-2 flex flex-col gap-3">
+              {current.map(({ item, overlaps }) => (
+                <div key={item.id}>
+                  <div className="flex flex-wrap items-baseline gap-1.5">
+                    <span className="font-num tabular-nums">#{item.id}</span>
+                    <Vocabulary value={item.label} known={item.labelKnown} tone="info" />
+                    <span className="font-num tabular-nums">
+                      {item.from}–{item.to} s
+                    </span>
+                    <span className="text-text-muted">{item.author}</span>
+                  </div>
+                  <div>{item.text}</div>
+                  <Caveat>
+                    on {overlaps.length === 1 ? 'interval' : 'intervals'}{' '}
+                    {overlaps.map((span) => `${span} s`).join(', ')}
+                  </Caveat>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 flex flex-col gap-3 border-t border-border-hairline pt-3">
             {history.map((row) => (
               <div key={row.id}>
                 <div className="flex flex-wrap items-baseline gap-1.5">

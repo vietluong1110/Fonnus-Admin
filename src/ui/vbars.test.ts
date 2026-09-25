@@ -5,8 +5,10 @@
  * component cannot measure the box it will be rendered into.
  */
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { hourLabelAt, labelEvery, labelShown, valuesShown } from './vbars';
+import VBars, { hourLabelAt, labelEvery, labelShown, valuesShown } from './vbars';
 import type { VBar } from './vbars';
 
 describe('labelEvery', () => {
@@ -46,7 +48,7 @@ describe('valuesShown', () => {
     expect(valuesShown(16)).toBe(true);
   });
 
-  it('drops them past 16 columns, where the title tooltip carries them', () => {
+  it('drops them past 16 columns, where the column tooltip carries them', () => {
     expect(valuesShown(17)).toBe(false);
     expect(valuesShown(24)).toBe(false);
     expect(valuesShown(30)).toBe(false);
@@ -77,5 +79,48 @@ describe('hourLabelAt', () => {
       1, 7, 13, 19,
     ]);
     expect(rolling.filter(hourLabelAt).map((b) => b.label)).toEqual(['18', '00', '06', '12']);
+  });
+});
+
+describe('VBars markup', () => {
+  const html = renderToStaticMarkup(
+    createElement(VBars, {
+      bars: [
+        { label: 'Mon', value: 3 },
+        { label: 'Tue', value: null },
+      ],
+      scaleMax: 4,
+      valueLabel: (value: number) => `${String(value)} calls`,
+    }),
+  );
+
+  it('stands the written value on top of its bar, not in a row under the plot', () => {
+    // The value sits at the bar's own height (3 of 4 = 75 %) inside the bar's
+    // cell, after the bar in source order so it paints above it.
+    const barAt = html.indexOf('height:75%');
+    const valueAt = html.indexOf('>3 calls<');
+    expect(barAt).toBeGreaterThan(-1);
+    expect(valueAt).toBeGreaterThan(barAt);
+    expect(html).toMatch(/bottom:75%[^>]*>3 calls</);
+  });
+
+  it('carries `label: value` in a drawn tooltip, never a `title`', () => {
+    expect(html).not.toContain('title=');
+    expect(html).toContain('role="tooltip"');
+    expect(html).toContain('Mon: 3 calls');
+    expect(html).toContain('Tue: not measured');
+  });
+});
+
+describe('VBars tooltip alignment', () => {
+  it('ends the tooltips of the right half at their column, so none runs off the page', () => {
+    const html = renderToStaticMarkup(
+      createElement(VBars, {
+        bars: ['a', 'b', 'c', 'd'].map((label) => ({ label, value: 1 })),
+        scaleMax: 1,
+      }),
+    );
+    const aligns = [...html.matchAll(/data-tip-align="(\w+)"/g)].map((m) => m[1]);
+    expect(aligns).toEqual(['center', 'center', 'end', 'end']);
   });
 });

@@ -33,12 +33,15 @@ import {
 } from '@/calls';
 import { callCount, callDurationMs, formatDayBand, formatTimeOfDay, type DayBand } from '@/calls-stats';
 import type { Config } from '@/config';
+import { STORED_COST_TIP } from '@/cost';
 import type { CallScopeRow } from '@/queries/calls';
 import CallStateBlock from '@/ui/call-state';
 import HBar from '@/ui/hbar';
+import { termFor } from '@/ui/glossary';
 import Icon from '@/ui/icon';
 import LinkRow from '@/ui/link-row';
 import { Table, TableScroll, Td, Th } from '@/ui/table';
+import Tooltip from '@/ui/tooltip';
 import Vocabulary from '@/ui/vocabulary';
 import TickStrip from './tick-strip';
 
@@ -46,11 +49,26 @@ import TickStrip from './tick-strip';
 const COLUMNS = 8;
 
 /**
+ * Where a row's tooltips open (ADR 0014 decision 2). The table's scroll
+ * wrapper clips on both axes, and above the first two rows there is only the
+ * header and a band heading — too little for a tooltip that wraps, such as a
+ * tick strip naming several failures — so those rows open downward, but only
+ * over at least two rows: in a table of one or two rows there is no room
+ * below either, and a one-line tooltip still fits above.
+ */
+function tipSideOf(position: number, rows: number): TipSide {
+  return position < 2 && rows - position - 1 >= 2 ? 'bottom' : 'top';
+}
+
+export type TipSide = 'top' | 'bottom';
+
+/**
  * The tooltip behind the `Rec` cell: the state's shared wording
  * (`RECORDING_REASON`, the same words the detail's recording block titles
  * itself with) plus the one clause the list has room for. A withheld recording
  * on a call with no consent row is trap 2 — the call is not finalized, so no
- * outcome is on record yet — and is never called a refusal.
+ * outcome is on record yet — and is never called a refusal. A consent outcome
+ * is said by its glossary name with the stored value beside it (ADR 0013).
  */
 function recReason(call: CallScopeRow, config: Config): string {
   const access = recordingAccess(call, config);
@@ -63,7 +81,8 @@ function recReason(call: CallScopeRow, config: Config): string {
         const state = CALL_STATE_LABEL[callState(call.ended_at, call.outcome)] ?? '';
         return `${head} — no consent outcome on record yet (the call is ${state})`;
       }
-      return `${head} — consent: ${call.outcome}`;
+      const term = termFor('consentOutcome', call.outcome);
+      return `${head} — consent: ${term === null ? call.outcome : `${term.name} (${term.code})`}`;
     }
     case 'playable':
       return `${head} — open the call to play it`;
@@ -83,11 +102,11 @@ function Ending({ call }: { call: CallScopeRow }) {
   const { outcome, end_reason: endReason } = call;
 
   if (isOrdinaryEnding(outcome, endReason)) {
-    // The pipeline's own word, not a translation of it (CONTEXT.md §Language);
-    // the gloss is the column header's tooltip, and this cell's.
+    // Quiet: the glossary's name with the pipeline's word beside it, no badge
+    // (ADR 0013); the column header's tooltip says why it is the ordinary one.
     return (
-      <span className="font-num text-text-muted" title="consent granted, then the caller hung up">
-        caller_hangup
+      <span className="text-text-muted">
+        <Vocabulary value={endReason} known of="endReason" />
       </span>
     );
   }
@@ -104,6 +123,7 @@ function Ending({ call }: { call: CallScopeRow }) {
           value={outcome}
           known={isKnownConsentOutcome(outcome)}
           tone={consentOutcomeTone(outcome)}
+          of="consentOutcome"
         />
       )}
       {endReason === null || endReason === 'caller_hangup' ? null : (
@@ -111,6 +131,7 @@ function Ending({ call }: { call: CallScopeRow }) {
           value={endReason}
           known={isKnownEndReason(endReason)}
           tone={endReasonTone(endReason)}
+          of="endReason"
         />
       )}
       {endReason === null && state === 'finalized' ? (
@@ -141,23 +162,31 @@ function Duration({ call, scaleMax }: { call: CallScopeRow; scaleMax: number }) 
   );
 }
 
-/** The bucket signal, and the reason when there is none (never a broken link). */
-function Rec({ call, config }: { call: CallScopeRow; config: Config }) {
+/**
+ * The bucket signal, and the reason when there is none (never a broken link).
+ * The reason is the cell's drawn tooltip, ending at the cell's right edge (a
+ * right-aligned column), and its screen-reader text.
+ */
+function Rec({ call, config, tipSide }: { call: CallScopeRow; config: Config; tipSide: TipSide }) {
   const reason = recReason(call, config);
 
   if (!isFetchable(call.artifact_state, call.artifact_key_prefix)) {
     return (
-      <span className="text-text-muted" title={reason}>
-        —<span className="sr-only"> {reason}</span>
-      </span>
+      <Tooltip tip={reason} align="end" side={tipSide}>
+        <span className="text-text-muted">
+          —<span className="sr-only"> {reason}</span>
+        </span>
+      </Tooltip>
     );
   }
 
   return (
-    <span className="text-text-accent" title={reason}>
-      <Icon name="play" size={15} />
-      <span className="sr-only">{reason}</span>
-    </span>
+    <Tooltip tip={reason} align="end" side={tipSide}>
+      <span className="text-text-accent">
+        <Icon name="play" size={15} />
+        <span className="sr-only">{reason}</span>
+      </span>
+    </Tooltip>
   );
 }
 
@@ -170,6 +199,11 @@ export default function CallTable({
   config: Config;
   now: Date;
 }) {
+  // Each band's first row, counted over the whole table.
+  const firstRowOf = bands.map((_, index) =>
+    bands.slice(0, index).reduce((rows, band) => rows + band.rows.length, 0),
+  );
+  const rowCount = bands.reduce((rows, band) => rows + band.rows.length, 0);
   return (
     <TableScroll>
       <Table>
@@ -180,7 +214,7 @@ export default function CallTable({
             <Th>When</Th>
             {/* Trap 5: a null number may be the retention sweep's work. */}
             <Th hint="masked to the last four digits; “not on record” is a number the retention sweep cleared, or one never written">
-              Caller
+              Caller number
             </Th>
             <Th hint="the track is relative to the longest call of its day">Duration</Th>
             {/* Trap 1: rows written, not turns spoken. */}
@@ -194,8 +228,9 @@ export default function CallTable({
             <Th align="end" hint="the recording is in the bucket; open the call to play it">
               Rec
             </Th>
-            {/* Trap 3: the column keeps no trace of the unpriced legs. */}
-            <Th align="end" hint="a floor — a model with no price counts 0">
+            {/* Trap 3: the column keeps no trace of the unpriced legs. The
+                figure is the stored total_cost_vnd, so it says who computed it. */}
+            <Th align="end" hint={`a floor — a model with no price counts 0; ${STORED_COST_TIP}`}>
               Cost
             </Th>
             <Th>
@@ -204,7 +239,7 @@ export default function CallTable({
           </tr>
         </thead>
         <tbody>
-          {bands.map((band) => (
+          {bands.map((band, bandIndex) => (
             <Fragment key={band.day}>
               <tr>
                 <td colSpan={COLUMNS} className="pt-4 pb-2 first:pl-0 last:pr-0">
@@ -219,7 +254,8 @@ export default function CallTable({
                   </span>
                 </td>
               </tr>
-              {band.rows.map((call) => {
+              {band.rows.map((call, index) => {
+                const tipSide = tipSideOf((firstRowOf[bandIndex] ?? 0) + index, rowCount);
                 const cost = parseCostVnd(call.total_cost_vnd);
                 const masked = maskPhone(call.caller_phone_e164);
                 return (
@@ -227,13 +263,15 @@ export default function CallTable({
                   // the real anchor the keyboard and a middle click use.
                   <LinkRow key={call.id} href={`/calls/${call.id}`}>
                     <Td>
-                      <Link
-                        href={`/calls/${call.id}`}
-                        className="font-num text-text-link hover:underline"
-                        title={call.id}
-                      >
-                        {formatTimeOfDay(call.started_at)}
-                      </Link>
+                      {/* The link is the tooltip's trigger itself: one tab stop. */}
+                      <Tooltip tip={call.id} asChild>
+                        <Link
+                          href={`/calls/${call.id}`}
+                          className="font-num text-text-link hover:underline"
+                        >
+                          {formatTimeOfDay(call.started_at)}
+                        </Link>
+                      </Tooltip>
                     </Td>
                     <Td>
                       {masked === null ? (
@@ -246,19 +284,19 @@ export default function CallTable({
                       <Duration call={call} scaleMax={band.longestDurationMs} />
                     </Td>
                     <Td>
-                      <TickStrip call={call} />
+                      <TickStrip call={call} tipSide={tipSide} />
                     </Td>
                     <Td>
                       <Ending call={call} />
                     </Td>
                     <Td align="end">
-                      <Rec call={call} config={config} />
+                      <Rec call={call} config={config} tipSide={tipSide} />
                     </Td>
                     <Td num>
                       {cost === null ? (
-                        <span className="text-text-muted" title="no leg of this call could be priced">
-                          —
-                        </span>
+                        <Tooltip tip="no leg of this call could be priced" align="end" side={tipSide}>
+                          <span className="text-text-muted">—</span>
+                        </Tooltip>
                       ) : (
                         `≥ ${formatNumber(cost)} ₫`
                       )}

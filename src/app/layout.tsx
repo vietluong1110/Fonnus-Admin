@@ -5,7 +5,7 @@ import { Baloo_2, Be_Vietnam_Pro, IBM_Plex_Sans } from 'next/font/google';
 import Image from 'next/image';
 import { currentAccount } from '@/account';
 import { getConfig } from '@/config';
-import Caveat from '@/ui/caveat';
+import Caveat, { Hint } from '@/ui/caveat';
 import NavLink from '@/ui/nav-link';
 import './globals.css';
 
@@ -87,7 +87,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <div className="grid min-h-screen grid-cols-[216px_minmax(0,1fr)] bg-surface-page max-[900px]:grid-cols-[64px_minmax(0,1fr)]">
           <aside
             aria-label="Console"
-            className="sticky top-0 flex h-screen flex-col gap-[3px] overflow-hidden border-r border-border-hairline bg-surface-card px-[14px] pt-[22px] pb-[18px] max-[900px]:px-[10px] max-[900px]:pt-[18px] max-[900px]:pb-[14px]"
+            className="sticky top-0 z-10 flex h-screen flex-col gap-[3px] overflow-x-visible overflow-y-clip border-r border-border-hairline bg-surface-card px-[14px] pt-[22px] pb-[18px] max-[900px]:px-[10px] max-[900px]:pt-[18px] max-[900px]:pb-[14px]"
           >
             {/* The brand lockup (CONTEXT.md §Look and feel); viewBox 339.3 × 108.9.
                 On the icon rail the wordmark would shrink past reading size, so
@@ -118,15 +118,16 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                 first write module landed (ADR 0007 decision 6); "edits" does not
                 replace it, because decision 1 allows two inserts, not editing.
                 Hidden on the 64px rail, like every other piece of sidebar text. */}
-            <footer
-              className="mt-auto px-3 pt-4 text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted max-[900px]:hidden"
-              title={
-                account === undefined
-                  ? 'no account: this request did not come through the reverse proxy (local development or the tunnel)'
-                  : undefined
-              }
-            >
-              console · {account ?? 'no account'}
+            <footer className="mt-auto px-3 pt-4 text-[length:var(--size-eyebrow)] leading-[1.4] text-text-muted max-[900px]:hidden">
+              console ·{' '}
+              {account ?? (
+                <Hint
+                  hint="no account: this request did not come through the reverse proxy (local development or the tunnel)"
+                  align="start"
+                >
+                  no account
+                </Hint>
+              )}
             </footer>
           </aside>
 
