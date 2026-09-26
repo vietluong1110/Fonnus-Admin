@@ -106,11 +106,13 @@ function unpricedOf(
   stt: readonly (string | null)[],
   tts: readonly (string | null)[],
   llm: readonly (string | null)[],
+  router: readonly (string | null)[],
 ): string[] {
   const unpriced = new Set<string>();
   for (const model of stt) if (model !== null && priceRow(PRICES.stt, model) === undefined) unpriced.add(model);
   for (const model of tts) if (model !== null && priceRow(PRICES.tts, model) === undefined) unpriced.add(model);
   for (const model of llm) if (model !== null && priceRow(PRICES.llm, model) === undefined) unpriced.add(model);
+  for (const model of router) if (model !== null && priceRow(PRICES.router, model) === undefined) unpriced.add(model);
   return [...unpriced].sort();
 }
 
@@ -122,6 +124,10 @@ function unpricedOf(
  * `OPENROUTER_MODEL` (`configuredLlm`, from `config_snapshot`): an unconsented
  * call has no turn rows (trap 1), yet its stored total covers its LLM usage,
  * so an unpriced configured model still makes that total a floor.
+ *
+ * `configuredRouter` is the call's router model (`configuredRouterOf`): trap 3
+ * prices each shadow-router decision into the stored total too, and no column
+ * holds the router's tokens, so the configured model is the only one on record.
  */
 export function callCostView(
   call: {
@@ -133,6 +139,7 @@ export function callCostView(
   },
   turns: readonly TurnCostInput[],
   configuredLlm: string | null,
+  configuredRouter: string | null,
 ): {
   totalVnd: number | null;
   perMinuteVnd: number | null;
@@ -149,6 +156,7 @@ export function callCostView(
       [call.stt_model],
       [call.tts_model],
       [configuredLlm, ...turns.map((turn) => turn.llm_model)],
+      [configuredRouter],
     ),
   };
 }
@@ -157,13 +165,15 @@ export function callCostView(
  * The unpriced models a window's calls and turns ran on — the Overview cost
  * tooltip. Each call carries its configured `OPENROUTER_MODEL`
  * (`configured_llm`, from `config_snapshot`), for the same reason as
- * `callCostView`: a call with no turn rows still paid for its LLM.
+ * `callCostView`: a call with no turn rows still paid for its LLM. Its router
+ * model (`configured_router`) counts the same way.
  */
 export function unpricedInWindow(
   calls: readonly {
     stt_model: string | null;
     tts_model: string | null;
     configured_llm: string | null;
+    configured_router: string | null;
   }[],
   turns: readonly { llm_model: string | null }[],
 ): string[] {
@@ -171,6 +181,7 @@ export function unpricedInWindow(
     calls.map((call) => call.stt_model),
     calls.map((call) => call.tts_model),
     [...calls.map((call) => call.configured_llm), ...turns.map((turn) => turn.llm_model)],
+    calls.map((call) => call.configured_router),
   );
 }
 

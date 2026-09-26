@@ -133,15 +133,14 @@ export function callsTimeline(
   scope: Scope,
   now: Date,
 ): { unit: BucketUnit; bars: TimelineBar[] } {
+  // A loop, not `Math.min(...spread)`: a search reads all history with no
+  // LIMIT, and spreading that many arguments overflows the call stack.
+  let oldest = now.getTime();
+  for (const row of rows) oldest = Math.min(oldest, row.started_at.getTime());
   const window: Window =
     scope.kind === 'window'
       ? scope.window
-      : {
-          since: new Date(Math.min(...rows.map((row) => row.started_at.getTime()), now.getTime())),
-          until: null,
-          preset: 'custom',
-          spec: '',
-        };
+      : { since: new Date(oldest), until: null, preset: 'custom', spec: '' };
   const unit = bucketUnit(window, now);
   const buckets = windowBuckets(window, now, unit);
   const keys = buckets.map((bucket) => bucket.key);

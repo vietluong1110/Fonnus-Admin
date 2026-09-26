@@ -13,7 +13,7 @@
  * a row loaded from history shows what it would change as pending at once.
  * A blank control is the boot value (`isSetText`) — there is no tick.
  *
- * The five groups are tabs: one card on screen at a time, every card still in
+ * The six groups are tabs: one card on screen at a time, every card still in
  * the one `<form>` so an edit on one tab is submitted with the others.
  *
  * Everything here works with JavaScript off: the two steps are plain `<form>`
@@ -42,6 +42,7 @@ import {
   isSetText,
   listHelp,
   listLines,
+  NOTE_MAX_CHARS,
   shippedFormText,
   valueAt,
   vendorsOf,
@@ -234,7 +235,6 @@ function EditStep({
   snapshotRecorded,
   offered,
   editable,
-  from,
   shippedText,
   disclosure,
   disclosureRow,
@@ -340,7 +340,6 @@ function EditStep({
           <form id={GREETING_FORM_ID} action={formAction} className="contents">
             <input type="hidden" name="tenant" value={tenant} />
             <input type="hidden" name="group" value="text" />
-            <input type="hidden" name="from" value={JSON.stringify(from)} />
             {Object.entries(state.values)
               .filter(([path]) => path !== GREETING_PATH)
               .map(([path, value]) => (
@@ -368,7 +367,7 @@ function EditStep({
         </p>
       )}
 
-      {/* The five groups rarely matter together, so one is on screen at a
+      {/* The six groups rarely matter together, so one is on screen at a
           time. The count on a tab is how many of its leaves are pending, so an
           edit left on another tab is never out of sight. */}
       <div
@@ -415,9 +414,6 @@ function EditStep({
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-[18px]">
         <input type="hidden" name="tenant" value={tenant} />
         <input type="hidden" name="group" value={group} />
-        {/* The document the diff is taken against, carried as JSON so the review
-            step compares against the newest row the page read. */}
-        <input type="hidden" name="from" value={JSON.stringify(from)} />
 
         {GROUPS.map((of) => (
           <div
@@ -474,7 +470,6 @@ function EditStep({
       <form id={BOOT_FORM_ID} action={formAction} className="contents">
         <input type="hidden" name="tenant" value={tenant} />
         <input type="hidden" name="group" value={group} />
-        <input type="hidden" name="from" value={JSON.stringify(from)} />
       </form>
 
       {editable ? (
@@ -1328,7 +1323,9 @@ function ReviewStep({
     <form action={formAction} className="flex flex-col gap-[18px]">
       <input type="hidden" name="tenant" value={state.tenant} />
       <input type="hidden" name="group" value={state.group} />
-      <input type="hidden" name="from" value={JSON.stringify(from)} />
+      {/* The row this review's diff was taken against (empty: the tenant had
+          none); the save writes only while it is still the newest. */}
+      <input type="hidden" name="base" value={state.base ?? ''} />
       {/* The proposed document, carried back so `save` can parse it again on the
           server — the client's copy is read, never trusted. */}
       <input type="hidden" name="document" value={JSON.stringify(state.document)} />
@@ -1496,6 +1493,7 @@ function ReviewStep({
                 name="note"
                 aria-label="note"
                 defaultValue={state.note}
+                maxLength={NOTE_MAX_CHARS}
                 placeholder="note — what this change is for (optional)"
               />
             </div>

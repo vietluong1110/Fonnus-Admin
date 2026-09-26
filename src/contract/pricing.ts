@@ -29,6 +29,12 @@ export interface LlmPrice {
   usdPerMtokCached: number;
 }
 
+/** The router charges per million tokens, in and out (ADR 0032 Decision 5). */
+export interface RouterPrice {
+  usdPerMtokIn: number;
+  usdPerMtokOut: number;
+}
+
 export interface Prices {
   /** Streaming STT, USD per minute of audio sent, by model id (any vendor). */
   stt: Readonly<Record<string, number>>;
@@ -36,6 +42,8 @@ export interface Prices {
   tts: Readonly<Record<string, number>>;
   /** By the model id the provider reported, exactly as it comes back. */
   llm: Readonly<Record<string, LlmPrice>>;
+  /** By the model id the router's vendor echoed, exactly as it comes back. */
+  router: Readonly<Record<string, RouterPrice>>;
 }
 
 /**
@@ -110,6 +118,16 @@ export const PRICES: Prices = {
     // produces a total rather than an unpriced hole.
     'fake/echo-1': { usdPerMtokIn: 0, usdPerMtokOut: 0, usdPerMtokCached: 0 },
   },
+  router: {
+    // TypeSafe Jev, read 2026-09-25 from the vendor's cookbook ("as of
+    // 2026-08"): USD 0.042 per million input tokens, output free
+    // (docs/research/2026-09-25-router-eval.md). About 1.5 VND per request at
+    // J1's ~1 430 input tokens. ASSUMED until a TypeSafe bill for a known
+    // number of requests is set against `sum(tokensIn)` of the same calls.
+    'jev-1.13.0': { usdPerMtokIn: 0.042, usdPerMtokOut: 0 },
+    // The offline fake router makes no request to anybody — see the LLM row above.
+    'fake/echo-1': { usdPerMtokIn: 0, usdPerMtokOut: 0 },
+  },
 };
 
 /** What one call consumed, as the raw counters the tables hold. */
@@ -120,6 +138,8 @@ export interface CallUsage {
   ttsChars: number;
   /** One entry per turn that reported accounting; cut generations report none. */
   llm: LlmUsage[];
+  /** One entry per turn the router was billed on; empty when it never ran (ADR 0032). */
+  router: RouterUsage[];
   /** The STT model the call ran on — the `<VENDOR>_MODEL` of `STT_PROVIDER`, at boot. */
   sttModel: string;
   /** The TTS model the call ran on — the `<VENDOR>_TTS_MODEL` of `TTS_PROVIDER`, at boot. */
@@ -133,6 +153,12 @@ export interface LlmUsage {
   tokensCached: number;
 }
 
+export interface RouterUsage {
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+}
+
 export interface CallCost {
   /** Total in VND, rounded to 4 decimals — what `call_log.total_cost_vnd` holds. */
   vnd: number;
@@ -143,6 +169,8 @@ export interface CallCost {
   ttsUsd: number;
   /** The priced share only; the models below contributed nothing to it. */
   llmUsd: number;
+  /** The router's priced share, on the same rule as `llmUsd`. */
+  routerUsd: number;
   /**
    * True when at least one leg contributed a price. False means `vnd` is 0
    * because nothing could be priced, not because the call was free — the sink
@@ -204,9 +232,16 @@ export function llmCostUsd(u: LlmUsage, prices: Prices = PRICES): number | null 
   );
 }
 
+/** `null` when the model is not in the table, exactly as the LLM leg. */
+export function routerCostUsd(u: RouterUsage, prices: Prices = PRICES): number | null {
+  const price = priceRow(prices.router, u.model);
+  if (price === undefined) return null;
+  return (u.tokensIn / 1_000_000) * price.usdPerMtokIn + (u.tokensOut / 1_000_000) * price.usdPerMtokOut;
+}
+
 export function callCostVnd(usage: CallUsage, prices: Prices, vndPerUsd: number): CallCost {
   const unpriced = new Set<string>();
-  // Same rule on all three legs: an unknown model contributes nothing to the
+  // Same rule on every leg: an unknown model contributes nothing to the
   // total and is named instead, so the number reads as a floor.
   const stt = sttCostUsd(usage.sttAudioMs, usage.sttModel, prices);
   if (stt === null) unpriced.add(usage.sttModel);
@@ -226,13 +261,23 @@ export function callCostVnd(usage: CallUsage, prices: Prices, vndPerUsd: number)
       priced = true;
     }
   }
-  const usd = sttUsd + ttsUsd + llmUsd;
+  let routerUsd = 0;
+  for (const turn of usage.router) {
+    const cost = routerCostUsd(turn, prices);
+    if (cost === null) unpriced.add(turn.model);
+    else {
+      routerUsd += cost;
+      priced = true;
+    }
+  }
+  const usd = sttUsd + ttsUsd + llmUsd + routerUsd;
   return {
     vnd: round4(usd * vndPerUsd),
     usd,
     sttUsd,
     ttsUsd,
     llmUsd,
+    routerUsd,
     priced,
     unpricedModels: [...unpriced].sort(),
   };

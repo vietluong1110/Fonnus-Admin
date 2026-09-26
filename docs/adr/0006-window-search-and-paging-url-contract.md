@@ -29,9 +29,11 @@ chat reproduces the screen.
 **The search (Calls only).** `q=<keyword>`, trimmed. While a keyword is present the window
 is ignored and the search is over all history: the header says so ("N calls matching …,
 all time"), and the window control renders disabled until the keyword is cleared. Two
-predicates, ORed: the keyword's digits (everything else stripped) as a suffix of
-`caller_phone_e164`, and the keyword lower-cased as a prefix of `id::text` when it is made
-of hex digits and dashes. A keyword shorter than three characters after stripping matches
+predicates, ORed: the keyword's digits matched against `caller_phone_e164` (a bare digit
+run as a suffix; a number typed with `+`, or domestically with its `0`, as a `+84…` prefix,
+the domestic one also as a suffix; the masked form `+84 90 ••• 4417` pasted back as its
+visible head and tail — `phonePatterns` in `src/calls-scope.ts`), and the keyword
+lower-cased as a prefix of `id::text` when it is made of hex digits and dashes. A keyword shorter than three characters after stripping matches
 nothing and says so. The list, the four cards, the histogram and the chips all count the
 search result. The predicates are built from sanitised input, so `%` and `_` cannot reach
 the `LIKE`.

@@ -20,7 +20,7 @@ import {
 import { FLAT_KEYS } from './configuration/flat-keys';
 import { LEGS, PARTITION_LEGS, type LegName, legSpans, parseMarks } from './latency';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
-import { type BucketUnit, type Window, bucketUnit } from './window';
+import { type BucketUnit, type Window, bucketUnit, dayParts } from './window';
 
 const DAY_MS = 86_400_000;
 
@@ -66,21 +66,14 @@ export function percentiles(values: number[]): Percentiles {
   return { count: sorted.length, p50: at(0.5), p95: at(0.95), max: at(1) };
 }
 
-// The clinic's zone, the one `src/calls.ts` pins for every screen: a call
-// answered at 23:30 UTC belongs to the next Vietnamese day, and a day bucket
-// read in the process's zone would move calls between days on a UTC box.
-const DAY = new Intl.DateTimeFormat('en-GB', {
-  timeZone: CALL_TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
-
-/** `YYYY-MM-DD` in the clinic's zone — the bucket a call's `started_at` falls in. */
+/**
+ * `YYYY-MM-DD` in the clinic's zone — the bucket a call's `started_at` falls
+ * in. A call answered at 23:30 UTC belongs to the next Vietnamese day, which is
+ * why the day comes from `dayParts` and never from the process's zone.
+ */
 export function dayKey(date: Date): string {
-  const parts = new Map<string, string>(DAY.formatToParts(date).map((p) => [p.type, p.value]));
-  const at = (type: string): string => parts.get(type) ?? '';
-  return `${at('year')}-${at('month')}-${at('day')}`;
+  const { day, month, year } = dayParts(date);
+  return `${year}-${month}-${day}`;
 }
 
 /**
@@ -514,6 +507,28 @@ export function differingKeys(snapshots: Array<Record<string, unknown> | null>):
 export function configuredLlmOf(configSnapshot: unknown): string | null {
   const snapshot = parseSnapshot(configSnapshot);
   const model = snapshot === null ? undefined : lookup(snapshot, 'OPENROUTER_MODEL');
+  return typeof model === 'string' && model !== '' ? model : null;
+}
+
+/**
+ * The router model a call was billed for, if the router ran on it — its
+ * snapshot's `TYPESAFE_MODEL` when `ROUTER_MODE` says it ran (contract §3.4:
+ * both keys are always present from ADR 0032 on, so the mode is what says
+ * whether the router ran). Trap 3 prices each router decision into
+ * `total_cost_vnd`, so an unpriced router model makes the total a floor just as
+ * an unpriced LLM does. Null on `off`, on a snapshot older than the router, and
+ * on an empty or non-string model (`''` under `PROVIDERS=fake`).
+ *
+ * The router also needs at least one FAQ entry to run, and a shadow call with
+ * none never asked it; naming its model then errs toward "floor", the visible
+ * side (ADR 0015 D7).
+ */
+export function configuredRouterOf(configSnapshot: unknown): string | null {
+  const snapshot = parseSnapshot(configSnapshot);
+  if (snapshot === null) return null;
+  const mode = lookup(snapshot, 'ROUTER_MODE');
+  if (typeof mode !== 'string' || mode === 'off') return null;
+  const model = lookup(snapshot, 'TYPESAFE_MODEL');
   return typeof model === 'string' && model !== '' ? model : null;
 }
 

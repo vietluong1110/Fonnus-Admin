@@ -77,8 +77,8 @@ describe('the glossary is total, both ways (ADR 0013 decision 6)', () => {
     },
   );
 
-  it('covers the 57 configuration leaves', () => {
-    expect(Object.keys(GLOSSARY.configLeaf)).toHaveLength(57);
+  it('covers the 61 configuration leaves', () => {
+    expect(Object.keys(GLOSSARY.configLeaf)).toHaveLength(61);
   });
 
   it('gives every entry a name and its own code, and every leaf and leg a description', () => {

@@ -21,7 +21,8 @@ vi.mock('@/db', () => ({ getPool: mockGetPool, getEditorPool: mockGetEditorPool 
 const connectedAs = (role: string) => ({ query: () => Promise.resolve({ rows: [{ role }] }) });
 /** A pool whose connection fails the way a refused port does. */
 const refused = () => ({
-  query: () => Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:1')),
+  query: () =>
+    Promise.reject(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), { code: 'ECONNREFUSED' })),
 });
 /** A pool whose host drops packets: no refusal ever comes back. */
 const silent = () => ({ query: () => new Promise(() => undefined) });
@@ -53,7 +54,8 @@ describe('GET /api/healthz — the reader alone decides the status (ADR 0007)', 
     const { status, body } = await answer();
     expect(status).toBe(200);
     expect(body.status).toBe('ok');
-    expect(body.editor).toEqual({ error: 'connect ECONNREFUSED 127.0.0.1:1', status: 'error' });
+    // The code only: the message names the host, and the body answers anyone.
+    expect(body.editor).toEqual({ error: 'ECONNREFUSED', status: 'error' });
   });
 
   it('is 503 when the reader is degraded, whatever the editor says', async () => {
@@ -94,6 +96,21 @@ describe('GET /api/healthz — the reader alone decides the status (ADR 0007)', 
     const { status, body } = await answer();
     expect(status).toBe(200);
     expect(body.editor).toEqual({ role: 'fonnus', status: 'degraded' });
+  });
+});
+
+describe('GET /api/healthz — a failure is a code, never the message', () => {
+  it('keeps the host and the role out of the body, and in the server log', async () => {
+    const log = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    const message = 'password authentication failed for user "console" at db.internal:5432';
+    mockGetPool.mockReturnValue({ query: () => Promise.reject(new Error(message)) });
+    mockGetEditorPool.mockReturnValue(undefined);
+    const { status, body } = await answer();
+    expect(status).toBe(503);
+    expect(body.error).toBe('failed; the reason is in the server log');
+    expect(JSON.stringify(body)).not.toContain('db.internal');
+    expect(log).toHaveBeenCalledWith(`healthz: ${message}\n`);
+    log.mockRestore();
   });
 });
 

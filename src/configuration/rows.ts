@@ -36,10 +36,10 @@ export function rowsOn(
 
 /**
  * A tab's label: the pipeline's own top-level key, capitalised the way the
- * team writes it — the three legs are acronyms, the other two are words.
+ * team writes it — the three legs are acronyms, the other three are words.
  */
 export function tabLabel(group: Group): string {
-  return group === 'turn' || group === 'text'
+  return group === 'turn' || group === 'text' || group === 'router'
     ? `${group.charAt(0).toUpperCase()}${group.slice(1)}`
     : group.toUpperCase();
 }

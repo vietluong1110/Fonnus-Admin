@@ -42,6 +42,7 @@ import {
   runtimeConfigRows,
   tenants,
 } from '@/queries/runtime-config';
+import { first } from '@/window';
 import Badge from '@/ui/badge';
 import Button from '@/ui/button';
 import Card from '@/ui/card';
@@ -61,11 +62,6 @@ const BASE = '/configuration';
 const HISTORY_ID = 'configuration-history';
 
 type Params = Record<string, string | string[] | undefined>;
-
-/** A query string key can arrive repeated; the first value is the answer. */
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 /** A jsonb document as a plain object, or `{}` for anything else. */
 function asRecord(value: unknown): Record<string, unknown> {

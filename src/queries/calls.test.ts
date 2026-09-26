@@ -61,14 +61,23 @@ describe('callsInScope', () => {
     expect(sql).not.toContain('call_event');
   });
 
-  it('searches on the digits alone when the keyword is no id', async () => {
+  it('searches on the number alone when the keyword is no id', async () => {
     query.mockResolvedValue({ rows: [] });
     await callsInScope(parseScope({ q: '+84 90 123 4417' }, NOW));
 
     const { sql, values } = lastCall();
-    expect(sql).toContain("call_log.caller_phone_e164 like '%' || $1");
+    expect(sql).toContain('call_log.caller_phone_e164 like $1');
     expect(sql).not.toContain('id::text');
-    expect(values).toEqual(['84901234417']);
+    expect(values).toEqual(['+84901234417%']);
+  });
+
+  it('ORs every number pattern, each as its own parameter', async () => {
+    query.mockResolvedValue({ rows: [] });
+    await callsInScope(parseScope({ q: '0901 234 417' }, NOW));
+
+    const { sql, values } = lastCall();
+    expect(sql).toContain('call_log.caller_phone_e164 like $1 or call_log.caller_phone_e164 like $2');
+    expect(values).toEqual(['+84901234417%', '%0901234417']);
   });
 
   it('ORs both predicates when the keyword can be either', async () => {
@@ -76,10 +85,10 @@ describe('callsInScope', () => {
     await callsInScope(parseScope({ q: '3300' }, NOW));
 
     const { sql, values } = lastCall();
-    expect(sql).toContain("call_log.caller_phone_e164 like '%' || $1");
+    expect(sql).toContain('call_log.caller_phone_e164 like $1');
     expect(sql).toContain("call_log.id::text like $2 || '%'");
     expect(sql).toContain(' or ');
-    expect(values).toEqual(['3300', '3300']);
+    expect(values).toEqual(['%3300', '3300']);
   });
 
   it('issues no statement at all for a keyword that can match nothing', async () => {

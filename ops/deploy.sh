@@ -152,13 +152,17 @@ if wait_healthy; then
   fi
 
   # ── 5. Keep exactly two admin images: the running one and the rollback target.
+  #      The rollback target is whatever .admin-previous names, read back from the
+  #      file: a redeploy of the same SHA leaves the file as it was, and LAST_GOOD
+  #      is then the running SHA, not the one a hand rollback would reach for.
   #      Repository-scoped, never `docker image prune -a`: this box also holds the
   #      pipeline's rollback image and its FreeSWITCH image, whose rebuild is an hour.
+  PREVIOUS="$(cat .admin-previous 2>/dev/null || true)"
   while read -r image; do
     [ -n "$image" ] || continue
     tag="${image##*:}"
     case "$tag" in
-      "$ADMIN_IMAGE_TAG" | "${LAST_GOOD:-$ADMIN_IMAGE_TAG}" | latest | '<none>') continue ;;
+      "$ADMIN_IMAGE_TAG" | "${PREVIOUS:-$ADMIN_IMAGE_TAG}" | latest | '<none>') continue ;;
     esac
     log "removing superseded image ${image}"
     docker rmi "$image" >/dev/null 2>&1 || true

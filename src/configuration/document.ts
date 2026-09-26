@@ -37,12 +37,19 @@ export type ControlKind =
   | 'list'
   | 'record';
 
+/**
+ * The longest note a `runtime_config` row may carry. The table is append-only,
+ * so a note is kept forever and shown in every history view; a paragraph is
+ * plenty for why. Held by the save action and by the note input alike.
+ */
+export const NOTE_MAX_CHARS = 500;
+
 /** One leaf of the document, as the form renders it. */
 export interface Field {
   /** The dotted document path, which is also the form control's name. */
   path: string;
   /** The top-level key the leaf lives under. */
-  group: 'turn' | 'stt' | 'llm' | 'tts' | 'text';
+  group: Group;
   /** The provider branch the leaf belongs to, or null outside a branch. */
   vendor: string | null;
   /** From `FLAT_KEYS`; an object when the path has one key per vendor. */

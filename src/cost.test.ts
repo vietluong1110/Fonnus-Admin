@@ -81,19 +81,19 @@ describe('callCostView', () => {
   };
 
   it('takes the total from total_cost_vnd and divides it over the call minutes', () => {
-    const view = callCostView(call, [PRICED_TURN], QWEN);
+    const view = callCostView(call, [PRICED_TURN], QWEN, null);
     expect(view.totalVnd).toBe(120.5);
     expect(view.perMinuteVnd).toBeCloseTo(60.25, 9);
   });
 
   it('never recomputes the total from the turns', () => {
-    expect(callCostView(call, [PRICED_TURN, PRICED_TURN], QWEN).totalVnd).toBe(120.5);
+    expect(callCostView(call, [PRICED_TURN, PRICED_TURN], QWEN, null).totalVnd).toBe(120.5);
   });
 
   it('has no per-minute figure while the call is in progress or unpriced', () => {
-    expect(callCostView({ ...call, ended_at: null }, [], QWEN).perMinuteVnd).toBeNull();
-    expect(callCostView({ ...call, total_cost_vnd: null }, [], QWEN).perMinuteVnd).toBeNull();
-    expect(callCostView({ ...call, total_cost_vnd: 'abc' }, [], QWEN).totalVnd).toBeNull();
+    expect(callCostView({ ...call, ended_at: null }, [], QWEN, null).perMinuteVnd).toBeNull();
+    expect(callCostView({ ...call, total_cost_vnd: null }, [], QWEN, null).perMinuteVnd).toBeNull();
+    expect(callCostView({ ...call, total_cost_vnd: 'abc' }, [], QWEN, null).totalVnd).toBeNull();
   });
 
   it('names the call and turn models without a price row, sorted', () => {
@@ -101,24 +101,29 @@ describe('callCostView', () => {
       { ...PRICED_TURN, llm_model: 'openai/gpt-oss-120b' },
       { ...PRICED_TURN, llm_model: 'openai/gpt-oss-120b' },
       NULL_ACCOUNTING,
-    ], QWEN);
+    ], QWEN, null);
     expect(view.unpriced).toEqual(['mystery-stt', 'openai/gpt-oss-120b']);
   });
 
   it('names an unpriced configured OPENROUTER_MODEL on a call with no turn rows (trap 1)', () => {
-    const view = callCostView(call, [], 'openai/gpt-oss-120b');
+    const view = callCostView(call, [], 'openai/gpt-oss-120b', null);
     expect(view.unpriced).toEqual(['openai/gpt-oss-120b']);
     expect(floorMark(view.unpriced)).toBe('floor');
     expect(floorSentence(view.unpriced)).toBe('a floor while these models are unpriced: openai/gpt-oss-120b');
   });
 
   it('is no floor on a call with no turn rows when the configured model is priced or absent', () => {
-    expect(floorMark(callCostView(call, [], QWEN).unpriced)).toBeNull();
-    expect(floorMark(callCostView(call, [], null).unpriced)).toBeNull();
+    expect(floorMark(callCostView(call, [], QWEN, null).unpriced)).toBeNull();
+    expect(floorMark(callCostView(call, [], null, null).unpriced)).toBeNull();
+  });
+
+  it('names an unpriced router model of a shadow call, and not a priced one (trap 3)', () => {
+    expect(callCostView(call, [PRICED_TURN], QWEN, 'jev-9').unpriced).toEqual(['jev-9']);
+    expect(floorMark(callCostView(call, [PRICED_TURN], QWEN, 'jev-1.13.0').unpriced)).toBeNull();
   });
 
   it('returns the stored total and its caveat inputs only, no per-turn sums', () => {
-    expect(Object.keys(callCostView(call, [PRICED_TURN], QWEN)).sort()).toEqual([
+    expect(Object.keys(callCostView(call, [PRICED_TURN], QWEN, null)).sort()).toEqual([
       'perMinuteVnd',
       'totalVnd',
       'unpriced',
@@ -131,8 +136,8 @@ describe('unpricedInWindow', () => {
     expect(
       unpricedInWindow(
         [
-          { stt_model: 'nova-3', tts_model: 'sonic-3.6', configured_llm: QWEN },
-          { stt_model: null, tts_model: 'mystery-tts', configured_llm: null },
+          { stt_model: 'nova-3', tts_model: 'sonic-3.6', configured_llm: QWEN, configured_router: null },
+          { stt_model: null, tts_model: 'mystery-tts', configured_llm: null, configured_router: null },
         ],
         [{ llm_model: QWEN }, { llm_model: 'openai/gpt-oss-120b' }, { llm_model: null }],
       ),
@@ -141,8 +146,17 @@ describe('unpricedInWindow', () => {
 
   it('names the unpriced configured OPENROUTER_MODEL of a call with no turn rows', () => {
     expect(
-      unpricedInWindow([{ stt_model: 'nova-3', tts_model: 'sonic-3.6', configured_llm: 'openai/gpt-oss-120b' }], []),
+      unpricedInWindow([{ stt_model: 'nova-3', tts_model: 'sonic-3.6', configured_llm: 'openai/gpt-oss-120b', configured_router: null }], []),
     ).toEqual(['openai/gpt-oss-120b']);
+  });
+
+  it('names the unpriced router model of a shadow call', () => {
+    expect(
+      unpricedInWindow(
+        [{ stt_model: 'nova-3', tts_model: 'sonic-3.6', configured_llm: QWEN, configured_router: 'jev-9' }],
+        [],
+      ),
+    ).toEqual(['jev-9']);
   });
 
   it('reads an Object.prototype key as no row, not as a price', () => {

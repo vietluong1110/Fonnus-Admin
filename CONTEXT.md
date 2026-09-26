@@ -45,7 +45,7 @@ caveats; the decisions stay with the person reading it.
    to its last four digits (ADR 0008), how long, how it ended (consent outcome and end
    reason together — quiet when ordinary, a pill when not), the turns as a tick strip with
    the failed ones marked, whether a recording can be fetched, cost with its floor caveat.
-   A search box finds a phone suffix or an id prefix across all history, outside the
+   A search box finds a phone number (its last digits, the whole number typed either way, or the masked form pasted back) or an id prefix across all history, outside the
    window. Pages of 100.
 2. **Call detail** (`/calls/<id>`) — built for the call review, non-technical reader first:
    the head (masked number, when, how it ended), the "Ran on" strip (models, voice, config
@@ -76,7 +76,7 @@ caveats; the decisions stay with the person reading it.
    the FAQ entries the call ran with as the snapshot recorded them, the consent record, the full number and the identity fields) sits last in a collapsed
    "Pipeline detail" section, and the bucket (W2-L1) serves the verbatim files behind a step.
 3. **Overview** (`/`) — over the same window: P50 / P95 / max per leg against the ADR 0007
-   targets, calls per bucket (one hour for `24h`, one day up to 45 days, one week beyond;
+   targets, calls per bucket (one hour up to two days, one day up to 45 days, one week beyond;
    the buckets cover the whole window, edge buckets marked partial), the reply's
    composition, how calls ended (end reason and consent outcome), turn failures by leg and
    stage, the window's cost (list price, the unpriced models named), the turns that never

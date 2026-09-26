@@ -29,7 +29,7 @@ describe('rowsOn — which rows a tab holds', () => {
     expect(tabs).toEqual(['llm']);
   });
 
-  it('shows every path exactly once across the five tabs', () => {
+  it('shows every path exactly once across the six tabs', () => {
     const shown = GROUPS.flatMap((tab) => rowsOn(fieldsOf(), tab, everyField).map(({ field }) => field.path));
     const paths = [...new Set(fieldsOf().map((field) => field.path))];
     expect([...shown].sort()).toEqual([...paths].sort());
@@ -49,8 +49,8 @@ describe('rowsOn — which rows a tab holds', () => {
 });
 
 describe('tabLabel', () => {
-  it('reads Turn · STT · LLM · TTS · Text', () => {
-    expect(GROUPS.map(tabLabel).join(' · ')).toBe('Turn · STT · LLM · TTS · Text');
+  it('reads Turn · STT · LLM · TTS · Text · Router', () => {
+    expect(GROUPS.map(tabLabel).join(' · ')).toBe('Turn · STT · LLM · TTS · Text · Router');
   });
 });
 

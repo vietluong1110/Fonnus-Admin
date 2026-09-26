@@ -144,7 +144,7 @@ describe('callsTimeline — the window’s own buckets, in the clinic zone', () 
   it('spans a search from its oldest match, with no partial first column', () => {
     const { unit, bars } = callsTimeline(
       [call({ started_at: new Date('2026-09-02T03:00:00Z') })],
-      { kind: 'search', keyword: '8064', phoneDigits: '8064', idPrefix: null },
+      { kind: 'search', keyword: '8064', phonePatterns: ['%8064'], idPrefix: null },
       now,
     );
     expect(unit).toBe('day');
@@ -298,7 +298,7 @@ describe('scopeHeading', () => {
 
   it('says a search is all time, whatever the window says', () => {
     expect(
-      scopeHeading({ kind: 'search', keyword: '4417', phoneDigits: '4417', idPrefix: null }, 3),
+      scopeHeading({ kind: 'search', keyword: '4417', phonePatterns: ['%4417'], idPrefix: null }, 3),
     ).toBe('3 calls matching “4417”, all time');
   });
 });

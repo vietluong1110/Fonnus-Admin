@@ -87,6 +87,16 @@ describe('parseWindow — the URL contract of ADR 0006', () => {
     expect(window.preset).toBe('custom');
   });
 
+  it('reads a date and time with no zone in the clinic’s zone, not the process’s', () => {
+    const window = parseWindow(
+      { since: '2026-09-01T08:30', until: '2026-09-02 08:30:15' },
+      NOW,
+    );
+    expect(inZone(window.since)).toBe('2026-09-01 08:30');
+    expect(window.since.toISOString()).toBe('2026-09-01T01:30:00.000Z');
+    expect(window.until?.toISOString()).toBe('2026-09-02T01:30:15.000Z');
+  });
+
   it('refuses an until beside a relative since, and shows the default', () => {
     const window = parseWindow({ since: '7d', until: '2026-09-10' }, NOW);
     expect(window.error).toContain('absolute since');
@@ -169,13 +179,22 @@ describe('bucketUnit', () => {
       );
     expect(span(45)).toBe('day');
     expect(span(46)).toBe('week');
-    expect(span(1)).toBe('day');
+    expect(span(3)).toBe('day');
+  });
+
+  it('draws any window of two days or less in hours, as the 24h preset is', () => {
+    // A day or two in days would be one or two bars; 48 hour columns are as
+    // many as 45 day columns.
+    expect(bucketUnit(parseWindow({ since: '36h' }, NOW), NOW)).toBe('hour');
+    expect(bucketUnit(parseWindow({ since: '48h' }, NOW), NOW)).toBe('hour');
+    expect(bucketUnit(parseWindow({ since: '90m' }, NOW), NOW)).toBe('hour');
+    expect(bucketUnit(parseWindow({ since: '49h' }, NOW), NOW)).toBe('day');
+    expect(
+      bucketUnit(parseWindow({ since: '2026-09-01', until: '2026-09-01' }, NOW), NOW),
+    ).toBe('hour');
   });
 
   it('measures an open-ended custom window against now', () => {
-    // `36h` is not one of the three presets, so it is a custom window; its
-    // span is still a day and a half and it is drawn in days.
-    expect(bucketUnit(parseWindow({ since: '36h' }, NOW), NOW)).toBe('day');
     expect(bucketUnit(parseWindow({ since: '2026-01-01' }, NOW), NOW)).toBe('week');
   });
 });

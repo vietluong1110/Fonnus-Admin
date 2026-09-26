@@ -241,8 +241,8 @@ describe('headPairRows — the thinking span of contract §3.2', () => {
   });
 
   it('adds no leg — the pipeline names none for it', () => {
-    // `llm_first_reasoning` sits inside `llm_ttft`, which the six-leg row
-    // already draws whole (`docs/upstream.md` §The waterfall).
+    // `llm_first_reasoning` sits inside `llm_ttft`, which the leg rows
+    // already draw whole (`docs/upstream.md` §The waterfall).
     expect(LEGS).toHaveLength(7);
     const legStages: Stage[] = LEGS.flatMap((leg) => [leg.from, leg.to]);
     expect(legStages).not.toContain('llm_first_reasoning');

@@ -10,6 +10,7 @@ import {
   parseChips,
   parsePage,
   parseScope,
+  phonePatterns,
 } from './calls-scope';
 import type { CallScopeRow } from './queries/calls';
 
@@ -71,15 +72,15 @@ describe('parseScope — window or search (ADR 0006)', () => {
     expect(scope).toEqual({
       kind: 'search',
       keyword: '4417',
-      phoneDigits: '4417',
+      phonePatterns: ['%4417'],
       idPrefix: '4417',
     });
   });
 
-  it('strips everything but digits from a number, and is no id then', () => {
+  it('reads a number typed with its + as a prefix, and is no id then', () => {
     const scope = parseScope({ q: '+84 90' }, NOW);
     if (scope.kind !== 'search') throw new Error('expected a search');
-    expect(scope.phoneDigits).toBe('8490');
+    expect(scope.phonePatterns).toEqual(['+8490%']);
     expect(scope.idPrefix).toBeNull();
   });
 
@@ -89,25 +90,46 @@ describe('parseScope — window or search (ADR 0006)', () => {
     const scope = parseScope({ q: '330052E1-' }, NOW);
     if (scope.kind !== 'search') throw new Error('expected a search');
     expect(scope.idPrefix).toBe('330052e1-');
-    expect(scope.phoneDigits).toBe('3300521');
+    expect(scope.phonePatterns).toEqual(['%3300521']);
   });
 
   it('is no id prefix when the keyword holds a letter outside hex', () => {
     const scope = parseScope({ q: '0912 xyz' }, NOW);
     if (scope.kind !== 'search') throw new Error('expected a search');
     expect(scope.idPrefix).toBeNull();
-    expect(scope.phoneDigits).toBe('0912');
   });
 
   it('matches nothing under three characters, and says so by holding no predicate', () => {
     const scope = parseScope({ q: 'ab' }, NOW);
     if (scope.kind !== 'search') throw new Error('expected a search');
-    expect(scope.phoneDigits).toBeNull();
+    expect(scope.phonePatterns).toEqual([]);
     expect(scope.idPrefix).toBeNull();
   });
 
   it('is the window again once the keyword is only whitespace', () => {
     expect(parseScope({ q: '   ' }, NOW).kind).toBe('window');
+  });
+});
+
+describe('phonePatterns — how a typed number meets caller_phone_e164', () => {
+  it('reads the masked form pasted back as its visible head and tail', () => {
+    expect(phonePatterns('+84 90 ••• 4417')).toEqual(['+8490%4417']);
+    expect(phonePatterns('••• 4417')).toEqual(['%4417']);
+    expect(phonePatterns('090***4417')).toEqual(['+8490%4417']);
+  });
+
+  it('reads a domestic number as +84 in place of its 0, and still as a suffix', () => {
+    expect(phonePatterns('0901 234 417')).toEqual(['+84901234417%', '%0901234417']);
+  });
+
+  it('never lets a typed wildcard reach the LIKE', () => {
+    for (const pattern of phonePatterns('%_44\\17')) expect(pattern).toMatch(/^[+%0-9]*$/);
+    expect(phonePatterns('%_44\\17')).toEqual(['%4417']);
+  });
+
+  it('holds no pattern under three digits', () => {
+    expect(phonePatterns('+8')).toEqual([]);
+    expect(phonePatterns('••• 41')).toEqual([]);
   });
 });
 

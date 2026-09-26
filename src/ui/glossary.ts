@@ -199,7 +199,7 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
     'key:runtime.version': { name: 'Runtime config row' },
   },
 
-  // The 57 configuration leaves (`src/configuration/flat-keys.ts`); where
+  // The 61 configuration leaves (`src/configuration/flat-keys.ts`); where
   // each sentence comes from is ADR 0013 §Evidence.
   configLeaf: {
     'turn.max_call_duration_sec': {
@@ -466,6 +466,26 @@ const ENTRIES: Readonly<Record<GlossaryNamespace, Entries>> = {
       name: 'Holding lines',
       description:
         'One to four variants of the line spoken while the answer is still being thought out, one per line; the call rotates through them by turn (the first turn hears the first). Each is a spoken text: at most 600 characters, no /, and it must survive the speakable filter unchanged. Never part of the answer text (pipeline ADR 0030).',
+    },
+    'router.mode': {
+      name: 'FAQ router mode',
+      description:
+        "off asks the router nothing; shadow asks it beside the LLM on every caller turn and records its decision, never acting on it (pipeline ADR 0032). Runs only on a call with at least one FAQ entry; its model is the box's TYPESAFE_MODEL, not a row's to choose.",
+    },
+    'router.faq_min_confidence': {
+      name: 'FAQ min confidence',
+      description:
+        'A turn routes to the FAQ entry only when the router is at least this sure of the match (0–1); shipped 0.8.',
+    },
+    'router.medical_max': {
+      name: 'Medical max',
+      description:
+        'A turn routes to the FAQ entry only when the router scores it as a medical question below this (0–1); shipped 0.5.',
+    },
+    'router.extra_request_max': {
+      name: 'Extra request max',
+      description:
+        'A turn routes to the FAQ entry only when the router scores an extra request in it below this (0–1); shipped 0.6.',
     },
   },
 };

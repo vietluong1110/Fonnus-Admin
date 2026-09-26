@@ -20,6 +20,12 @@
  * the browser in a hidden field between the two steps, so what arrives at
  * `save` is client-held text: it is parsed against the copied schema again here
  * before it reaches the insert, and a document that fails never gets there.
+ *
+ * The diff's starting point is never client-held: both steps read the tenant's
+ * newest row themselves. The review hands its id to the form (`base`), and the
+ * save inserts only while that row is still the newest (`insertRuntimeConfig`),
+ * so a save made from a review another operator's save has overtaken is
+ * refused and shown against the new row instead of silently undoing it.
  */
 
 import { revalidatePath } from 'next/cache';
@@ -31,12 +37,14 @@ import {
   diffDocuments,
   documentFromForm,
   leafPaths,
+  NOTE_MAX_CHARS,
   parseDocument,
   type DiffEntry,
   type DocumentIssue,
 } from '@/configuration/document';
 import { groupOf, type Group } from '@/configuration/groups';
 import { latestBootReport } from '@/queries/boot-report';
+import { newestRuntimeConfig } from '@/queries/runtime-config';
 import { insertRuntimeConfig } from '@/writes/runtime-config';
 
 /**
@@ -65,6 +73,11 @@ export type FormState =
        * with its issues — when it does not (ADR 0012 D7b).
        */
       document: Record<string, unknown>;
+      /**
+       * The id of the tenant's newest row the diff was taken against, null when
+       * the tenant has none; the save writes only while it is still the newest.
+       */
+      base: string | null;
       issues: DocumentIssue[];
       diff: DiffEntry[];
       advice: string[];
@@ -83,6 +96,8 @@ const NOT_OFFERED =
 const MALFORMED =
   'the form did not arrive as this screen sends it; nothing was written — reload the page and try again';
 
+const NOTE_TOO_LONG = `the note is longer than ${String(NOTE_MAX_CHARS)} characters; nothing was written — shorten it and save again`;
+
 /** Every string-valued entry; a file entry cannot occur on this form. */
 function stringEntries(formData: FormData): [string, string][] {
   const entries: [string, string][] = [];
@@ -94,7 +109,7 @@ function stringEntries(formData: FormData): [string, string][] {
 
 /**
  * The form as submitted, restricted to the leaves the schema names. Anything
- * else on the form (`intent`, `tenant`, `group`, `from`, `note`, `document`) is
+ * else on the form (`intent`, `tenant`, `group`, `base`, `note`, `document`) is
  * the action's own plumbing, never part of the document.
  */
 function submitted(entries: readonly [string, string][]): Record<string, string> {
@@ -130,10 +145,17 @@ function readText(formData: FormData, name: string): string {
   return typeof raw === 'string' ? raw : '';
 }
 
+/** A stored document as a diff reads it: anything but a JSON object is the empty one. */
+function asDocument(config: unknown): Record<string, unknown> {
+  return typeof config === 'object' && config !== null && !Array.isArray(config)
+    ? (config as Record<string, unknown>)
+    : {};
+}
+
 /**
  * What the review step shows: the document, its verdict, the diff against the
- * newest row of the tenant (`from`, which the page sets — ADR 0012 D7a), and the
- * advice. The issues are the schema's, then what the boot report refuses
+ * newest row of the tenant (`newest`, read afresh by the caller — ADR 0012
+ * D7a), and the advice. The issues are the schema's, then what the boot report refuses
  * (`offeredIssues`, D3) — both block the save. Issues and advice are
  * separate on purpose — an issue blocks the save, advice never does (ADR 0011
  * decision 5, rule 6 of `docs/redesign.md` §4.2).
@@ -142,12 +164,13 @@ function reviewState(input: {
   tenant: string;
   group: Group;
   values: Record<string, string>;
-  from: Record<string, unknown>;
+  newest: { id: string; config: unknown } | null;
   document: Record<string, unknown>;
   note: string;
   failure: string | null;
   report: BootReport | null;
 }): FormState {
+  const from = asDocument(input.newest?.config);
   const parsed = parseDocument(input.document);
   // What the review renders, diffs and carries back in the hidden `document` is
   // what `save` would insert, so the row is byte for byte the one reviewed and
@@ -159,9 +182,10 @@ function reviewState(input: {
     group: input.group,
     values: input.values,
     document,
+    base: input.newest?.id ?? null,
     issues: [...(parsed.ok ? [] : parsed.issues), ...offeredIssues(document, input.report)],
-    diff: diffDocuments(input.from, document),
-    advice: parsed.ok ? adviceFor(input.from, parsed.document) : [],
+    diff: diffDocuments(from, document),
+    advice: parsed.ok ? adviceFor(from, parsed.document) : [],
     note: input.note,
     failure: input.failure,
   };
@@ -185,10 +209,6 @@ export async function submitConfiguration(
     return { step: 'edit', tenant, group, values, failure: MALFORMED };
   }
 
-  // The diff's starting point only — the newest row's document, set by the page
-  // (ADR 0012 D7a): it is compared against, never written, so a mangled `from`
-  // falls back to the empty document rather than refusing the whole submission.
-  const from = readObject(formData, 'from') ?? {};
   const note = readText(formData, 'note');
 
   if (intent === 'edit') {
@@ -196,12 +216,13 @@ export async function submitConfiguration(
   }
 
   if (intent === 'review') {
+    const [report, newest] = await Promise.all([latestBootReport(tenant), newestRuntimeConfig(tenant)]);
     return reviewState({
-      report: await latestBootReport(tenant),
+      report,
       tenant,
       group,
       values,
-      from,
+      newest,
       document: documentFromForm(entries),
       note,
       failure: null,
@@ -211,53 +232,41 @@ export async function submitConfiguration(
   // `save`. The document the operator reviewed comes back in a hidden field;
   // if it is absent or is not a JSON object, this is not a submission this
   // screen sent, and there is nothing that was reviewed to write. `'{}'` is a
-  // legal document ("back to boot config") and goes on.
+  // legal document ("back to boot config") and goes on. `base` is the row the
+  // review was taken against; `''` is "the tenant had no row", absent is a
+  // request this screen did not send.
   const document = readObject(formData, 'document');
-  if (document === null) {
+  const rawBase = formData.get('base');
+  if (document === null || typeof rawBase !== 'string') {
     return { step: 'edit', tenant, group, values, failure: MALFORMED };
   }
+  const base = rawBase === '' ? null : rawBase;
 
-  // Read afresh, never carried from the review: the box may have rebooted
-  // between the two steps (ADR 0012 D3).
-  const report = await latestBootReport(tenant);
-
-  // The account next: without it nothing is written and nothing else about the
-  // request matters.
-  let account: Account;
+  // The account first: without it nothing is written, whatever the document
+  // says. The rows below are still read when it is absent, only to show the
+  // review again beside the refusal.
+  let account: Account | null;
   try {
     account = await requireAccount();
   } catch (err) {
     // Only the absent account is a refusal to render; anything else thrown here
     // is a genuine failure and belongs on `error.tsx`.
     if (!(err instanceof NoAccountError)) throw err;
-    return reviewState({
-      tenant,
-      group,
-      values,
-      from,
-      document,
-      note,
-      failure: NO_ACCOUNT,
-      report,
-    });
+    account = null;
   }
 
+  // Read afresh, never carried from the review: the box may have rebooted
+  // between the two steps (ADR 0012 D3), and another row may have landed.
+  const [report, newest] = await Promise.all([latestBootReport(tenant), newestRuntimeConfig(tenant)]);
+  const refuse = (failure: string): FormState =>
+    reviewState({ tenant, group, values, newest, document, note, failure, report });
+
+  if (account === null) return refuse(NO_ACCOUNT);
+  if (note.length > NOTE_MAX_CHARS) return refuse(NOTE_TOO_LONG);
+
   const parsed = parseDocument(document);
-  if (!parsed.ok) {
-    return reviewState({
-      tenant,
-      group,
-      values,
-      from,
-      document,
-      note,
-      failure: STALE_DOCUMENT,
-      report,
-    });
-  }
-  if (offeredIssues(parsed.document, report).length > 0) {
-    return reviewState({ tenant, group, values, from, document, note, failure: NOT_OFFERED, report });
-  }
+  if (!parsed.ok) return refuse(STALE_DOCUMENT);
+  if (offeredIssues(parsed.document, report).length > 0) return refuse(NOT_OFFERED);
 
   const result = await insertRuntimeConfig({
     tenantId: tenant,
@@ -265,14 +274,17 @@ export async function submitConfiguration(
     // what the row carries.
     config: parsed.document,
     note: note === '' ? null : note,
+    base,
     by: account,
   });
   if (!result.ok) {
+    // Re-read, so a refusal because another row landed shows the diff against
+    // that row and carries its id as the next save's base.
     return reviewState({
       tenant,
       group,
       values,
-      from,
+      newest: await newestRuntimeConfig(tenant),
       document,
       note,
       failure: result.reason,

@@ -103,14 +103,16 @@ export function parseBootReport(row: Record<string, unknown>): BootReport {
     }
   }
 
-  const voices: Record<string, BootReportVoice[]> = {};
+  // Collected as entries: `Object.fromEntries` makes every key an own one, where
+  // assigning `voices['__proto__']` would set the object's prototype instead.
+  const voiceEntries: [string, BootReportVoice[]][] = [];
   if (!isObject(columns.voices)) {
     dropped.push(`voices in ${where} is not an object and was read as empty`);
   } else {
     for (const [vendor, list] of Object.entries(columns.voices)) {
       if (!Array.isArray(list)) {
         dropped.push(`voices.${vendor} in ${where} is not a list and was read as empty`);
-        voices[vendor] = [];
+        voiceEntries.push([vendor, []]);
         continue;
       }
       const kept: BootReportVoice[] = [];
@@ -119,9 +121,10 @@ export function parseBootReport(row: Record<string, unknown>): BootReport {
         if (parsed.success) kept.push(parsed.data);
         else dropped.push(`voice entry ${String(index + 1)} of ${vendor} in ${where} is malformed and was skipped`);
       });
-      voices[vendor] = kept;
+      voiceEntries.push([vendor, kept]);
     }
   }
+  const voices: Record<string, BootReportVoice[]> = Object.fromEntries(voiceEntries);
 
   return {
     id: columns.id,
@@ -212,7 +215,7 @@ export function offeredIssues(document: unknown, report: BootReport | null): Doc
   const vendor = valueAt(document, 'tts.provider');
   const voice = valueAt(document, 'tts.voice');
   if (typeof vendor === 'string' && typeof voice === 'string') {
-    const list = report.voices[vendor] ?? [];
+    const list = voicesOf(report.voices, vendor);
     // The schema copy trims the leaf, so the id the row would carry is trimmed.
     const id = voice.trim();
     if (list.length > 0 && id !== '' && !list.some((entry) => entry.id === id)) {
@@ -225,10 +228,21 @@ export function offeredIssues(document: unknown, report: BootReport | null): Doc
   return issues;
 }
 
+/**
+ * A vendor's voice list, empty when the report carries none. The vendor comes
+ * from a document or a snapshot, never from this code, so it is looked up as
+ * an own key and only when the schema copy names it: `constructor` or
+ * `__proto__` is no vendor, and must not reach the object's prototype.
+ */
+function voicesOf(voices: Record<string, BootReportVoice[]>, vendor: string): BootReportVoice[] {
+  if (!(TTS_PROVIDER_VALUES as readonly string[]).includes(vendor)) return [];
+  return Object.hasOwn(voices, vendor) ? (voices[vendor] ?? []) : [];
+}
+
 /** D6: the label of a voice id under a vendor, or null when the report lists no such id. */
 export function voiceLabel(report: BootReport | null, vendor: string, id: string): string | null {
   if (report === null) return null;
-  return report.voices[vendor]?.find((entry) => entry.id === id)?.label ?? null;
+  return voicesOf(report.voices, vendor).find((entry) => entry.id === id)?.label ?? null;
 }
 
 /**
@@ -351,7 +365,7 @@ export function providerOptions(
 
 /** The vendor's voice list when it has one to choose from, else null — the text box (D4). */
 export function voiceList(offered: Offered | null, vendor: string): BootReportVoice[] | null {
-  const list = offered?.voices[vendor] ?? [];
+  const list = offered === null ? [] : voicesOf(offered.voices, vendor);
   return list.length === 0 ? null : list;
 }
 

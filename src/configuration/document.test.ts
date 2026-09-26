@@ -45,14 +45,16 @@ describe('fieldsOf', () => {
     // 12 turn leaves; stt = the discriminator plus the three branches' leaves
     // (8 deepgram, 7 soniox, 6 speechmatics); llm = model, fallback and five
     // params; tts = the discriminator plus 8 cartesia and 11 elevenlabs; the
-    // six texts. A leaf the pipeline adds moves one of these numbers.
+    // six texts; the router's mode and three thresholds. A leaf the pipeline
+    // adds moves one of these numbers.
     expect(byGroup('turn')).toHaveLength(12);
     expect(byGroup('stt')).toHaveLength(22);
     expect(byGroup('llm')).toHaveLength(7);
     expect(byGroup('tts')).toHaveLength(20);
     expect(byGroup('text')).toHaveLength(6);
+    expect(byGroup('router')).toHaveLength(4);
     // The shared paths are one path with one field per branch.
-    expect(leafPaths()).toHaveLength(57);
+    expect(leafPaths()).toHaveLength(61);
     expect(fields.filter((f) => f.path === 'stt.params.language').map((f) => f.vendor)).toEqual([
       'deepgram',
       'soniox',

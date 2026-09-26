@@ -14,14 +14,14 @@
 import { formatNumber } from '@/calls';
 import { windowPhrase } from '@/calls-stats';
 import { unpricedInWindow } from '@/cost';
-import { aggregate, configuredLlmOf, parseGroup } from '@/dashboard';
+import { aggregate, configuredLlmOf, configuredRouterOf, parseGroup } from '@/dashboard';
 import { TARGETS } from '@/latency';
 import { dashboardWindow } from '@/queries/dashboard';
 import Badge from '@/ui/badge';
 import Caveat from '@/ui/caveat';
 import PageHead from '@/ui/page-head';
 import WindowControl from '@/ui/window-control';
-import { parseWindow } from '@/window';
+import { first, parseWindow } from '@/window';
 import CallsPerDay from './_overview/calls-per-day';
 import Configurations from './_overview/configurations';
 import HowCallsEnded from './_overview/how-calls-ended';
@@ -32,11 +32,6 @@ import TurnFailures from './_overview/turn-failures';
 
 // The Overview is about the database right now; nothing here may be prerendered.
 export const dynamic = 'force-dynamic';
-
-/** A query string key can arrive repeated; the first value is the answer. */
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 export default async function OverviewPage({
   searchParams,
@@ -60,9 +55,14 @@ export default async function OverviewPage({
   // The models the window ran on that the copied price table cannot price
   // (ADR 0015 decision 7), named in the cost figure's tooltip. Each call's
   // configured OPENROUTER_MODEL counts too: an unconsented call has no turn
-  // rows to name its LLM (trap 1), yet its stored total paid for it.
+  // rows to name its LLM (trap 1), yet its stored total paid for it. So does
+  // the router model of a call the shadow router ran on (trap 3).
   const unpriced = unpricedInWindow(
-    calls.map((call) => ({ ...call, configured_llm: configuredLlmOf(call.config_snapshot) })),
+    calls.map((call) => ({
+      ...call,
+      configured_llm: configuredLlmOf(call.config_snapshot),
+      configured_router: configuredRouterOf(call.config_snapshot),
+    })),
     turns,
   );
 

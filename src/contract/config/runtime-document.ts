@@ -109,6 +109,15 @@ export const TTS_PROVIDER_VALUES = ['cartesia', 'elevenlabs'] as const;
 export type TtsProviderValue = (typeof TTS_PROVIDER_VALUES)[number];
 
 /**
+ * What the router does on a caller turn (ADR 0032 Decision 6): `off` asks
+ * nothing and records nothing; `shadow` asks the router beside the LLM and
+ * writes its decision to the trail, never to what the caller hears. `on`
+ * arrives with J5. `ROUTER_MODE` in `config/schema.ts` takes the same list, so
+ * the mode a form offers is a mode the boot accepts.
+ */
+export const ROUTER_MODE_VALUES = ['off', 'shadow'] as const;
+
+/**
  * The texts this build ships with (ADR 0021 Decision 4): the default of each
  * of the six text keys, and the target of the console's "restore" — a new row
  * carrying one of these strings. They are no longer "in code on purpose": a
@@ -590,6 +599,19 @@ export const LEAF = {
     /** One to four, rotated by turn index (ADR 0030). */
     holding_lines: z.array(spokenText('text.holding_lines')).min(1).max(4),
   },
+  /**
+   * The router's mode and the three thresholds the shell judges its decision
+   * by (ADR 0032 Decisions 3 and 6): a turn routes to the FAQ entry when
+   * `confidence >= faq_min_confidence`, `medical < medical_max` and
+   * `extra_request < extra_request_max`. Each is a probability the vendor
+   * answers in 0–1, so each bound is 0–1 too.
+   */
+  router: {
+    mode: z.enum(ROUTER_MODE_VALUES),
+    faq_min_confidence: z.number().min(0).max(1),
+    medical_max: z.number().min(0).max(1),
+    extra_request_max: z.number().min(0).max(1),
+  },
 } as const;
 
 /**
@@ -852,6 +874,19 @@ export const runtimeConfigSchema = z.strictObject({
       canned_degraded: LEAF.text.canned_degraded.optional(),
       canned_farewell: LEAF.text.canned_farewell.optional(),
       holding_lines: LEAF.text.holding_lines.optional(),
+    })
+    .optional(),
+  /**
+   * The router (ADR 0032). Which vendor and model it runs on is not a row's
+   * to choose — `TYPESAFE_MODEL` is operator-named — so the group holds only
+   * the mode and the thresholds.
+   */
+  router: z
+    .strictObject({
+      mode: LEAF.router.mode.optional(),
+      faq_min_confidence: LEAF.router.faq_min_confidence.optional(),
+      medical_max: LEAF.router.medical_max.optional(),
+      extra_request_max: LEAF.router.extra_request_max.optional(),
     })
     .optional(),
 });

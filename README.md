@@ -30,7 +30,7 @@ Three answers, and only three:
 |---|---|
 | `200 {"role":"console","status":"ok"}` | connected, and as the read-only role; the body's `editor` object says the same for `EDITOR_DATABASE_URL` (`{"status":"not configured"}` when unset) and never changes the HTTP status |
 | `503 {"role":"<other>","status":"degraded"}` | connected as some other role — the wrong credential is in `.env` |
-| `503 {"error":"<message>","status":"error"}` | no `DATABASE_URL`, or the database refused / timed out |
+| `503 {"error":"<code>","status":"error"}` | no `DATABASE_URL`, or the database refused / timed out; the body carries only a code (`ECONNREFUSED`, `SQLSTATE 28P01`, …) and the full message is in the server log (`docker compose logs admin`) |
 
 ## Run locally against the live box
 

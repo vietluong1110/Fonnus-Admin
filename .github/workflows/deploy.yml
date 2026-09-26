@@ -26,15 +26,39 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # This repo and the pipeline are checked out side by side, so `../Fonnus`
+    # resolves from this repo's root exactly as it does on a laptop.
+    defaults:
+      run:
+        working-directory: Fonnus-Admin
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: Fonnus-Admin
+      # The pipeline, where every drift test looks for it (contract hash, price
+      # table, flat keys, document, glossary, tokens). Without it those suites
+      # skip themselves and CI would pass on a console that no longer matches
+      # the pipeline. The token reads the private repo and nothing else, and is
+      # not left in .git/config for the install scripts below to find.
+      - uses: actions/checkout@v4
+        with:
+          repository: VoidKeishi/Fonnus
+          path: Fonnus
+          token: ${{ secrets.FONNUS_READ_TOKEN }}
+          persist-credentials: false
+      - name: Check the pipeline sits where the drift tests look
+        run: |
+          test -f ../Fonnus/docs/read-contract.md || { echo "::error::../Fonnus/docs/read-contract.md is missing, so every drift test would skip"; exit 1; }
       # Version comes from package.json's packageManager field — one pin, kept in
       # step with the Dockerfile.
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: Fonnus-Admin/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: Fonnus-Admin/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm typecheck

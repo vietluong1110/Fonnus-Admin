@@ -134,12 +134,6 @@ export function legSpans(marks: Partial<Record<Stage, number>>): Record<LegName,
   return spans;
 }
 
-/**
- * The trust boundary for `turn.marks`: a jsonb column, so anything at all can
- * arrive. Keys the console does not know are dropped rather than rendered — the
- * pipeline adds marks additively (contract §4), and an unknown key has no leg to
- * belong to. A non-finite or non-number value is dropped for the same reason.
- */
 export interface EndOfTurnRow {
   from: Stage;
   to: Stage;
@@ -178,8 +172,8 @@ export function endOfTurnRows(marks: Partial<Record<Stage, number>>): EndOfTurnR
  * The head pairs — spans between two head marks that belong to no leg. There is
  * one today: `llm_first_reasoning → llm_first_token`, how long a reasoning model
  * thought before its first spoken token (`../Fonnus` W2-L3 F7, contract §3.2).
- * It sits INSIDE `llm_ttft`, which the six-leg row already draws whole, so it is
- * a second reading of that leg and never a seventh leg — the pipeline names no
+ * It sits INSIDE `llm_ttft`, which the leg rows already draw whole, so it is a
+ * second reading of that leg and never an eighth leg — the pipeline names no
  * leg for it and this console coins none (`docs/upstream.md` §The waterfall).
  * `label` is the plain-language gloss beside the mark pair, not a name for it.
  */
@@ -228,6 +222,12 @@ export function headPairRows(marks: Partial<Record<Stage, number>>): HeadPairRow
   return rows;
 }
 
+/**
+ * The trust boundary for `turn.marks`: a jsonb column, so anything at all can
+ * arrive. Keys the console does not know are dropped rather than rendered — the
+ * pipeline adds marks additively (contract §4), and an unknown key has no leg to
+ * belong to. A non-finite or non-number value is dropped for the same reason.
+ */
 export function parseMarks(value: unknown): Partial<Record<Stage, number>> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
   const source = value as Record<string, unknown>;

@@ -228,6 +228,15 @@ describe('voiceLabel (D6)', () => {
     expect(voiceLabel(REPORT, 'elevenlabs', 'linh')).toBeNull();
     expect(voiceLabel(null, 'cartesia', 'linh')).toBeNull();
   });
+
+  it('reads a vendor as an own key the schema names, never through the prototype', () => {
+    expect(voiceLabel(REPORT, 'constructor', 'linh')).toBeNull();
+    expect(voiceList(offeredOf(REPORT), 'toString')).toBeNull();
+    // A `__proto__` key in the column stays a key, and is still no vendor.
+    const report = parseBootReport(row({ voices: JSON.parse('{"__proto__":[{"id":"x","label":"X","is_default":true}]}') as unknown }));
+    expect(Object.getPrototypeOf(report.voices)).toBe(Object.prototype);
+    expect(voiceLabel(report, '__proto__', 'x')).toBeNull();
+  });
 });
 
 describe('which report labels the last call’s voice (D6)', () => {

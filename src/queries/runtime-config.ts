@@ -66,6 +66,27 @@ export async function runtimeConfigRows(tenantId: string): Promise<RuntimeConfig
   return rows;
 }
 
+/**
+ * The tenant's newest row, id and document only, or null when it has none:
+ * what a review diffs against and what a save must still find newest
+ * (`insertRuntimeConfig`'s `base`). Read by the server action itself, never
+ * taken from the form, so the diff an operator approves is against the row the
+ * database holds now.
+ */
+export async function newestRuntimeConfig(
+  tenantId: string,
+): Promise<{ id: string; config: unknown } | null> {
+  const { rows } = await getPool().query<{ id: string; config: unknown }>(
+    `select id::text as id, config
+       from runtime_config
+      where tenant_id = $1
+      order by runtime_config.id desc
+      limit 1`,
+    [tenantId],
+  );
+  return rows[0] ?? null;
+}
+
 export interface AppliedCount {
   /** Calls the tenant answered after the row landed. */
   total: number;

@@ -17,11 +17,13 @@ const redirect = vi.fn();
 const insertRuntimeConfig = vi.fn();
 const requireAccount = vi.fn();
 const latestBootReport = vi.fn();
+const newestRuntimeConfig = vi.fn();
 
 vi.mock('next/cache', () => ({ revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect }));
 vi.mock('@/writes/runtime-config', () => ({ insertRuntimeConfig }));
 vi.mock('@/queries/boot-report', () => ({ latestBootReport }));
+vi.mock('@/queries/runtime-config', () => ({ newestRuntimeConfig }));
 vi.mock('@/account', () => {
   // The real class, because the action tells "no account" from every other
   // failure by `instanceof` — a plain Error here would be rethrown.
@@ -73,14 +75,19 @@ beforeEach(() => {
   requireAccount.mockResolvedValue('lesky');
   insertRuntimeConfig.mockResolvedValue({ ok: true, id: '42', createdAt: new Date() });
   latestBootReport.mockResolvedValue(null);
+  newestRuntimeConfig.mockResolvedValue(null);
 });
+
+/** The tenant's newest row, as the action reads it for itself. */
+function newestIs(config: Record<string, unknown>, id = '7'): void {
+  newestRuntimeConfig.mockResolvedValue({ id, config });
+}
 
 describe('review', () => {
   it('builds the document, the diff and the advice, and writes nothing', async () => {
     const state = await submit({
       tenant: 'pilot',
       intent: 'review',
-      from: '{}',
       'turn.max_reprompts': '3',
       'llm.model': 'openai/gpt-oss-120b',
     });
@@ -105,7 +112,6 @@ describe('review', () => {
     const state = await submit({
       tenant: 'pilot',
       intent: 'review',
-      from: '{}',
       'turn.max_reprompts': '3',
       // Plumbing, never part of the document or of the form's values.
       note: 'shorter reprompts',
@@ -120,7 +126,6 @@ describe('review', () => {
     const state = await submit({
       tenant: 'pilot',
       intent: 'review',
-      from: '{}',
       // A number that does not parse stays the raw string, so the schema
       // reports on the leaf rather than the form sending something else.
       'turn.max_reprompts': 'three',
@@ -135,7 +140,8 @@ describe('review', () => {
   });
 
   it('proposes the empty document when nothing is ticked — "back to boot config"', async () => {
-    const state = await submit({ tenant: 'pilot', intent: 'review', from: '{"turn":{"max_reprompts":3}}' });
+    newestIs({ turn: { max_reprompts: 3 } });
+    const state = await submit({ tenant: 'pilot', intent: 'review' });
 
     if (state.step !== 'review') throw new Error('expected the review step');
     expect(state.document).toEqual({});
@@ -149,7 +155,6 @@ describe('review carries what the save would insert (ADR 0012 D7)', () => {
   const TRIMMED = {
     tenant: 'pilot',
     intent: 'review',
-    from: '{}',
     'stt.provider': 'soniox',
     'stt.params.context_text': 'dental clinic ',
     'tts.provider': 'cartesia',
@@ -174,7 +179,7 @@ describe('review carries what the save would insert (ADR 0012 D7)', () => {
     const reviewed = await submit(TRIMMED);
     if (reviewed.step !== 'review') throw new Error('expected the review step');
     // What the hidden `document` field carries is `JSON.stringify(state.document)`.
-    await submit({ tenant: 'pilot', intent: 'save', document: JSON.stringify(reviewed.document) });
+    await submit({ tenant: 'pilot', intent: 'save', base: '', document: JSON.stringify(reviewed.document) });
     expect(insertRuntimeConfig).toHaveBeenCalledOnce();
     expect(insertRuntimeConfig.mock.calls[0]?.[0]).toMatchObject({ config: reviewed.document });
   });
@@ -186,19 +191,29 @@ describe('review carries what the save would insert (ADR 0012 D7)', () => {
     expect(state.document).toMatchObject({ turn: { max_reprompts: 'three' } });
   });
 
-  it('diffs against the `from` the page sets — the newest row — not the document loaded', async () => {
+  it('diffs against the newest row it reads itself — not the document loaded, nor the client', async () => {
     // The form was loaded from an older row (max_reprompts 1) and submitted as
     // is; the newest row (max_reprompts 3) is the base, so the restore shows.
+    // A `from` field is ignored: the diff base is never client-held.
+    newestIs({ turn: { max_reprompts: 3 } }, '12');
     const state = await submit({
       tenant: 'pilot',
       intent: 'review',
-      from: '{"turn":{"max_reprompts":3}}',
+      from: '{"turn":{"max_reprompts":1}}',
       'turn.max_reprompts': '1',
     });
     if (state.step !== 'review') throw new Error('expected the review step');
+    expect(newestRuntimeConfig).toHaveBeenCalledWith('pilot');
     expect(state.diff).toEqual([
       { path: 'turn.max_reprompts', change: 'changed', from: 3, to: 1 },
     ]);
+    expect(state.base).toBe('12');
+  });
+
+  it('carries no base when the tenant has no row yet', async () => {
+    const state = await submit({ tenant: 'pilot', intent: 'review' });
+    if (state.step !== 'review') throw new Error('expected the review step');
+    expect(state.base).toBeNull();
   });
 });
 
@@ -233,7 +248,7 @@ describe('save', () => {
     const { NoAccountError } = await import('@/account');
     requireAccount.mockRejectedValue(new NoAccountError());
 
-    const state = await submit({ tenant: 'pilot', intent: 'save', document: OK_DOCUMENT });
+    const state = await submit({ tenant: 'pilot', intent: 'save', base: '', document: OK_DOCUMENT });
 
     expect(state.step).toBe('review');
     if (state.step !== 'review') return;
@@ -246,6 +261,7 @@ describe('save', () => {
     const state = await submit({
       tenant: 'pilot',
       intent: 'save',
+      base: '',
       // What a hand-edited or stale hidden field looks like: the shape the
       // review step could never have produced.
       document: '{"turn":{"max_reprompts":"three"}}',
@@ -269,6 +285,7 @@ describe('save', () => {
     const state = await submit({
       tenant: 'pilot',
       intent: 'save',
+      base: '',
       ...(document === undefined ? {} : { document }),
     });
 
@@ -279,7 +296,7 @@ describe('save', () => {
   });
 
   it('takes a literal {} — "back to boot config" is a legal document', async () => {
-    await submit({ tenant: 'pilot', intent: 'save', document: '{}' });
+    await submit({ tenant: 'pilot', intent: 'save', base: '', document: '{}' });
 
     expect(insertRuntimeConfig).toHaveBeenCalledWith(expect.objectContaining({ config: {} }));
   });
@@ -288,6 +305,7 @@ describe('save', () => {
     await submit({
       tenant: 'pilot',
       intent: 'save',
+      base: '',
       group: 'llm',
       document: OK_DOCUMENT,
       note: 'shorter',
@@ -297,6 +315,7 @@ describe('save', () => {
       tenantId: 'pilot',
       config: { turn: { max_reprompts: 3 } },
       note: 'shorter',
+      base: null,
       by: 'lesky',
     });
     expect(revalidatePath).toHaveBeenCalledWith('/configuration');
@@ -309,11 +328,59 @@ describe('save', () => {
   });
 
   it('stores an empty note as null: "no note" is one fact', async () => {
-    await submit({ tenant: 'pilot', intent: 'save', document: OK_DOCUMENT, note: '' });
+    await submit({ tenant: 'pilot', intent: 'save', base: '', document: OK_DOCUMENT, note: '' });
 
     expect(insertRuntimeConfig).toHaveBeenCalledWith(
       expect.objectContaining({ note: null }),
     );
+  });
+
+  it('checks the account before reading anything for the save', async () => {
+    const { NoAccountError } = await import('@/account');
+    requireAccount.mockRejectedValue(new NoAccountError());
+    await submit({ tenant: 'pilot', intent: 'save', base: '', document: OK_DOCUMENT });
+    expect(requireAccount.mock.invocationCallOrder[0]).toBeLessThan(
+      latestBootReport.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('writes nothing when base is missing — not a submission this screen sent', async () => {
+    const state = await submit({ tenant: 'pilot', intent: 'save', document: OK_DOCUMENT });
+    expect(state.step).toBe('edit');
+    expect(state.failure).toContain('the form did not arrive as this screen sends it');
+    expect(insertRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('hands the reviewed base to the insert', async () => {
+    await submit({ tenant: 'pilot', intent: 'save', base: '41', document: OK_DOCUMENT });
+    expect(insertRuntimeConfig).toHaveBeenCalledWith(expect.objectContaining({ base: '41' }));
+  });
+
+  it('shows a refusal against the row that is newest now, with its id as the next base', async () => {
+    insertRuntimeConfig.mockResolvedValue({ ok: false, reason: 'another row was saved since this review' });
+    newestRuntimeConfig
+      .mockResolvedValueOnce({ id: '41', config: {} })
+      .mockResolvedValueOnce({ id: '43', config: { turn: { max_reprompts: 5 } } });
+    const state = await submit({ tenant: 'pilot', intent: 'save', base: '41', document: OK_DOCUMENT });
+    if (state.step !== 'review') throw new Error('expected the review step');
+    expect(state.base).toBe('43');
+    expect(state.diff).toEqual([
+      { path: 'turn.max_reprompts', change: 'changed', from: 5, to: 3 },
+    ]);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it('refuses a note longer than the limit and writes nothing', async () => {
+    const state = await submit({
+      tenant: 'pilot',
+      intent: 'save',
+      base: '',
+      document: OK_DOCUMENT,
+      note: 'x'.repeat(501),
+    });
+    if (state.step !== 'review') throw new Error('expected the review step');
+    expect(state.failure).toContain('longer than 500 characters');
+    expect(insertRuntimeConfig).not.toHaveBeenCalled();
   });
 
   it('shows the write module\'s refusal as it words it, and does not navigate', async () => {
@@ -322,7 +389,7 @@ describe('save', () => {
       reason: 'tenant pilot does not exist in tenant_config',
     });
 
-    const state = await submit({ tenant: 'pilot', intent: 'save', document: OK_DOCUMENT });
+    const state = await submit({ tenant: 'pilot', intent: 'save', base: '', document: OK_DOCUMENT });
 
     if (state.step !== 'review') throw new Error('expected the review step');
     expect(state.failure).toBe('tenant pilot does not exist in tenant_config');
@@ -340,7 +407,7 @@ describe('a request this screen could not have sent', () => {
   });
 
   it('answers a missing tenant the same way', async () => {
-    const state = await submit({ intent: 'save', document: '{}' });
+    const state = await submit({ intent: 'save', base: '', document: '{}' });
 
     expect(state.step).toBe('edit');
     expect(state.failure).not.toBeNull();
@@ -352,7 +419,6 @@ describe('the boot report holds the document to what this box offers (ADR 0012 D
   const OFF_BOX = {
     tenant: 'pilot',
     intent: 'review',
-    from: '{}',
     'stt.provider': 'soniox',
     'tts.provider': 'cartesia',
     'tts.voice': 'ngoc',
@@ -382,6 +448,7 @@ describe('the boot report holds the document to what this box offers (ADR 0012 D
     const state = await submit({
       tenant: 'pilot',
       intent: 'save',
+      base: '',
       document: '{"tts":{"provider":"cartesia","voice":"ngoc"}}',
     });
 
@@ -398,6 +465,7 @@ describe('the boot report holds the document to what this box offers (ADR 0012 D
     await submit({
       tenant: 'pilot',
       intent: 'save',
+      base: '',
       document: '{"tts":{"provider":"cartesia","voice":"minh"}}',
     });
     expect(latestBootReport).toHaveBeenCalledOnce();

@@ -9,8 +9,15 @@
  * The document is validated against the copied schema before it gets here
  * (`src/configuration/document.ts`); Postgres' CHECK is the last net, not the
  * first.
+ *
+ * A row replaces the whole document, so a save made from a stale review would
+ * silently undo whatever another operator saved in between. The insert
+ * therefore runs in a transaction that first checks the tenant's newest row is
+ * still the one the operator reviewed against (`base`), under a per-tenant
+ * advisory lock so two console saves cannot both pass the check. The statement
+ * itself stays the contract's, verbatim.
  */
-import { DatabaseError } from 'pg';
+import { DatabaseError, type PoolClient } from 'pg';
 import type { Account } from '@/account';
 import { createdBy } from '@/account';
 import { getEditorPool } from '@/db';
@@ -49,10 +56,18 @@ const SERVER_REFUSAL = 'the save failed; nothing was written';
  */
 const INCOMPLETE = 'the save did not complete — reload and check the history before saving again';
 
+/** Another row landed after the review this save was made from. */
+export const NEWER_ROW =
+  'another row was saved since this review; nothing was written — the diff below is now against that row, review it and save again';
+
 /**
  * One new `runtime_config` row. `id` comes back as text because it is a
  * `bigint` and it is also the `runtime.version` the next call's snapshot
  * carries — the value the screen compares against, never arithmetic.
+ *
+ * `base` is the id of the tenant's newest row when the operator reviewed the
+ * document, null when the tenant had none; the insert happens only while that
+ * is still the newest row.
  *
  * `note` is stored null rather than empty: "no note" is one fact, and the
  * column is nullable for it.
@@ -61,6 +76,7 @@ export async function insertRuntimeConfig(input: {
   tenantId: string;
   config: Record<string, unknown>;
   note: string | null;
+  base: string | null;
   by: Account;
 }): Promise<InsertResult> {
   const pool = getEditorPool();
@@ -70,8 +86,28 @@ export async function insertRuntimeConfig(input: {
     return { ok: false, reason: 'editing is not configured: EDITOR_DATABASE_URL is unset' };
   }
   const note = input.note === null || input.note === '' ? null : input.note;
+  let client: PoolClient | undefined;
   try {
-    const { rows } = await pool.query<{ id: string | number; created_at: Date }>(
+    client = await pool.connect();
+    await client.query('begin');
+    // Held to the end of the transaction: a second save for the same tenant
+    // waits here, then sees this one's row as the newest.
+    await client.query('select pg_advisory_xact_lock(hashtext($1))', [
+      `runtime_config:${input.tenantId}`,
+    ]);
+    const newest = await client.query<{ id: string }>(
+      `select id::text as id
+         from runtime_config
+        where tenant_id = $1
+        order by runtime_config.id desc
+        limit 1`,
+      [input.tenantId],
+    );
+    if ((newest.rows[0]?.id ?? null) !== input.base) {
+      await client.query('rollback');
+      return { ok: false, reason: NEWER_ROW };
+    }
+    const { rows } = await client.query<{ id: string | number; created_at: Date }>(
       `insert into runtime_config (tenant_id, config, created_by, note)
        values ($1, $2::jsonb, $3, $4)
        returning id, created_at`,
@@ -80,9 +116,17 @@ export async function insertRuntimeConfig(input: {
     const row = rows[0];
     // `returning` on a successful single-row insert always yields one row; an
     // empty result would mean the driver handed back something else entirely.
-    if (row === undefined) return { ok: false, reason: SERVER_REFUSAL };
+    if (row === undefined) {
+      await client.query('rollback');
+      return { ok: false, reason: SERVER_REFUSAL };
+    }
+    await client.query('commit');
     return { ok: true, id: String(row.id), createdAt: row.created_at };
   } catch (err) {
+    // A connection left mid-transaction is discarded, never handed back to the
+    // pool for the next save to inherit.
+    client?.release(err instanceof Error ? err : true);
+    client = undefined;
     const refusal = err instanceof DatabaseError ? WRITE_REFUSALS[err.code ?? ''] : undefined;
     if (refusal !== undefined) return { ok: false, reason: refusal(input.tenantId) };
     const message = err instanceof Error ? err.message : String(err);
@@ -92,5 +136,7 @@ export async function insertRuntimeConfig(input: {
     // client-side `query_timeout`, a dropped connection — never reached an
     // answer, and the two cases must not be told the same way.
     return { ok: false, reason: err instanceof DatabaseError ? SERVER_REFUSAL : INCOMPLETE };
+  } finally {
+    client?.release();
   }
 }

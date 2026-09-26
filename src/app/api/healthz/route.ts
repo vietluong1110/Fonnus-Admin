@@ -14,7 +14,7 @@
  * editor's is bounded well inside the callers' patience.
  * `deploy.sh` prints a warning on `editor.status` instead.
  */
-import type { Pool } from 'pg';
+import { DatabaseError, type Pool } from 'pg';
 import { getEditorPool, getPool } from '@/db';
 import { EXPECTED_EDITOR_ROLE, EXPECTED_ROLE, healthBody, type HealthAnswer } from '@/health';
 
@@ -35,8 +35,27 @@ async function probe(open: () => Pool, expected: string): Promise<HealthAnswer> 
       : healthBody({ role }, expected);
   } catch (err) {
     // Missing config, refused connection, timeout — all one answer to the caller.
-    return healthBody({ error: err instanceof Error ? err.message : String(err) });
+    return healthBody({ error: failureOf(err) });
   }
+}
+
+/** A Node system error's code: `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`. */
+const SYSTEM_CODE = /^E[A-Z]+$/;
+
+/**
+ * What the body says about a failure: a code, never the message. The route
+ * answers anyone who can reach it, and a driver or config message can carry
+ * the host, the port or the role a connection string names (the same rule as
+ * `src/queries/boot-report.ts`). The message goes to the server log, which is
+ * what `ops/deploy.sh` prints beside the body when the gate fails.
+ */
+function failureOf(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`healthz: ${message}\n`);
+  if (err instanceof DatabaseError && err.code !== undefined) return `SQLSTATE ${err.code}`;
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && SYSTEM_CODE.test(code)) return code;
+  return 'failed; the reason is in the server log';
 }
 
 /**

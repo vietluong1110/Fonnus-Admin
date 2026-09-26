@@ -36,8 +36,11 @@ export const MAX_WINDOW_DAYS = 366;
  * suite rather than shift a window silently.
  */
 
-/** A query string key can arrive repeated; the first value is the answer. */
-function first(value: string | string[] | undefined): string | undefined {
+/**
+ * A query string key can arrive repeated; the first value is the answer. Every
+ * screen reads its search params through this one.
+ */
+export function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
@@ -70,6 +73,9 @@ const RELATIVE = /^(\d+)([dhm])$/;
 
 /** `YYYY-MM-DD` — a day in the clinic's zone rather than an instant. */
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** `YYYY-MM-DDTHH:MM[:SS[.fff]]` (or with a space) and no zone — a wall-clock time in the clinic's zone. */
+const LOCAL_DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)$/;
 
 function sinceError(trimmed: string): string {
   return `since expects 7d, 36h, 90m or an ISO instant, got '${trimmed}' — showing the default ${DEFAULT_SINCE} window.`;
@@ -119,12 +125,20 @@ export function parseSince(spec: string | undefined, now: Date): Since {
 
 /**
  * An absolute bound: a date-only value is 00:00 of that day in the clinic's
- * zone (ADR 0006), anything else is taken literally — a value with a time is
- * the instant it spells, whatever zone it carries. Null when `Date` cannot read
+ * zone (ADR 0006), and a date and time with no zone is that wall-clock time in
+ * the clinic's zone too — left to `Date`, it would be read in the process's
+ * zone, which is UTC in the container and the developer's own on a laptop. A
+ * value that carries its zone (`Z`, `+07:00`) is the instant it spells;
+ * anything else is handed to `Date` as it stands. Null when `Date` cannot read
  * it at all.
  */
 function parseAbsolute(trimmed: string): Date | null {
-  const raw = DATE_ONLY.test(trimmed) ? `${trimmed}T00:00:00${CALL_TIME_ZONE_OFFSET}` : trimmed;
+  const zoneless = LOCAL_DATE_TIME.exec(trimmed);
+  const raw = DATE_ONLY.test(trimmed)
+    ? `${trimmed}T00:00:00${CALL_TIME_ZONE_OFFSET}`
+    : zoneless !== null
+      ? `${zoneless[1] ?? ''}T${zoneless[2] ?? ''}${CALL_TIME_ZONE_OFFSET}`
+      : trimmed;
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -219,6 +233,12 @@ export function parseWindow(
 export type BucketUnit = 'hour' | 'day' | 'week';
 
 /**
+ * The span up to which a window is drawn in hours: two days is 48 columns, as
+ * many as 45 day columns, and a day or two drawn in days is one or two bars.
+ */
+const HOUR_UP_TO_DAYS = 2;
+
+/**
  * The span past which a day column stops being readable: 45 days is already
  * 45 columns, and the label row can only carry every fifth of them.
  */
@@ -226,13 +246,15 @@ const WEEK_ABOVE_DAYS = 45;
 
 /**
  * Which unit the window is drawn in. A preset answers by name, so the two
- * screens never disagree about what `24h` looks like; a custom range answers
- * by its span, measured against `now` when it is open-ended.
+ * screens never disagree about what `24h` looks like; any other window (`36h`,
+ * `90m`, a range) answers by its span, measured against `now` when it is
+ * open-ended.
  */
 export function bucketUnit(window: Window, now: Date): BucketUnit {
   if (window.preset === '24h') return 'hour';
   if (window.preset === '7d' || window.preset === '30d') return 'day';
   const span = (window.until ?? now).getTime() - window.since.getTime();
+  if (span <= HOUR_UP_TO_DAYS * DAY_MS) return 'hour';
   return span <= WEEK_ABOVE_DAYS * DAY_MS ? 'day' : 'week';
 }
 

@@ -122,4 +122,10 @@ export const FLAT_KEYS: Readonly<Record<string, string | Readonly<Record<string,
   'text.canned_degraded': 'CANNED_DEGRADED',
   'text.canned_farewell': 'CANNED_FAREWELL',
   'text.holding_lines': 'HOLDING_LINES',
+  // The router's mode and thresholds (ADR 0032 Decision 6). Its model is not
+  // here: `TYPESAFE_MODEL` is operator-named, never a row's to choose.
+  'router.mode': 'ROUTER_MODE',
+  'router.faq_min_confidence': 'ROUTER_FAQ_MIN_CONFIDENCE',
+  'router.medical_max': 'ROUTER_MEDICAL_MAX',
+  'router.extra_request_max': 'ROUTER_EXTRA_REQUEST_MAX',
 };

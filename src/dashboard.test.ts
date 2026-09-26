@@ -6,6 +6,7 @@ import {
   aggregate,
   bucketKey,
   configuredLlmOf,
+  configuredRouterOf,
   dayKey,
   dayLabel,
   differingKeys,
@@ -442,6 +443,16 @@ describe('voiceIdOf — the one voice rule of the Overview and the call detail',
   });
 });
 
+describe('configuredRouterOf', () => {
+  it('reads TYPESAFE_MODEL only when ROUTER_MODE says the router ran', () => {
+    expect(configuredRouterOf({ ROUTER_MODE: 'shadow', TYPESAFE_MODEL: 'jev-1.13.0' })).toBe('jev-1.13.0');
+    expect(configuredRouterOf({ ROUTER_MODE: 'off', TYPESAFE_MODEL: 'jev-1.13.0' })).toBeNull();
+    expect(configuredRouterOf({ TYPESAFE_MODEL: 'jev-1.13.0' })).toBeNull();
+    expect(configuredRouterOf({ ROUTER_MODE: 'shadow', TYPESAFE_MODEL: '' })).toBeNull();
+    expect(configuredRouterOf(null)).toBeNull();
+  });
+});
+
 describe('configuredLlmOf', () => {
   it("reads the snapshot's own OPENROUTER_MODEL as a non-empty string", () => {
     expect(configuredLlmOf({ OPENROUTER_MODEL: 'openai/gpt-oss-120b' })).toBe('openai/gpt-oss-120b');
@@ -818,7 +829,8 @@ describe('aggregate', () => {
       'none',
       {
         since: new Date('2026-09-04T00:00:00+07:00'),
-        until: new Date('2026-09-06T00:00:00+07:00'),
+        // Three days: two or fewer are drawn in hours (`bucketUnit`).
+        until: new Date('2026-09-07T00:00:00+07:00'),
         preset: 'custom',
         spec: '2026-09-04',
       },
@@ -827,6 +839,7 @@ describe('aggregate', () => {
     expect(late.callsByBucket).toEqual([
       { key: '2026-09-04', label: '04-09', partial: false, consented: 0, notConsented: 0 },
       { key: '2026-09-05', label: '05-09', partial: false, consented: 1, notConsented: 0 },
+      { key: '2026-09-06', label: '06-09', partial: false, consented: 0, notConsented: 0 },
     ]);
   });
 

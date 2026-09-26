@@ -50,7 +50,7 @@ function input(over: Partial<SelectedTurnInput> = {}): SelectedTurnInput {
 }
 
 describe('selectedTurnView — the capsule stack of one turn', () => {
-  it('lays the rows in the screen order: headlines, the six legs, the three end-of-turn spans', () => {
+  it('lays the rows in the screen order: headlines, the seven legs, the three end-of-turn spans', () => {
     const view = selectedTurnView(input(), STARTED_AT);
     expect(view?.rows.map((row) => row.key)).toEqual([
       'pipeline_ms',

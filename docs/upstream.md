@@ -36,9 +36,11 @@ pools, the editor's under an `editor` object that never changes the HTTP status.
 **Scope, search, chips, page** — the URL contract is ADR 0006. One query
 (`callsInScope`) reads every call of the scope: the window (`started_at >= since`, and
 `< until` for a custom range — `call_log_started_idx` serves both) or, while a keyword is
-present, all history by two ORed predicates: `caller_phone_e164 LIKE '%' || $digits` and
-`id::text LIKE $hex || '%'`. Neither search predicate is served by an index (the uuid is
-cast to text; the suffix has no leading anchor) — ASSUMED a sequential scan of `call_log`,
+present, all history by ORed predicates: `caller_phone_e164 LIKE $pattern` for each pattern
+`phonePatterns` builds from the keyword (a suffix, a `+84…` prefix for a domestic or `+`
+number, or head and tail of the masked form) and `id::text LIKE $hex || '%'`. Neither kind
+is reliably served by an index (the uuid is cast to text; a suffix has no leading anchor) —
+ASSUMED a sequential scan of `call_log`,
 acceptable at the pilot's row count and settled by `EXPLAIN` on the box. A number that has
 aged out of the column (trap 5) cannot be found by search; the empty result says so.
 Everything else is computed in TypeScript over the scope's rows, so the copied rule is
@@ -358,9 +360,9 @@ both marks, so the "max of N" caveat usually applies), nearest-rank P50 / P95 / 
 `caller_perceived_ms` and `pipeline_ms` — which the pipeline's baseline JSON does not carry —
 against the ADR 0007 targets. Buckets take the **call's** `started_at` (a turn has no
 timestamp of its own) in `Asia/Ho_Chi_Minh`, the zone every screen pins, and the bucket
-unit follows the window (`bucketUnit` in `src/window.ts`): one hour for `24h`, one calendar
-day for `7d`, `30d` and a custom range of at most 45 days, one Monday-start week beyond
-that. The buckets cover the whole window, `since` to `until` (or now), so a quiet edge of
+unit follows the window (`bucketUnit` in `src/window.ts`): one hour for `24h` and any other
+window of at most two days (`36h`, `90m`, a one-day range), one calendar day for `7d`, `30d`
+and any other window of at most 45 days, one Monday-start week beyond that. The buckets cover the whole window, `since` to `until` (or now), so a quiet edge of
 the window shows as zeros rather than being cut off; a bucket with no turn is a null point,
 so the P95 bars leave a gap there instead of drawing a zero, while "Calls per day" draws a
 real zero (nobody rang is a measurement). A rolling preset starts inside a bucket, so the
@@ -404,8 +406,11 @@ marks" in the card head, and on each leg row whose sample is under 20 turns a vi
 beside its P95 (nearest-rank P95 of fewer than 20 values is the maximum), the per-leg count in
 the row's value tooltip; "first sentence of the reply only" in the `tts_ttfb` row's name; the
 window's Cost figure carries a visible "floor" while any model in the window is unpriced (each
-call's `stt_model`, `tts_model` and `config_snapshot.OPENROUTER_MODEL`, and every
-`turn.llm_model`), its
+call's `stt_model`, `tts_model` and `config_snapshot.OPENROUTER_MODEL`, every
+`turn.llm_model`, and `config_snapshot.TYPESAFE_MODEL` while the call's `ROUTER_MODE` is not
+`off` — trap 3 puts the router's decisions inside `total_cost_vnd` and prices a model with
+no row at 0; the console reads no router records, so a shadow call that asked the router
+nothing is still counted, which errs toward showing "floor"), its
 tooltip "a floor while these models are unpriced: <list>" or "every model in the window is
 priced" (ADR 0015 D7).
 
@@ -590,7 +595,13 @@ as JSON). The copy also carries `faqEntrySchema`, `FaqEntry`, `FAQ_MAX_ENTRIES` 
 
 **The write** (contract §7, verbatim): `insert into runtime_config (tenant_id, config,
 created_by, note) values ($1, $2::jsonb, $3, $4) returning id, created_at;` — `$3` is
-`console:<account>`, `$4` the optional note. Refusals the console maps to a sentence by
+`console:<account>`, `$4` the optional note (at most 500 characters, `NOTE_MAX_CHARS`). The
+insert runs in one transaction on one `console_editor` connection, after
+`pg_advisory_xact_lock(hashtext('runtime_config:<tenant>'))` and a read of the tenant's
+newest `runtime_config.id`: when that id is not the one the review diffed against (`base`,
+read by the review itself, never taken from the form's own choice), nothing is written and
+the review is shown again against the new row. The lock serialises two console saves; a row
+inserted by hand SQL at the same moment is not held by it. Refusals the console maps to a sentence by
 SQLSTATE: `42501` (the role cannot insert — the credential is not `console_editor` or its
 grant was revoked), `23514` (the document is not a JSON object), `23503` (the tenant does not
 exist). Any other refusal from the server reads "the save failed; nothing was written"; an

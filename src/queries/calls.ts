@@ -107,9 +107,9 @@ export async function callsInScope(scope: Scope): Promise<CallScopeRow[]> {
 
   const predicates: string[] = [];
   const values: string[] = [];
-  if (scope.phoneDigits !== null) {
-    values.push(scope.phoneDigits);
-    predicates.push(`call_log.caller_phone_e164 like '%' || $${String(values.length)}`);
+  for (const pattern of scope.phonePatterns) {
+    values.push(pattern);
+    predicates.push(`call_log.caller_phone_e164 like $${String(values.length)}`);
   }
   if (scope.idPrefix !== null) {
     values.push(scope.idPrefix);

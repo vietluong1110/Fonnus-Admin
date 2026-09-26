@@ -12,26 +12,62 @@
 import { isFetchable } from './artifacts';
 import { isCapEndReason, isUnconsentedOutcome } from './calls';
 import type { CallScopeRow } from './queries/calls';
-import { parseWindow, type Window } from './window';
-
-/** A query string key can arrive repeated; the first value is the answer. */
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
+import { first, parseWindow, type Window } from './window';
 
 export type Scope =
   | { kind: 'window'; window: Window }
   | {
       kind: 'search';
       keyword: string;
-      /** The keyword's digits, matched as a suffix of `caller_phone_e164`. */
-      phoneDigits: string | null;
+      /**
+       * `LIKE` patterns over `caller_phone_e164`, ORed (`phonePatterns`); empty
+       * when the keyword holds under three digits.
+       */
+      phonePatterns: string[];
       /** The keyword lower-cased, matched as a prefix of `id::text`. */
       idPrefix: string | null;
     };
 
-/** Everything but a digit stripped: `+84 90` searches for `8490`. */
+/** Everything but a digit stripped: `+84 90` keeps `8490`. */
 const NON_DIGIT = /\D/g;
+
+/** The bullets `maskPhone` renders, or a star typed in their place. */
+const MASK = /[•*]+/;
+
+/**
+ * How a typed number is looked for in `caller_phone_e164`, which is always
+ * `+84…` (contract §3, `call_log`). Each pattern holds only digits, `+` and the `%` put
+ * here, so nothing the operator typed can act as a wildcard (ADR 0006).
+ *
+ * - The masked form pasted back (`+84 90 ••• 4417`): the digits before the
+ *   bullets as a prefix, the ones after as a suffix — `••• 4417` has no prefix,
+ *   and a head written domestically (`090 ••• 4417`) is read as the next rule
+ *   reads it.
+ * - A number starting with `+`: its digits as a prefix.
+ * - A domestic number starting with `0`: `+84` in place of the `0`, as a
+ *   prefix — and the digits as they stand as a suffix too, since `0521` may as
+ *   well be the last four the operator remembers.
+ * - Any other digit run: a suffix, the last digits a caller is recognised by.
+ */
+export function phonePatterns(keyword: string): string[] {
+  const digits = keyword.replace(NON_DIGIT, '');
+  if (digits.length < 3) return [];
+  const [head = '', ...rest] = keyword.split(MASK);
+  if (rest.length > 0) {
+    const tailDigits = rest.join('').replace(NON_DIGIT, '');
+    return [`${e164Head(head)}%${tailDigits}`];
+  }
+  if (keyword.startsWith('+')) return [`${e164Head(keyword)}%`];
+  if (digits.startsWith('0')) return [`${e164Head(keyword)}%`, `%${digits}`];
+  return [`%${digits}`];
+}
+
+/** The start of a number as `caller_phone_e164` spells it: a domestic `0` is `+84`. */
+function e164Head(typed: string): string {
+  const digits = typed.replace(NON_DIGIT, '');
+  if (digits === '') return '';
+  return digits.startsWith('0') ? `+84${digits.slice(1)}` : `+${digits}`;
+}
 
 /** What a `uuid` cast to text can start with — and nothing a LIKE reads as a wildcard. */
 const HEX_PREFIX = /^[0-9a-f-]{3,}$/;
@@ -53,12 +89,11 @@ export function parseScope(
   const keyword = (first(params.q) ?? '').trim();
   if (keyword === '') return { kind: 'window', window: parseWindow(params, now) };
 
-  const digits = keyword.replace(NON_DIGIT, '');
   const lowered = keyword.toLowerCase();
   return {
     kind: 'search',
     keyword,
-    phoneDigits: digits.length >= 3 ? digits : null,
+    phonePatterns: phonePatterns(keyword),
     idPrefix: HEX_PREFIX.test(lowered) ? lowered : null,
   };
 }

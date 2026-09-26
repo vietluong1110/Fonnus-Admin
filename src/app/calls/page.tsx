@@ -15,7 +15,7 @@ import { callStats, callsTimeline, dayBands, scopeHeading } from '@/calls-stats'
 import { applyChips, chipCounts, pageOf, parseChips, parsePage, parseScope } from '@/calls-scope';
 import { getConfig } from '@/config';
 import { callsInScope } from '@/queries/calls';
-import { parseWindow } from '@/window';
+import { first, parseWindow } from '@/window';
 import Card from '@/ui/card';
 import { PILL, PILL_ON } from '@/ui/chip';
 import Caveat from '@/ui/caveat';
@@ -33,11 +33,6 @@ export const dynamic = 'force-dynamic';
 const BASE = '/calls';
 
 type Params = Record<string, string | string[] | undefined>;
-
-/** A query string key can arrive repeated; the first value is the answer. */
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 /**
  * This screen's URL with some keys changed — the link every control points at.
@@ -88,7 +83,7 @@ export default async function CallsPage({
   // Under three characters there is no predicate at all, so the query was never
   // issued and the screen owes the operator the reason (ADR 0006).
   const tooShort =
-    scope.kind === 'search' && scope.phoneDigits === null && scope.idPrefix === null;
+    scope.kind === 'search' && scope.phonePatterns.length === 0 && scope.idPrefix === null;
 
   return (
     <>

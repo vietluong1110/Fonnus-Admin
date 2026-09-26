@@ -54,6 +54,7 @@ Then, in Settings → Secrets and variables → Actions:
 | Environment `production` variable | `VPS_HOST` | `103.74.100.161` |
 | Environment `production` variable | `VPS_USER` | `deploy` |
 | **Repository** variable | `DEPLOY_ENABLED` | `true` to deploy; anything else builds and pushes only |
+| **Repository** secret | `FONNUS_READ_TOKEN` | A fine-grained token with *Contents: read* on `VoidKeishi/Fonnus` only. The test job checks the pipeline out beside this repo so the drift tests run instead of skipping; without the secret the test job fails at checkout |
 
 `DEPLOY_ENABLED` must be a *repository* variable. The deploy job's
 `if: vars.DEPLOY_ENABLED == 'true'` is evaluated before the job enters the `production`

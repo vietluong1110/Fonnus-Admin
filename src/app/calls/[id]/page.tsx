@@ -25,7 +25,7 @@ import {
 } from '@/calls';
 import { getConfig } from '@/config';
 import { STORED_COST_TIP, callCostView, costCell, floorMark, floorSentence, formatVnd } from '@/cost';
-import { parseSnapshot, renderValue } from '@/dashboard';
+import { configuredRouterOf, parseSnapshot, renderValue } from '@/dashboard';
 import { heardNote, type LaneSegment } from '@/interval-lane';
 import {
   callIntervals,
@@ -287,9 +287,10 @@ export default async function CallPage({
 
   // The stat strip's cost at list price (ADR 0015): while any model the call
   // used — its configured OPENROUTER_MODEL included, since an unconsented call
-  // has no turn rows to name it (trap 1) — has no price row, "floor" sits beside the stored figure, the strip
+  // has no turn rows to name it (trap 1), and the router model of a shadow
+  // call (trap 3) — has no price row, "floor" sits beside the stored figure, the strip
   // names those models and the tooltip ends on ADR 0015 D7's sentence.
-  const cost = callCostView(call, turns, ran.llm.model);
+  const cost = callCostView(call, turns, ran.llm.model, configuredRouterOf(call.config_snapshot));
   const costCaveat =
     cost.unpriced.length === 0 ? 'list price' : `list price · ${costCell(null, cost.unpriced)}`;
   const floor = floorSentence(cost.unpriced);
