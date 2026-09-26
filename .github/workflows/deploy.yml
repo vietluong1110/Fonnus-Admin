@@ -39,7 +39,13 @@ jobs:
       # table, flat keys, document, glossary, tokens). Without it those suites
       # skip themselves and CI would pass on a console that no longer matches
       # the pipeline. The token reads the private repo and nothing else, and is
-      # not left in .git/config for the install scripts below to find.
+      # not left in .git/config for the install scripts below to find. An unset
+      # secret reads as empty, and checkout would only say "token not supplied".
+      - name: Check the pipeline read token is set
+        env:
+          FONNUS_READ_TOKEN: ${{ secrets.FONNUS_READ_TOKEN }}
+        run: |
+          test -n "$FONNUS_READ_TOKEN" || { echo "::error::the repository secret FONNUS_READ_TOKEN is not set; create it as docs/deploy.md §1.1 describes"; exit 1; }
       - uses: actions/checkout@v4
         with:
           repository: VoidKeishi/Fonnus
