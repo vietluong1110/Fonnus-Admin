@@ -63,7 +63,7 @@ bugs me") never changes the path.
    saw. Carry its **Worth a look** items — what neither the suites nor the builder could
    settle — into your close-out as non-blocking notes; the user hand-checks at milestone
    close, and their feedback re-enters here, sized.
-6. **Done.** Walk the Definition of Done and print the commit block.
+6. **Done.** Walk the Definition of Done, stage the task and print the commit command.
 
 ## Post-build review
 
@@ -99,6 +99,24 @@ it gains, what it costs and when it wins, then your recommendation and the defau
 user does not decide now. One question per turn. Before sending, check that the user
 could weigh the options without opening the code.
 
+Everything you send the user — a question, a pause summary, a close-out — is read by
+someone who did not watch your tool calls. Open with the outcome or the question, then the
+detail. Keep it short by choosing fewer points, and write each point you keep as a
+complete sentence in the user's language: no arrows, no labels you coined while working.
+English technical terms stay English inside a Vietnamese sentence. The example below shows
+the register to aim for. Its facts are invented, so copy the style, never the content.
+
+> **Cột độ trễ trong danh sách cuộc gọi nên hiện số nào?** Mỗi cuộc gọi có nhiều lượt, nên
+> một con số cho cả cuộc gọi phải chọn cách gộp.
+> - Hiện p95 của các lượt: thấy ngay cuộc gọi nào có vài lượt chậm bất thường; nhưng con số
+>   này khó so với cảm giác khi nghe lại, vì người nghe nhớ lượt chậm nhất.
+> - Hiện lượt chậm nhất: khớp với điều người nghe để ý; nhưng một lượt lỗi đơn lẻ làm cả
+>   cuộc gọi trông tệ.
+>
+> Đề xuất: p95, vì mục đích là tìm cuộc gọi đáng mở ra xem, và lượt chậm nhất vẫn hiện trong
+> trang chi tiết. Nếu chưa quyết, cột tạm hiện p95 kèm chú thích là chỉ tính cuộc gọi có
+> đồng ý ghi âm.
+
 ## Definition of Done
 
 - Suites green: `pnpm test`, `typecheck`, `lint`, `build`.
@@ -111,8 +129,8 @@ could weigh the options without opening the code.
   `PLAN.md` backlog row (pipeline ADR 0011).
 - The review outcome is in the close-out: ran, with each finding's fate, or skipped, with
   the reason.
-- A commit block you wrote yourself from the reports (per `CLAUDE.md`). Never commit
-  unless asked.
+- The task is staged and its commit command printed per `CLAUDE.md`, with the message
+  written by you from the reports. Never commit unless asked.
 
 ## Boundaries
 

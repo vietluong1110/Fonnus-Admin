@@ -61,16 +61,27 @@ input contracts.
   record becomes a row in `PLAN.md` §Waiting on `../Fonnus`.
 - **Docs record current state only.** History lives in git and `docs/adr/`.
 - **Language.** Converse in the user's language, keeping English technical terms in
-  English. Everything written down — docs, code, commits — is English.
-- **Do not commit unless asked.** At the end of a task, print a commit block: explicit
-  `git add <files>` (never `-A`), then `git commit -F - <<'EOF' … EOF`.
+  English. Everything written down — docs and code — is English, except commit messages,
+  which are Vietnamese.
+- **Do not commit unless asked.** At the end of a task, stage its changes yourself and print
+  the commit command, per §Commit messages.
 
 ## Commit messages
 
-English. A summary line that is one complete clause naming the change
-(`A1: call detail — …`), a blank line, then bullets, one complete sentence each, for the
-why, a decision, or a behaviour change the summary cannot carry. Not a file inventory.
-Short comes from choosing fewer points, never from clipped words. Rationale lives in ADRs.
+Vietnamese sentences, English technical terms kept as they are (race condition, lock,
+regression test — never calqued). A summary line that is one complete clause naming the
+change after the task prefix (`A1: <mệnh đề tiếng Việt>`), a blank line, then bullets, one
+complete sentence each, for the why, a decision, or a behaviour change the summary cannot
+carry. Not a file inventory. Short comes from choosing fewer points, never from clipped
+words. Rationale lives in ADRs.
+
+At the end of a task, stage this task's changes yourself: `git add` the files it changed,
+on one line (never `-A`), or `git apply --cached` with a patch of only this task's hunks
+when a file also holds other work. If the index already held someone else's staged
+changes, leave it alone and commit by path instead (`git commit -F - -- <paths>`). Then
+print one line saying what went into the index and what was left out, and the commit
+command alone, the message written out in full inside `git commit -F - <<'EOF'` … `EOF`.
+The commit itself runs only when the user asks.
 
 ## Doc map
 
