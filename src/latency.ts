@@ -50,7 +50,11 @@ export const LEGS = [
   { name: 'stt_emit', from: 'speech_end', to: 'stt_final' },
   /** Endpointing/VAD silence — the gap the reducer cannot shorten. */
   { name: 'endpoint_wait', from: 'speech_end', to: 'endpoint_decision' },
-  /** Turn committed → the model's first token. */
+  /**
+   * Endpoint decision → the model's first token. On a `carry_over` or `reopen`
+   * turn the decision predates the commit, so the leg also holds the previous
+   * reply's playback or the abandoned generation (`SET_APART_SOURCES`).
+   */
   { name: 'llm_ttft', from: 'endpoint_decision', to: 'llm_first_token' },
   /** First token → the first synthesized byte (sentence 1 only). */
   { name: 'tts_ttfb', from: 'llm_first_token', to: 'tts_first_byte' },
@@ -64,6 +68,25 @@ export const LEGS = [
    */
   { name: 'holding_line', from: 'endpoint_decision', to: 'holding_line_out' },
 ] as const satisfies readonly { name: string; from: Stage; to: Stage }[];
+
+/**
+ * The `turn.source` values whose `endpoint_decision` predates the turn's
+ * commit — copied from `../Fonnus/tools/lib/call-report.ts`
+ * `SET_APART_SOURCES` (contract §3.2). A `carry_over` turn's decision was
+ * stamped while the previous reply was still playing, and a `reopen` turn's is
+ * its first generation's, so every span that starts at `endpoint_decision` —
+ * `pipeline_ms` and the `llm_ttft` and `holding_line` legs — also holds that
+ * playback or the abandoned generation. The pipeline's reports percentile
+ * those spans over the other turns and count these apart. Every other source,
+ * and null, is an ordinary turn.
+ */
+export const SET_APART_SOURCES = ['carry_over', 'reopen'] as const;
+export type SetApartSource = (typeof SET_APART_SOURCES)[number];
+
+/** Which of `SET_APART_SOURCES` a turn's source is, or null for every other. */
+export function setApartSource(source: string | null): SetApartSource | null {
+  return SET_APART_SOURCES.find((s) => s === source) ?? null;
+}
 
 /*
  * The three end-of-turn spans (`../Fonnus/docs/read-contract.md` §3.2, which

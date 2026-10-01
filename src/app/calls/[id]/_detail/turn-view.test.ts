@@ -44,7 +44,7 @@ function input(over: Partial<SelectedTurnInput> = {}): SelectedTurnInput {
     pipeline_ms: 800,
     caller_perceived_ms: 1_200,
     interrupted: false,
-    reopened: false,
+    setApart: null,
     ...over,
   };
 }
@@ -229,10 +229,26 @@ describe('selectedTurnView — the capsule stack of one turn', () => {
   });
 
   it('carries the interrupted and reopen readings on the end-of-turn rows', () => {
-    const view = selectedTurnView(input({ interrupted: true, reopened: true }), STARTED_AT);
+    const view = selectedTurnView(input({ interrupted: true, setApart: 'reopen' }), STARTED_AT);
     const playback = view?.rows.find((row) => row.key === 'playback_start → playback_end');
     expect(playback?.term.description).toContain('last lull before the barge-in');
     expect(playback?.term.description).toContain('last generation');
+  });
+
+  it('says on a carry_over turn which spans start before its commit, and on no other row', () => {
+    const view = selectedTurnView(
+      input({ marks: { ...FULL, holding_line_out: 10_700 }, setApart: 'carry_over' }),
+      STARTED_AT,
+    );
+    const noted = view?.rows
+      .filter((row) => row.term.description?.includes('previous reply still played'))
+      .map((row) => row.key);
+    expect(noted).toEqual(['pipeline_ms', 'llm_ttft', 'holding_line']);
+  });
+
+  it('says nothing of the kind on an ordinary turn', () => {
+    const view = selectedTurnView(input(), STARTED_AT);
+    expect(view?.rows.some((row) => row.term.description?.includes('the Overview leaves'))).toBe(false);
   });
 
   it('has no stack for a turn with no readable mark', () => {

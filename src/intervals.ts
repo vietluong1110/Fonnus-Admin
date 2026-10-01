@@ -373,7 +373,9 @@ const NO_TEXT = '[no text in payload]';
  *     `event/playback_completed` for it; a `playback_completed` of another
  *     generation is a dead one's drain. A later intent or a `barge_in/detected`
  *     ends it where it lands; on a reply that never became audible
- *     `event/reply_failed` ends the wait, and so does `event/synthesis_complete`.
+ *     `event/reply_failed` ends the wait. On a reply or a canned line that never
+ *     became audible `event/synthesis_complete` of its `gen` ends it too; not on
+ *     the greeting, which exits to the farewell.
  *  3. A committed turn shows its wait — intent → first audible byte — as
  *     `bot: waiting on reply N`: that stretch is silence the caller sits through.
  *     When the reply's holding line became audible first, the wait ends there
@@ -521,15 +523,8 @@ function unheardAt(t: number, muted: Stretch[]): boolean {
 
 /**
  * Every stretch the bot held the line, in order, clamped to the clock
- * (`call-evidence.ts:723-792`). Whether the caller's sound was heard across any
+ * (`call-evidence.ts:727-801`). Whether the caller's sound was heard across any
  * of them is not decided here: `mutedStretches` reads that off the trail.
- *
- * Known reference bug carried as written (`../Fonnus/ISSUES.md` L10-260917-1,
- * ADR 0010 decision 7): the `synthesis_complete` cut applies to `start_reply`
- * only, so a canned line whose synthesis returned no bytes holds the line until
- * the next intent and the caller's energy and `turn_end` under it are
- * swallowed. The fix is the pipeline's; a copy that fixed it here would
- * disagree with `call-evidence` on the same trail.
  */
 function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[] {
   const intents = placed.filter((p) => INTENTS.has(p.key));
@@ -565,10 +560,13 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
     const lastLineDrain = lineDrains[lineDrains.length - 1];
     const barge = placed.find((p) => p.key === 'barge_in/detected' && p.t > from && p.t <= windowEnd);
     const failed = placed.find((p) => mine(p, 'event/reply_failed'));
-    // A reply that synthesized no audio at all: the engine unmutes and gives
-    // the line back to the caller right there, so the wait ends there too.
+    // A reply or a canned line that synthesized no audio at all: the engine
+    // gives the line back to the caller right there (a silent farewell plays
+    // nothing until the hangup), so the bot's interval ends there too. Not the
+    // greeting: a silent one exits to the farewell, the next intent, and a cut
+    // here would only open a `silence` sliver between the two.
     const synthesized =
-      intent.key === 'effect/start_reply'
+      intent.key !== 'effect/speak_text'
         ? placed.find((p) => mine(p, 'event/synthesis_complete'))
         : undefined;
     let to = windowEnd;

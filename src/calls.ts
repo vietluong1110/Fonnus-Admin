@@ -5,6 +5,7 @@
  */
 
 import type { ConsentGate } from './config';
+import { setApartSource } from './latency';
 import type { BadgeTone } from './ui/badge';
 
 /** Contract §3.1 — `call_log.end_reason`. */
@@ -364,20 +365,31 @@ export function formatDayShort(date: Date): string {
 /**
  * The mean `pipeline_ms` of a call's turns and how many turns it stands on. A
  * null is a turn with no measurement and a negative value a clock fault
- * (contract §3.2); both are left out rather than read as 0.
+ * (contract §3.2); both are left out rather than read as 0. So is a
+ * `carry_over` or `reopen` turn, whose span starts before its commit
+ * (`SET_APART_SOURCES`, the pipeline's per-call report rule), counted in
+ * `setApart` instead.
  */
-export function meanPipelineMs(turns: readonly { pipeline_ms: number | null }[]): {
+export function meanPipelineMs(
+  turns: readonly { pipeline_ms: number | null; source: string | null }[],
+): {
   value: number | null;
   over: number;
+  setApart: number;
 } {
   let sum = 0;
   let over = 0;
+  let setApart = 0;
   for (const turn of turns) {
+    if (setApartSource(turn.source) !== null) {
+      setApart += 1;
+      continue;
+    }
     if (turn.pipeline_ms === null || turn.pipeline_ms < 0) continue;
     sum += turn.pipeline_ms;
     over += 1;
   }
-  return { value: over === 0 ? null : sum / over, over };
+  return { value: over === 0 ? null : sum / over, over, setApart };
 }
 
 /** Space-grouped so long millisecond figures stay readable: `1 234`. */

@@ -151,6 +151,11 @@ export interface LlmUsage {
   tokensIn: number;
   tokensOut: number;
   tokensCached: number;
+  /**
+   * The provider never reported this turn's usage (`LlmResult.usageMissing`):
+   * the zero counts beside it are "unknown", and the turn prices as `null`.
+   */
+  usageMissing?: true;
 }
 
 export interface RouterUsage {
@@ -178,9 +183,10 @@ export interface CallCost {
    */
   priced: boolean;
   /**
-   * Models no price is known for, deduplicated. A non-empty list means `vnd` is
-   * a floor, not a total — every reader prints it (ADR 0011: fail toward the
-   * side that is visible).
+   * Models no price is known for, deduplicated — including a model whose turn
+   * carried no usage report, which is priced no better than a model with no
+   * row. A non-empty list means `vnd` is a floor, not a total — every reader
+   * prints it (ADR 0011: fail toward the side that is visible).
    */
   unpricedModels: string[];
 }
@@ -215,12 +221,14 @@ export function ttsCostUsd(chars: number, model: string, prices: Prices = PRICES
 }
 
 /**
- * `null` when the model is not in the table — the caller must report it, not
- * treat it as free. `tokensCached` is the cached SHARE of `tokensIn` (how
+ * `null` when the model is not in the table, or when the provider never
+ * reported the turn's usage — either way the caller must report it, not treat
+ * it as free. `tokensCached` is the cached SHARE of `tokensIn` (how
  * OpenRouter reports it), so it is charged at the cache-read rate instead of,
  * never on top of, the input rate.
  */
 export function llmCostUsd(u: LlmUsage, prices: Prices = PRICES): number | null {
+  if (u.usageMissing === true) return null;
   const price = priceRow(prices.llm, u.model);
   if (price === undefined) return null;
   const cached = Math.min(Math.max(u.tokensCached, 0), u.tokensIn);

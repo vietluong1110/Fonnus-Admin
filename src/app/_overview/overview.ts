@@ -10,6 +10,7 @@
 import { formatNumber } from '@/calls';
 import { floorSentence, STORED_COST_TIP } from '@/cost';
 import type { Grouping } from '@/dashboard';
+import { SET_APART_SOURCES, type SetApartSource } from '@/latency';
 import type { DashboardCall, DashboardTurn } from '@/queries/dashboard';
 import { GLOSSARY, OVERVIEW_GROUPINGS, type Term, termFor } from '@/ui/glossary';
 import type { ListboxOption } from '@/ui/listbox';
@@ -78,6 +79,23 @@ export function groupingHeader(grouping: Grouping): string {
   const term = termFor('grouping', grouping);
   if (term !== null) return term.name;
   return grouping === 'config' ? 'Configuration' : 'Value';
+}
+
+/**
+ * The turns `aggregate` left out of the spans that start at
+ * `endpoint_decision` (`SET_APART_SOURCES`), said in the page head beside the
+ * turn count, since those spans are on three cards. Null when there are none.
+ */
+export function setApartCaveat(counts: Readonly<Record<SetApartSource, number>>): string | null {
+  const parts = SET_APART_SOURCES.filter((source) => counts[source] > 0).map(
+    (source) => `${formatNumber(counts[source])} ${source}`,
+  );
+  const total = SET_APART_SOURCES.reduce((sum, source) => sum + counts[source], 0);
+  if (total === 0) return null;
+  const spans = [SPAN.pipeline, entry(GLOSSARY.leg.llm_ttft), entry(GLOSSARY.leg.holding_line)];
+  return `${formatNumber(total)} turn${total === 1 ? '' : 's'} (${parts.join(', ')}) left out of ${spans
+    .map((term) => term.name)
+    .join(', ')}: on ${total === 1 ? 'it' : 'them'} those spans start before the turn was committed`;
 }
 
 /**

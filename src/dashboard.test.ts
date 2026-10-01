@@ -578,6 +578,42 @@ describe('aggregate', () => {
     expect(d.pipeline.p95).toBe(800);
   });
 
+  it('leaves carry_over and reopen turns out of the spans that start at endpoint_decision', () => {
+    // `report-calls` (`../Fonnus/tools/lib/cross-call-report.ts`): on these two
+    // the decision predates the commit, so `llm_ttft`, `holding_line` and
+    // `pipeline_ms` would carry the previous reply's playback or the abandoned
+    // generation. Every other leg, and `caller_perceived_ms`, keeps them.
+    const marks = {
+      speech_end: 1_000,
+      endpoint_decision: 1_200,
+      llm_first_token: 7_200,
+      holding_line_out: 7_000,
+      tts_first_byte: 7_400,
+      first_audio_out: 7_500,
+    };
+    const apart = [
+      turn({ call_id: 'c1', idx: 3, source: 'carry_over', caller_perceived_ms: 6_000, pipeline_ms: 6_300, marks }),
+      turn({ call_id: 'c1', idx: 4, source: 'reopen', caller_perceived_ms: 6_000, pipeline_ms: 6_300, marks }),
+    ];
+    const d = aggregate(calls, [...turns, ...apart], 'none', WINDOW, NOW);
+    expect(d.turns).toBe(5);
+    expect(d.setApartTurns).toEqual({ carry_over: 1, reopen: 1 });
+    expect(d.legs.llm_ttft.count).toBe(2);
+    expect(d.legs.llm_ttft.max).toBe(300);
+    expect(d.legs.holding_line.count).toBe(0);
+    expect(d.pipeline.count).toBe(2);
+    expect(d.pipeline.max).toBe(800);
+    expect(d.legs.endpoint_wait.count).toBe(5);
+    expect(d.legs.tts_ttfb.count).toBe(4);
+    expect(d.perceived.count).toBe(4);
+    expect(d.perceived.max).toBe(6_000);
+    expect(d.latencyByBucket[0]?.pipelineP95).toBe(800);
+  });
+
+  it('counts no turn apart when every source is a turn-end signal', () => {
+    expect(aggregate(calls, turns, 'none', WINDOW, NOW).setApartTurns).toEqual({ carry_over: 0, reopen: 0 });
+  });
+
   it('lists exactly the turns whose reply never became audible', () => {
     const d = aggregate(calls, turns, 'none', WINDOW, NOW);
     expect(d.outside.map((t) => [t.call_id, t.idx])).toEqual([['c2', 1]]);

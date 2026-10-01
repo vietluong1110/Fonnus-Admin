@@ -353,17 +353,31 @@ describe('meanPipelineMs', () => {
   it('averages the non-null, non-negative values and says how many it stands on', () => {
     expect(
       meanPipelineMs([
-        { pipeline_ms: 1000 },
-        { pipeline_ms: null },
-        { pipeline_ms: -40 },
-        { pipeline_ms: 2000 },
+        { pipeline_ms: 1000, source: 'speech_final' },
+        { pipeline_ms: null, source: 'speech_final' },
+        { pipeline_ms: -40, source: null },
+        { pipeline_ms: 2000, source: null },
       ]),
-    ).toEqual({ value: 1500, over: 2 });
+    ).toEqual({ value: 1500, over: 2, setApart: 0 });
+  });
+
+  it('leaves out carry_over and reopen turns and counts them apart', () => {
+    expect(
+      meanPipelineMs([
+        { pipeline_ms: 1000, source: 'speech_final' },
+        { pipeline_ms: 9000, source: 'carry_over' },
+        { pipeline_ms: 7000, source: 'reopen' },
+      ]),
+    ).toEqual({ value: 1000, over: 1, setApart: 2 });
   });
 
   it('has no value when no turn was measured', () => {
-    expect(meanPipelineMs([])).toEqual({ value: null, over: 0 });
-    expect(meanPipelineMs([{ pipeline_ms: null }])).toEqual({ value: null, over: 0 });
+    expect(meanPipelineMs([])).toEqual({ value: null, over: 0, setApart: 0 });
+    expect(meanPipelineMs([{ pipeline_ms: null, source: null }])).toEqual({
+      value: null,
+      over: 0,
+      setApart: 0,
+    });
   });
 });
 

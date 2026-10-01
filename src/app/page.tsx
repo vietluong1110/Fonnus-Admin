@@ -28,6 +28,7 @@ import HowCallsEnded from './_overview/how-calls-ended';
 import Outside from './_overview/outside';
 import ReplyComposition from './_overview/reply-composition';
 import ReplyLatency, { gaugeScale } from './_overview/reply-latency';
+import { setApartCaveat } from './_overview/overview';
 import TurnFailures from './_overview/turn-failures';
 
 // The Overview is about the database right now; nothing here may be prerendered.
@@ -80,6 +81,10 @@ export default async function OverviewPage({
       ? `. ${formatNumber(data.turnsWithoutMarks)} more without marks, excluded from every number`
       : ''
   }`;
+  // A carry_over or reopen turn is in every number above but the spans that
+  // start at `endpoint_decision` (`SET_APART_SOURCES`, the pipeline's report
+  // rule); said beside the turn count, because those spans are on three cards.
+  const setApart = setApartCaveat(data.setApartTurns);
 
   // One axis per headline span, wide enough for the headline and for every
   // group, so a group's gauge reads against the same target line.
@@ -114,7 +119,8 @@ export default async function OverviewPage({
           {/* The window is described in the Calls screen's own words
               (`windowPhrase`), so the two screens never name one window twice. */}
           <Caveat>
-            {standsOn}. Calls answered {windowPhrase(window)}.
+            {standsOn}. {setApart === null ? null : `${setApart}. `}Calls answered{' '}
+            {windowPhrase(window)}.
           </Caveat>
         </div>
         <WindowControl base="/" window={window} extra={carried} />

@@ -309,8 +309,8 @@ export function gapNote(holeFromSeq: number | null): string | null {
 
 /**
  * The caveats that travel with the table (CONTEXT.md §Look and feel: a caveat
- * sits with the number it qualifies, never in a footnote). The first two are on
- * every call; the last two only when the call has the thing they explain.
+ * sits with the number it qualifies, never in a footnote). `withheld` and
+ * `unheard` are shown only when the call has the thing they explain.
  */
 export const INTERVAL_CAVEATS = {
   trail:
@@ -318,8 +318,6 @@ export const INTERVAL_CAVEATS = {
   text: "Reply text is the turn's assistant_text, the greeting's and the holding line's are the trail's; a canned line shows its label only.",
   withheld:
     '[withheld] — consent not granted, or not yet on record (contract trap 2); [expired] — the transcript passed its retention TTL (contract trap 10).',
-  cannedSilent:
-    'A canned line with no audible byte on the trail holds the line until the next bot intent — a synthesis that produced no audio is one cause (pipeline ISSUES L10-260917-1); caller sound under it is listed there.',
   unheard:
     'unheard — the recogniser feed was muted at that instant, read from the trail’s mute/unmute effects.',
   annotation:

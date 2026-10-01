@@ -34,7 +34,7 @@ import {
   trailVerdict,
   type EventRow,
 } from '@/intervals';
-import { parseMarks } from '@/latency';
+import { parseMarks, setApartSource } from '@/latency';
 import {
   bubbleView,
   greetingSpan,
@@ -209,12 +209,7 @@ export default async function CallPage({
           unsupported: interval.unsupported,
           failed: interval.holder.turnIdx !== null && failedTurns.has(interval.holder.turnIdx),
         }));
-  // The two caveats that are shown only where they apply: a canned line whose
-  // synthesis produced no audio (pipeline ISSUES L10-260917-1) and a caller
-  // whose sound reached nobody.
-  const cannedSilent = (intervals ?? []).some(
-    (interval) => interval.holder.kind === 'canned' && interval.holder.audible === false,
-  );
+  // The caveat shown only where it applies: a caller whose sound reached nobody.
   const anyUnheard = (intervals ?? []).some((interval) => interval.unheard);
 
   // The placement rules of `docs/upstream.md` §Artifacts, run once on the
@@ -232,7 +227,7 @@ export default async function CallPage({
         pipeline_ms: turn.pipeline_ms,
         caller_perceived_ms: turn.caller_perceived_ms,
         interrupted: turn.interrupted,
-        reopened: turn.source === 'reopen',
+        setApart: setApartSource(turn.source),
       },
       call.recording_started_at,
     ),
@@ -406,7 +401,11 @@ export default async function CallPage({
                 latency.value === null ? 'not measured' : formatNumber(Math.round(latency.value))
               }
               {...(latency.value === null ? {} : { unit: 'ms' })}
-              hint={`mean pipeline_ms over ${formatNumber(latency.over)} of ${formatNumber(turns.length)} turns; a turn with no measurement is left out`}
+              hint={`mean pipeline_ms over ${formatNumber(latency.over)} of ${formatNumber(turns.length)} turns; a turn with no measurement is left out${
+                latency.setApart > 0
+                  ? `, and so ${latency.setApart === 1 ? 'is 1 carry_over or reopen turn' : `are ${formatNumber(latency.setApart)} carry_over or reopen turns`}, whose span starts before the turn was committed`
+                  : ''
+              }`}
             />
           </div>
         </Card>
@@ -446,7 +445,6 @@ export default async function CallPage({
           rows={intervalRows}
           current={currentAnnotations}
           history={annotationRows}
-          cannedSilent={cannedSilent}
           anyUnheard={anyUnheard}
         />
 

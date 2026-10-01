@@ -3,6 +3,7 @@ import {
   HEAD_PAIRS,
   LEGS,
   PARTITION_LEGS,
+  SET_APART_SOURCES,
   STAGES,
   TARGETS,
   endOfTurnRows,
@@ -10,6 +11,7 @@ import {
   legSpans,
   callerPerceivedEnd,
   parseMarks,
+  setApartSource,
   spanOf,
   type Stage,
 } from './latency';
@@ -63,6 +65,20 @@ describe('LEGS — copied from ../Fonnus/app/src/domain/latency.ts', () => {
 
   it('carries the ADR 0007 targets of ../Fonnus/tools/lib/call-report.ts', () => {
     expect(TARGETS).toEqual({ pipelineP95Ms: 1200, perceivedP95AlarmMs: 3600 });
+  });
+});
+
+describe('SET_APART_SOURCES — copied from ../Fonnus/tools/lib/call-report.ts', () => {
+  it('sets apart carry_over and reopen, the two sources whose endpoint_decision predates the commit', () => {
+    expect(SET_APART_SOURCES).toEqual(['carry_over', 'reopen']);
+    expect(setApartSource('carry_over')).toBe('carry_over');
+    expect(setApartSource('reopen')).toBe('reopen');
+  });
+
+  it('keeps every turn-end signal label and a null source as an ordinary turn', () => {
+    expect(setApartSource('speech_final')).toBeNull();
+    expect(setApartSource('utterance_end')).toBeNull();
+    expect(setApartSource(null)).toBeNull();
   });
 });
 

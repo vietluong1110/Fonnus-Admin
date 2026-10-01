@@ -52,7 +52,6 @@ export default function IntervalsCard({
   rows,
   current,
   history,
-  cannedSilent,
   anyUnheard,
 }: {
   verdict: TrailVerdict;
@@ -61,8 +60,6 @@ export default function IntervalsCard({
   current: CurrentAnnotation[];
   /** Every `call_annotation` row of the call, current and history (PLAN row A7). */
   history: AnnotationHistoryRow[];
-  /** A canned line whose synthesis produced no audio — ISSUES L10-260917-1. */
-  cannedSilent: boolean;
   /** Any interval whose caller sound fell inside a muted stretch. */
   anyUnheard: boolean;
 }) {
@@ -95,7 +92,6 @@ export default function IntervalsCard({
             {/* The standing explanations are the column headers' tooltips
                 (`interval-rows.tsx`); only what this call's rows need is said. */}
             {anyWithheld(rows) ? <Caveat>{INTERVAL_CAVEATS.withheld}</Caveat> : null}
-            {cannedSilent ? <Caveat>{INTERVAL_CAVEATS.cannedSilent}</Caveat> : null}
             {anyUnheard ? <Caveat>{INTERVAL_CAVEATS.unheard}</Caveat> : null}
           </div>
 

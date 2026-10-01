@@ -144,9 +144,9 @@ export default function IntervalRows({ rows }: { rows: IntervalRow[] }) {
                 <Td>
                   {row.botText === null ? null : (
                     // What the bot said, in the bot's voice. A bot interval can
-                    // still carry a recogniser record: a canned line that
-                    // produced no audio swallows the caller's records under it
-                    // (ISSUES L10-260917-1).
+                    // still carry a recogniser record: the caller's sound under
+                    // a line that never reported its synthesis complete stays
+                    // inside the line (contract §8 rule 3).
                     <div className="italic">{row.botText}</div>
                   )}
                   {row.botNote === null ? null : <Caveat>{row.botNote}</Caveat>}

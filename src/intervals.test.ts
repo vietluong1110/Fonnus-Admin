@@ -411,6 +411,70 @@ describe('callIntervals', () => {
     expectContiguous(list, 0, 9.5);
   });
 
+  it.each(['reprompt', 'degraded', 'farewell'])(
+    'ends a %s line that produced no audio at synthesis_complete, and gives the rest to the caller',
+    (line) => {
+      // The TTS provider settled the line with zero bytes: no first_audible,
+      // no drain. The engine hands the line back right there (`speakingDone`;
+      // a silent farewell just waits out its grace), so the caller's sound
+      // after it is the caller's, not the bot's.
+      const trail = trailAt(
+        [0, 'recorder/started'],
+        [0.05, 'effect/unmute_stt', { gen: 1 }],
+        [1, 'effect/speak_canned', { gen: 2, data: { line } }],
+        [1.8, 'event/synthesis_complete', { gen: 2 }],
+        [2.5, 'event/caller_energy', { data: { suppressed: 0 } }],
+        [3, 'event/turn_end', { data: { source: 'speech_final' } }],
+        [5, 'recorder/finalized'],
+      );
+      const list = intervalsOf(trail);
+      const cells = cellsOf(trail);
+      expect(cells.map((c) => c.holder)).toEqual(['silence', `bot: ${line}`, 'caller', 'silence']);
+      expect(list[1]?.toMs).toBe(1800);
+      expect(cells[2]?.callerLine).toBe('sound at 2.50');
+      expect(cells[2]?.recogniser).toBe('segmented, returned nothing (speech_final)');
+      expectContiguous(list, 0, 5);
+    },
+  );
+
+  it('keeps a canned line with no synthesis_complete until the next intent, as before', () => {
+    // Nothing says the line is over: the bot holds it to the next intent.
+    const list = intervalsOf(
+      trailAt(
+        [0, 'recorder/started'],
+        [1, 'effect/speak_canned', { gen: 2, data: { line: 'reprompt' } }],
+        [2.5, 'event/caller_energy', { data: { suppressed: 0 } }],
+        [4, 'effect/speak_canned', { gen: 3, data: { line: 'farewell' } }],
+        [4.5, 'event/first_audible', { gen: 3 }],
+        [6, 'event/playback_completed', { gen: 3 }],
+        [7, 'recorder/finalized'],
+      ),
+    );
+    expect(list.map((i) => i.holder.label)).toEqual(['silence', 'bot: reprompt', 'bot: farewell', 'silence']);
+    expect(list[1]?.toMs).toBe(4000);
+    expectContiguous(list, 0, 7);
+  });
+
+  it('does not cut a greeting that produced no audio: it runs to the farewell it exits to', () => {
+    // A silent greeting is a provider failure: the engine goes to the farewell
+    // rather than handing the line over, so a cut at synthesis_complete would
+    // only open a false `silence` sliver before it.
+    const list = intervalsOf(
+      trailAt(
+        [0, 'recorder/started'],
+        [1, 'effect/speak_text', { gen: 1, data: { text: 'Xin chào…' } }],
+        [1.8, 'event/synthesis_complete', { gen: 1 }],
+        [1.85, 'effect/speak_canned', { gen: 2, data: { line: 'farewell' } }],
+        [2.5, 'event/first_audible', { gen: 2 }],
+        [4, 'event/playback_completed', { gen: 2 }],
+        [5, 'recorder/finalized'],
+      ),
+    );
+    expect(list.map((i) => i.holder.label)).toEqual(['silence', 'bot: greeting', 'bot: farewell', 'silence']);
+    expect(list[1]?.toMs).toBe(1850);
+    expectContiguous(list, 0, 5);
+  });
+
   it("keeps a reply's wait heard and its playback deaf, the way the default gate mutes", () => {
     // The shipped shape: the feed is open across the wait and shuts at the
     // reply's first audible byte. Nothing here is read from a setting — the two

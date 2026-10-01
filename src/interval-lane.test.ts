@@ -209,7 +209,6 @@ describe('the card’s fixed wording', () => {
     // Trap 2: no consent row is a state, not a refusal — the caveat claims neither.
     expect(INTERVAL_CAVEATS.withheld).not.toContain('did not reach consent');
     expect(INTERVAL_CAVEATS.withheld).toContain('not yet on record');
-    expect(INTERVAL_CAVEATS.cannedSilent).toContain('L10-260917-1');
     expect(INTERVAL_CAVEATS.unheard).toContain('unheard');
     expect(INTERVAL_CAVEATS.trail).toContain('100 ms');
     // The annotation column's two facts: only current rows are shown, and a

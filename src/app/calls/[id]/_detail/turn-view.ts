@@ -19,6 +19,7 @@ import {
   LEGS,
   PARTITION_LEGS,
   TARGETS,
+  type SetApartSource,
   type Stage,
 } from '@/latency';
 import { recordingOffsetMs } from '@/playback';
@@ -52,9 +53,24 @@ export interface SelectedTurnInput {
   pipeline_ms: number | null;
   caller_perceived_ms: number | null;
   interrupted: boolean;
-  /** `turn.source === 'reopen'`: head marks are the first generation's (contract §3.2). */
-  reopened: boolean;
+  /**
+   * `setApartSource(turn.source)`: on a `carry_over` or `reopen` turn
+   * `endpoint_decision` predates the commit (contract §3.2), and on a `reopen`
+   * one the head marks are the first generation's.
+   */
+  setApart: SetApartSource | null;
 }
+
+/**
+ * What a span that starts at `endpoint_decision` also holds on a set-apart
+ * turn, and that the Overview's percentiles leave the turn out of it.
+ */
+const SET_APART_NOTE: Record<SetApartSource, string> = {
+  carry_over:
+    'carry_over turn: endpoint_decision was stamped while the previous reply still played, so this span holds that playback too; the Overview leaves this turn out of it',
+  reopen:
+    'reopen turn: endpoint_decision is the first generation’s, so this span holds the abandoned generation too; the Overview leaves this turn out of it',
+};
 
 const HEADLINE_TONE = 'var(--chart-1)';
 const OVER_TONE = 'var(--error)';
@@ -113,6 +129,7 @@ function headline(
   scaleMax: number,
   targetMs: number,
   targetNote: string,
+  apartNote: string | null,
 ): TrackRowView {
   const base = termFor('span', code) as Term;
   const drawn = markSpan(marks, from, to, earliest);
@@ -136,7 +153,7 @@ function headline(
   const target = start === undefined ? undefined : start - earliest + targetMs;
   return {
     key: code,
-    term: withNote(base, [targetNote, note].filter((part) => part !== null).join('; ')),
+    term: withNote(base, [targetNote, note, apartNote].filter((part) => part !== null).join('; ')),
     span,
     value,
     ...(target !== undefined && target <= scaleMax ? { target } : {}),
@@ -172,6 +189,7 @@ export function selectedTurnView(
   const earliest = Math.min(...values);
   const end = marks.playback_end ?? Math.max(...values);
   const scaleMax = Math.max(0, end - earliest);
+  const apartNote = turn.setApart === null ? null : SET_APART_NOTE[turn.setApart];
 
   const rows: TrackRowView[] = [
     headline(
@@ -184,6 +202,7 @@ export function selectedTurnView(
       scaleMax,
       TARGETS.pipelineP95Ms,
       `target P95 < ${formatNumber(TARGETS.pipelineP95Ms)} ms, a hint on one turn`,
+      apartNote,
     ),
     headline(
       'caller_perceived_ms',
@@ -195,6 +214,8 @@ export function selectedTurnView(
       scaleMax,
       TARGETS.perceivedP95AlarmMs,
       `alarm at P95 ≥ ${formatNumber(TARGETS.perceivedP95AlarmMs)} ms (aspirational), a hint on one turn`,
+      // Starts at speech_end, and the pipeline keeps these turns in it (L10-261001-1 open upstream).
+      null,
     ),
   ];
 
@@ -205,9 +226,12 @@ export function selectedTurnView(
     // measurement failed (the `headPairRows` rule).
     if (leg.name === 'holding_line' && marks.holding_line_out === undefined) continue;
     const drawn = markSpan(marks, leg.from, leg.to, earliest);
+    const notes = [drawn.note, leg.from === 'endpoint_decision' ? apartNote : null].filter(
+      (part) => part !== null,
+    );
     rows.push({
       key: leg.name,
-      term: withNote(termFor('leg', leg.name) as Term, drawn.note),
+      term: withNote(termFor('leg', leg.name) as Term, notes.length === 0 ? null : notes.join('; ')),
       span: drawn.span,
       value: drawn.value,
       tone: LEG_TONE,
@@ -243,7 +267,7 @@ export function selectedTurnView(
     if (pair.to === 'playback_end' && turn.interrupted) {
       notes.push('playback_end is the last lull before the barge-in, not the end of the reply');
     }
-    if (turn.reopened) notes.push('end-of-turn marks are the last generation’s, head marks the first’s');
+    if (turn.setApart === 'reopen') notes.push('end-of-turn marks are the last generation’s, head marks the first’s');
     const note = notes.filter((part) => part !== null).join('; ');
     const key = `${pair.from} → ${pair.to}`;
     rows.push({

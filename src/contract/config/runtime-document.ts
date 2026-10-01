@@ -328,10 +328,20 @@ export const LEAF = {
     max_reprompts: z.int().nonnegative(),
     /** 0 = never reopen a turn. */
     max_turn_reopens: z.int().nonnegative(),
-    no_input_timeout_ms: z.int().positive(),
-    farewell_grace_ms: z.int().positive(),
-    /** How long a committed turn waits for its answer before the holding line (ADR 0030); 0 = at once. */
-    holding_line_after_ms: z.int().nonnegative(),
+    /**
+     * The three timer leaves below are capped at one hour: each becomes a
+     * `setTimeout` delay, and Node fires any delay above 2³¹−1 ms after 1 ms
+     * instead — an immediate reprompt, a hang-up before the farewell is
+     * spoken, a holding line on every turn.
+     */
+    no_input_timeout_ms: z.int().positive().max(3_600_000),
+    farewell_grace_ms: z.int().positive().max(3_600_000),
+    /**
+     * How long a committed turn waits for its answer before the holding line (ADR 0030); 0 = at once.
+     * Any value above `LLM_TTFB_MS` already means "off" (ADR 0030 §6), so the
+     * one-hour cap leaves that meaning reachable while blocking the overflow.
+     */
+    holding_line_after_ms: z.int().nonnegative().max(3_600_000),
     stt_mute_on_first_audio: z.boolean(),
     barge_in_enabled: z.boolean(),
     barge_in_min_words: z.int().positive(),

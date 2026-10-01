@@ -11,6 +11,7 @@ import {
   groupOptions,
   legP95Tip,
   legTurnsCaveat,
+  setApartCaveat,
   newestFirst,
   smallSampleNote,
   SPAN,
@@ -86,6 +87,24 @@ describe('legTurnsCaveat', () => {
   it('is null when no leg has a sample', () => {
     expect(legTurnsCaveat([0, 0])).toBeNull();
     expect(legTurnsCaveat([])).toBeNull();
+  });
+});
+
+describe('setApartCaveat', () => {
+  it('names the three spans and the count of each source it left out', () => {
+    expect(setApartCaveat({ carry_over: 2, reopen: 1 })).toBe(
+      '3 turns (2 carry_over, 1 reopen) left out of Pipeline latency, LLM first token, Holding line: on them those spans start before the turn was committed',
+    );
+  });
+
+  it('names only the source that occurred, in the singular for one turn', () => {
+    expect(setApartCaveat({ carry_over: 0, reopen: 1 })).toBe(
+      '1 turn (1 reopen) left out of Pipeline latency, LLM first token, Holding line: on it those spans start before the turn was committed',
+    );
+  });
+
+  it('says nothing when no turn was set apart', () => {
+    expect(setApartCaveat({ carry_over: 0, reopen: 0 })).toBeNull();
   });
 });
 

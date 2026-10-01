@@ -18,7 +18,16 @@ import {
   shortSha,
 } from './calls';
 import { FLAT_KEYS } from './configuration/flat-keys';
-import { LEGS, PARTITION_LEGS, type LegName, legSpans, parseMarks } from './latency';
+import {
+  LEGS,
+  PARTITION_LEGS,
+  SET_APART_SOURCES,
+  type LegName,
+  type SetApartSource,
+  legSpans,
+  parseMarks,
+  setApartSource,
+} from './latency';
 import type { DashboardCall, DashboardTurn } from './queries/dashboard';
 import { type BucketUnit, type Window, bucketUnit, dayParts } from './window';
 
@@ -602,6 +611,12 @@ export interface Dashboard {
   turns: number;
   /** Turns whose `marks` column is null: in `outside`, in no other number. */
   turnsWithoutMarks: number;
+  /**
+   * Turns with marks whose source is `carry_over` or `reopen`: in `turns` and
+   * in every leg but `llm_ttft` and `holding_line`, and not in `pipeline`
+   * (`SET_APART_SOURCES`).
+   */
+  setApartTurns: Record<SetApartSource, number>;
   legs: Record<LegName, Percentiles>;
   perceived: Percentiles;
   pipeline: Percentiles;
@@ -656,18 +671,22 @@ interface Samples {
   pipeline: number[];
   turns: number;
   turnsWithoutMarks: number;
+  setApart: Record<SetApartSource, number>;
   calls: Set<string>;
 }
 
 function blankSamples(): Samples {
   const legs = {} as Record<LegName, number[]>;
   for (const leg of LEGS) legs[leg.name] = [];
+  const setApart = {} as Record<SetApartSource, number>;
+  for (const source of SET_APART_SOURCES) setApart[source] = 0;
   return {
     legs,
     perceived: [],
     pipeline: [],
     turns: 0,
     turnsWithoutMarks: 0,
+    setApart,
     calls: new Set<string>(),
   };
 }
@@ -678,8 +697,10 @@ function blankSamples(): Samples {
  * are `legSpans(parseMarks(marks))`, a leg only one end of which was stamped or
  * one whose ends run backwards is left out, and a failed or interrupted turn is
  * counted like any other — a reply that gave up is part of what the caller
- * lived through. So a leg's `count` is the turns that stamped both its marks,
- * which is not the turn count.
+ * lived through. A `carry_over` or `reopen` turn is left out of the legs that
+ * start at `endpoint_decision` and counted apart (`SET_APART_SOURCES`); every
+ * other leg keeps it. So a leg's `count` is the turns that stamped both its
+ * marks and were not set apart from it, which is not the turn count.
  *
  * The turn count itself is the pipeline's `turnCount`: turns with a non-null
  * `marks` column, the filter `turnMetricRows` applies in SQL
@@ -697,18 +718,25 @@ function collect(samples: Samples, turn: DashboardTurn): void {
   }
   samples.turns += 1;
   samples.calls.add(turn.call_id);
+  const apart = setApartSource(turn.source);
+  if (apart !== null) samples.setApart[apart] += 1;
   const spans = legSpans(parseMarks(turn.marks));
   for (const leg of LEGS) {
+    if (apart !== null && leg.from === 'endpoint_decision') continue;
     const value = spans[leg.name];
     if (value !== null && value >= 0) samples.legs[leg.name].push(value);
   }
   // The same `>= 0` guard the legs get: a negative span is marks stamped out of
   // order, a fault rather than a fast turn (contract §3.2), and a fault must not
-  // pull a percentile down.
+  // pull a percentile down. `caller_perceived_ms` keeps every turn, as the
+  // pipeline's reports do: a `carry_over` turn's `speech_end` distorts it too,
+  // and that is still open upstream (`../Fonnus/ISSUES.md` L10-261001-1).
   if (turn.caller_perceived_ms !== null && turn.caller_perceived_ms >= 0) {
     samples.perceived.push(turn.caller_perceived_ms);
   }
-  if (turn.pipeline_ms !== null && turn.pipeline_ms >= 0) {
+  // `pipeline_ms` starts at `endpoint_decision` too; the per-call report
+  // (`call-report.ts` `buildReport`) percentiles it over the other turns.
+  if (apart === null && turn.pipeline_ms !== null && turn.pipeline_ms >= 0) {
     samples.pipeline.push(turn.pipeline_ms);
   }
 }
@@ -909,6 +937,7 @@ export function aggregate(
     consentedCalls: consented,
     turns: overall.turns,
     turnsWithoutMarks: overall.turnsWithoutMarks,
+    setApartTurns: overall.setApart,
     legs,
     perceived: percentiles(overall.perceived),
     pipeline: percentiles(overall.pipeline),

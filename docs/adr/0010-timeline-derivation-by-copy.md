@@ -55,7 +55,10 @@ its result reaches a screen:
    holds the line until the next intent, swallowing the caller's energy and `turn_end`
    under it) is reproduced here, stated as a caveat on the card, and tracked as a backlog
    row that closes when the pipeline changes §8. Fixing it here would make this console
-   disagree with `call-evidence` on the same trail.
+   disagree with `call-evidence` on the same trail. The pipeline fixed it on 2026-10-01
+   (`3f08b8b`: `synthesis_complete` now ends a silent canned line too, never the greeting),
+   and the copy, its tests and `docs/upstream.md` followed in one commit; the rule of this
+   decision stands for the next such bug.
 
 ## Why
 
