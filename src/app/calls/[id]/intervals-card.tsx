@@ -53,6 +53,7 @@ export default function IntervalsCard({
   current,
   history,
   anyUnheard,
+  anyBeforeRecording,
 }: {
   verdict: TrailVerdict;
   rows: IntervalRow[];
@@ -62,6 +63,8 @@ export default function IntervalsCard({
   history: AnnotationHistoryRow[];
   /** Any interval whose caller sound fell inside a muted stretch. */
   anyUnheard: boolean;
+  /** Any interval with a caller sound instant before `recording_started_at`. */
+  anyBeforeRecording: boolean;
 }) {
   const badge = VERDICT_BADGE[verdict.kind];
   const note = verdictNote(verdict);
@@ -93,6 +96,7 @@ export default function IntervalsCard({
                 (`interval-rows.tsx`); only what this call's rows need is said. */}
             {anyWithheld(rows) ? <Caveat>{INTERVAL_CAVEATS.withheld}</Caveat> : null}
             {anyUnheard ? <Caveat>{INTERVAL_CAVEATS.unheard}</Caveat> : null}
+            {anyBeforeRecording ? <Caveat>{INTERVAL_CAVEATS.beforeRecording}</Caveat> : null}
           </div>
 
           {rows.length === 0 ? (

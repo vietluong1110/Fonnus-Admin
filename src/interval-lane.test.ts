@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { HOLDER_KINDS, type HolderKind, type TrailVerdict } from './intervals';
 import {
+  BEFORE_RECORDING,
+  anyBeforeRecording,
   anyWithheld,
   DEAF_EXPLANATION,
   INTERVAL_CAVEATS,
@@ -218,6 +220,17 @@ describe('the card’s fixed wording', () => {
     expect(INTERVAL_CAVEATS.annotation).toContain('overlaps');
   });
 
+  it('owes the before-the-recording key only to a call with a sound instant before it', () => {
+    expect(anyBeforeRecording([])).toBe(false);
+    expect(anyBeforeRecording([{ energyMs: [] }, { energyMs: [0, 400] }])).toBe(false);
+    expect(anyBeforeRecording([{ energyMs: [-150, 200] }, { energyMs: [900] }])).toBe(true);
+    // The key and the suffix say the same thing, in the console's agreed term.
+    expect(BEFORE_RECORDING).toBe('(before the recording — no audio in call.wav)');
+    expect(INTERVAL_CAVEATS.beforeRecording).toMatch(/^before the recording — /);
+    expect(INTERVAL_CAVEATS.beforeRecording).toContain('no sample in call.wav');
+    expect(INTERVAL_CAVEATS.beforeRecording).toContain('§8 rule 4');
+  });
+
   it('owes the [withheld] and [expired] key only to a card that prints one', () => {
     const row = { callerLine: 'speech', recogniser: '—', botText: null, annotations: [] };
     expect(anyWithheld([row])).toBe(false);
@@ -293,6 +306,11 @@ describe('heardNote — the sound-instant fact as a note under "What was heard"'
   it('notes sound that fell while the feed was muted, even beside a recognised text', () => {
     const muted = 'sound at 1.20 (unheard — feed muted)';
     expect(heardNote({ ...base, unheard: true, finals: [{}] }, muted)).toBe(muted);
+  });
+
+  it('carries the before-the-recording suffix through as the line says it', () => {
+    const early = `sound at -0.15 (unheard — feed muted) ${BEFORE_RECORDING}`;
+    expect(heardNote({ ...base, energyMs: [-150], unheard: true }, early)).toBe(early);
   });
 
   it('says nothing when the sound is behind a recognised text, or there was no sound', () => {

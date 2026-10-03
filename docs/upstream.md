@@ -135,7 +135,7 @@ gain entries, so the copy is held to the pipeline's by test, not by count):
 | `llm_ttft` | `endpoint_decision → llm_first_token` | |
 | `tts_ttfb` | `llm_first_token → tts_first_byte` | **first sentence only** |
 | `send` | `tts_first_byte → first_audio_out` | |
-| `playback` | `first_audio_out → playback_start` | outside the partition; advisory |
+| `playback` | `first_audio_out → playback_start` | outside the partition; advisory. On a turn that carries `holding_line_out`, `playback_start` is stamped about one line's length late or never (`../Fonnus/ISSUES.md` L1-260925-3, open: `chunk_played.size` counts half the bytes sent), so the row reads long or absent there; no caveat on screen (pm decision 2026-10-03) — delete this sentence when the issue closes (`PLAN.md` §Waiting on `../Fonnus`) |
 | `holding_line` | `endpoint_decision → holding_line_out` | outside the partition; the row is drawn only on a turn that carries the mark (pm decision, row A20) |
 
 `endpoint_wait + llm_ttft + tts_ttfb + send` tiles `caller_perceived_ms` exactly on a turn
@@ -192,7 +192,7 @@ so a call's card and its `intervals.txt` must agree.
 
 | Reads | Column(s) | Trap |
 |---|---|---|
-| `call_event` where `call_id = $1`, ordered by `seq`, no `LIMIT` (`getCallEvents`, one statement on the `console` pool, after `getCall` and beside `getTurns`; `count(*)` and `max(seq)` are taken from the array) | `seq`, `ts`, `kind`, `type`, `gen`, `turn_idx`, `phase`, `sensitive`, `data` | Read and place by `seq`, never by `ts`: `ts` can tie and step back a few ms between records the pipeline wrote in order (trap 9). No row at all is `RECORD_CALLS` off, a call that died before its first record, a row set the sweep removed, or a call older than migration 0009 — never "nothing happened" (trap 8). A `sensitive` row with null `data` is refused consent or the transcript TTL, told apart by `consent_record.outcome` (trap 10). `chunk_played.data.seq` is the playback module's own counter, not `call_event.seq` (trap 11) — not read here. An unknown `{kind, type}` is a record the pipeline added since (§3.1): ignored by the derivation, counted for completeness. |
+| `call_event` where `call_id = $1`, ordered by `seq`, no `LIMIT` (`getCallEvents`, one statement on the `console` pool, after `getCall` and beside `getTurns`; `count(*)` and `max(seq)` are taken from the array) | `seq`, `ts`, `kind`, `type`, `gen`, `turn_idx`, `phase`, `sensitive`, `data` | Read and place by `seq`, never by `ts`: `ts` can tie and step back a few ms between records the pipeline wrote in order (trap 9) — and since pipeline `5355e26` (fix of ISSUES L1-260914-1) the `event/caller_energy` rows of frames held while the call opened follow the open's rows by `seq` while their `ts` runs up to the whole open earlier, negative when the sound pre-dates `recording_started_at`; such a negative offset is a fact about the call, and that sound has no sample in `call.wav` (§8 rule 4). No row at all is `RECORD_CALLS` off, a call that died before its first record, a row set the sweep removed, or a call older than migration 0009 — never "nothing happened" (trap 8). A `sensitive` row with null `data` is refused consent or the transcript TTL, told apart by `consent_record.outcome` (trap 10). `chunk_played.data.seq` is the playback module's own counter, not `call_event.seq` (trap 11) — not read here. An unknown `{kind, type}` is a record the pipeline added since (§3.1): ignored by the derivation, counted for completeness. |
 | `call_log` (already read by `getCall`) | `recording_started_at`, `ended_at`, `config_snapshot->>'RECORD_CALLS'` | The clock origin: offset = `ts − recording_started_at`, exact in ms, right to about 100 ms and late-only (§8 rule 1; ADR 0012); a null origin places nothing: the card says the trail cannot be placed on the recording clock and the lane falls back to turn blocks. `ended_at` null is a running call — verdict `open`, not `truncated`. The snapshot key is named in the `absent` verdict only; §3.4 rules for the snapshot apply. |
 | `consent_record` (already read by `getCall`) | `outcome` | Gates every recogniser text on the card through `showCallerData` once (ADR 0005, trap 4); tells withheld from expired on a null `data` (trap 10). |
 | `turn` (already read by `getTurns`) | `idx`, `assistant_text` | The reply interval's bot text, joined by `turn_idx`; `effect/start_reply.data` is `sensitive` and is not read for text. Absent for a canned line and the greeting (§8 rule 2 — they own no turn). `assistant_text` never contains the holding line (§3.1); the line's text comes from the trail, below. |
@@ -224,14 +224,19 @@ is no `recorder/finalized` and `ended_at` is null; `truncated` when there is non
 call ended; `gap` when `recorder/finalized` carries `failed = true` (hole from the record
 before it, `max(seq) − 1`; `:486-489`), or `mirror.dropped > 0` (hole from `mirror.fromSeq`;
 `:497-505`), or `count(*) ≠ max(seq)` — both holes listed when both apply, and every interval
-after the earliest hole is marked unsupported (§8 rule 7); `complete` otherwise. The
+after the earliest hole is marked unsupported (§8 rule 7) — the hole's place on the clock
+being the latest `ts` among the records at or before its seq, not the last record's, since a
+held frame's `caller_energy` can be that last record with a `ts` before the whole open
+(`holeAtMs`, console-own; review finding 2026-10-03); `complete` otherwise. The
 verdict is a state of the trail, never an error: a running call is `open` by design.
 
-**The intervals** (`callIntervals`, copied from `call-evidence.ts:610-665`), each `[from,
-to)` in ms on the recording clock, contiguous from the first record to `recorder/finalized`
-(or the last record when the trail is not finalized), with the first record's offset kept
-even when negative (`:622-624` — the recorder can open after the first record; ADR 0010
-Decision 4). The rules, each cited:
+**The intervals** (`callIntervals`, copied from `call-evidence.ts:627-686`), each `[from,
+to)` in ms on the recording clock, contiguous from the trail's **earliest instant** to
+`recorder/finalized` (or the last record when the trail is not finalized). The clock starts
+at the earliest `ts`, not at the first record by `seq` (`:637-645`): a held frame's
+`caller_energy` is written after the open's records and stamped before them, and a clock
+starting at the first record would leave it outside every interval; a negative offset is
+kept, never clamped (ADR 0010 Decision 4). The rules, each cited:
 
 - **Bot intervals** (§8 rule 3; `botSpans` `:723-792`): one per intent record —
   `effect/speak_text` → `bot: greeting`; `effect/speak_canned` → `bot: <data.line>`
@@ -276,7 +281,10 @@ Decision 4). The rules, each cited:
   they change the reading: the `caller_energy` instants — `sound at 31.40, 31.70`, collapsed
   to `sound ×N (first…last)` above six (`ENERGY_SHOWN` `:569`) — when the interval holds
   sound and nothing recognised (no `stt_final`, no overtaken partial), and with ` (unheard —
-  feed muted)` when any instant lies in a muted stretch. Muted stretches are read from the
+  feed muted)` when any instant lies in a muted stretch, and with ` (before the recording —
+  no audio in call.wav)` when any instant is negative — §8 rule 4's fact in the console's
+  own words, explained once more in a card note shown only on a call that has such an
+  instant (pm decision, 2026-10-03). Muted stretches are read from the
   trail only: from the first record to the first `effect/unmute_stt`, and from each
   `effect/mute_stt` to the next `effect/unmute_stt`, an unclosed one running to the end —
   never re-derived from `STT_MUTE_ON_FIRST_AUDIO` or from the bot's intervals. An interval
@@ -326,7 +334,11 @@ there when A4 is designed, not here.
 `/` (PLAN rows A2 and A6; `/dashboard` redirects here), a server-rendered screen over the
 window of ADR 0006 — `since` in the pipeline's `report-calls --since` forms (`7d`, `36h`,
 `15m`, or an ISO instant; default `7d`; a preset is open-ended so the leg numbers equal
-`report-calls --since <same>`), plus `until` for a custom range — and a grouping (`none`,
+`report-calls --since <same>`; a date or zoneless date-time is box time `+07:00` as there,
+and a value opening with a date the calendar does not hold — `2026-02-30`,
+`2026-13-01T08:00`, `2026-02-30T00:00Z` — is refused with the window's error message
+instead of being rolled forward by `Date`, as `report-calls` refuses every such form since
+the pipeline's fix of L10-261002-2), plus `until` for a custom range — and a grouping (`none`,
 `llm_model`, `stt_model`, `tts_model`, `config`, `voice`, `key:<snapshot key>`, or
 `key:runtime.version`; default `key:OPENROUTER_MODEL`, ADR 0009). Since row A19 the
 control offers **eight** of these (ADR 0013 names them): `key:OPENROUTER_MODEL` (LLM model,
@@ -495,7 +507,11 @@ and pinned by its tests:
 - **Origin.** Sample 0 of `call.wav` is `call_log.recording_started_at` exactly, on both
   channels (`RawTrack.sampleAt(wallMs) = round((wallMs − startedAt) / 1000 × sampleRate)`;
   L = caller, R = bot; a channel that has no track is silence, which is what an unconsented
-  call's L is). The sample rate is in the file's own header (`config_snapshot.SAMPLE_RATE`
+  call's L is). Since pipeline `5355e26` (fix of ISSUES L1-260914-1) a caller frame held
+  while the call opened is placed by its arrival on the media socket, not by its delivery,
+  so channel L no longer lags the trail by the open; audio that arrived before
+  `recording_started_at` is dropped by the writer, not appended — it has no sample in the
+  file (contract §8 rule 4), which is where a negative `caller_energy` offset points. The sample rate is in the file's own header (`config_snapshot.SAMPLE_RATE`
   for the record); the browser reads it, this code never needs it.
 - **A mark's place in the audio** is `mark − recording_started_at`, clamped at 0 and
   rounded — the pipeline's own `recordingMsAt` (`artifact-recorder.ts:515-540`,

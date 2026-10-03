@@ -309,6 +309,67 @@ describe('callIntervals', () => {
     expect(cells[1]?.callerLine).toBe('sound at 8.50');
   });
 
+  it('starts the clock at caller energy that arrived before the recording but was written after it', () => {
+    // Frames held while the session opened reach it in one burst, after the
+    // open's own records, stamped with their arrival — some before
+    // `recorder/started` (PIPELINE §7). They are sound on the line all the same
+    // (`call-evidence.test.ts:761-778`).
+    const events = trailAt(
+      [0, 'recorder/started'],
+      [0.86, 'effect/speak_text', { gen: 1, data: { text: 'Xin chào…' } }],
+      [-0.15, 'event/caller_energy', { data: { suppressed: 0 } }],
+      [1, 'event/first_audible', { gen: 1 }],
+      [8, 'event/playback_completed', { gen: 1 }],
+      [8.02, 'effect/unmute_stt', { gen: 1 }],
+      [9, 'recorder/finalized'],
+    );
+    const list = intervalsOf(events);
+    expectContiguous(list, -0.15, 9);
+    expect(list[0]?.holder.kind).toBe('caller');
+    const cells = cellsOf(events);
+    expect(cells[0]?.callerLine).toContain('-0.15');
+    // The feed is muted from the first record to the first unmute, and the
+    // sound has no sample in call.wav (contract §8 rule 4): both are said,
+    // unheard first.
+    expect(cells[0]?.callerLine).toBe(
+      'sound at -0.15 (unheard — feed muted) (before the recording — no audio in call.wav)',
+    );
+  });
+
+  it('places a hole after a held frame at the latest instant before it, not at the frame', () => {
+    // The hole follows record 3, the held frame's energy at -0.15: its place is
+    // the open's latest instant (0.86), so the caller's stretch before it stays
+    // supported and every interval from 0.86 on is unsupported (§8 rule 7) —
+    // read at the frame's -0.15, nothing would be supported.
+    const events = trailAt(
+      [0, 'recorder/started'],
+      [0.86, 'effect/speak_text', { gen: 1, data: { text: 'Xin chào…' } }],
+      [-0.15, 'event/caller_energy', { data: { suppressed: 0 } }],
+      [1, 'event/first_audible', { gen: 1 }],
+      [8, 'event/playback_completed', { gen: 1 }],
+      [8.02, 'effect/unmute_stt', { gen: 1 }],
+      [9, 'recorder/finalized'],
+    );
+    const list = intervalsOf(events, 3);
+    expectContiguous(list, -0.15, 9);
+    expect(list.map((i) => [i.holder.kind, i.unsupported])).toEqual([
+      ['caller', false],
+      ['greeting', true],
+      ['silence', true],
+    ]);
+  });
+
+  it('says nothing of the recording on sound that fell inside it', () => {
+    const cells = cellsOf(
+      trailAt(
+        [0, 'recorder/started'],
+        [0.4, 'event/caller_energy', { data: { suppressed: 0 } }],
+        [2, 'recorder/finalized'],
+      ),
+    );
+    expect(cells.every((cell) => !cell.callerLine.includes('before the recording'))).toBe(true);
+  });
+
   it('collapses a long run of caller-line sound to a count and its two ends', () => {
     const energy: [number, string, Partial<EventRow>?][] = [0, 1, 2, 3, 4, 5, 6].map((n) => [
       1 + n * 0.3,

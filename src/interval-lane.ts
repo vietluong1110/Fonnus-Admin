@@ -148,6 +148,20 @@ export function heardNote(
   return recognised && !interval.unheard ? null : callerLine;
 }
 
+/**
+ * The suffix on a caller line whose sound arrived before `recording_started_at`
+ * — a negative instant on the recording clock. That audio has no sample in
+ * `call.wav` (contract §8 rule 4), so a seek cannot play it; the instant is
+ * still a fact about the call. This console's own wording, explained by
+ * `INTERVAL_CAVEATS.beforeRecording`.
+ */
+export const BEFORE_RECORDING = '(before the recording — no audio in call.wav)';
+
+/** Whether any interval carries a sound instant before the recording — the one time the card explains it. */
+export function anyBeforeRecording(intervals: readonly { energyMs: readonly number[] }[]): boolean {
+  return intervals.some((interval) => interval.energyMs.some((t) => t < 0));
+}
+
 /** What a segment fades to past the trail's hole: shown, never hidden (§8 rule 7). */
 export const UNSUPPORTED_OPACITY = 0.45;
 
@@ -309,8 +323,9 @@ export function gapNote(holeFromSeq: number | null): string | null {
 
 /**
  * The caveats that travel with the table (CONTEXT.md §Look and feel: a caveat
- * sits with the number it qualifies, never in a footnote). `withheld` and
- * `unheard` are shown only when the call has the thing they explain.
+ * sits with the number it qualifies, never in a footnote). `withheld`,
+ * `unheard` and `beforeRecording` are shown only when the call has the thing
+ * they explain.
  */
 export const INTERVAL_CAVEATS = {
   trail:
@@ -320,6 +335,8 @@ export const INTERVAL_CAVEATS = {
     '[withheld] — consent not granted, or not yet on record (contract trap 2); [expired] — the transcript passed its retention TTL (contract trap 10).',
   unheard:
     'unheard — the recogniser feed was muted at that instant, read from the trail’s mute/unmute effects.',
+  beforeRecording:
+    'before the recording — sound that arrived while the call was still opening; it has no sample in call.wav (contract §8 rule 4).',
   annotation:
     'annotation — what a person who heard the call wrote afterwards (contract §3), current rows only: a corrected or retracted row is history, shown on demand. One row is shown on every interval it overlaps (§8). A call without granted consent, or without a recording_started_at, has no rows at all by the insert gate — not because nothing was wrong on it (trap 13).',
 } as const;

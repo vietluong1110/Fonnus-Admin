@@ -32,8 +32,11 @@ its result reaches a screen:
 4. **Intervals are placed in milliseconds on the recording clock,
    `ts − recording_started_at`, and a negative offset is kept**, not clamped: the trail's
    first record can precede the recording origin by the ~100 ms the recorder takes to
-   open, and clamping would hide a fact the pipeline's reader deliberately keeps
-   (`call-evidence.ts:622-624`). `recordingOffsetMs` in `src/playback.ts`, which clamps at
+   open, and a `caller_energy` of a frame held while the call opened is written after the
+   open's records yet stamped with the frame's arrival — before `recording_started_at`
+   when it arrived during the config read (contract trap 9). The clock therefore starts
+   at the trail's earliest instant, not at its first record by `seq`, and clamping would
+   hide a fact the pipeline's reader deliberately keeps (`call-evidence.ts:637-645`). `recordingOffsetMs` in `src/playback.ts`, which clamps at
    0 for turn blocks, is not reused for intervals. A null `recording_started_at` places
    nothing, as for turn blocks.
 5. **An `Interval` carries facts, never caller text.** The derivation returns the holder
@@ -95,10 +98,11 @@ its result reaches a screen:
   verdict first among what must be visible. Falling back to turn blocks on `absent` keeps
   the axis useful for a call recorded with `RECORD_CALLS` off (no rows at all), where the
   intervals would be an empty lane with no explanation.
-- **Not clamping a negative offset** keeps the interval list contiguous from the first
-  record to `recorder/finalized`, the invariant the reference's tests hold
-  (`expectContiguous`); clamping the first record to 0 while placing `recorder/finalized`
-  by `ts` would leave a gap the test cannot distinguish from a real hole.
+- **Not clamping a negative offset** keeps the interval list contiguous from the trail's
+  earliest instant to `recorder/finalized`, the invariant the reference's tests hold
+  (`expectContiguous`); clamping the earliest instant to 0 while placing `recorder/finalized`
+  by `ts` would leave a gap the test cannot distinguish from a real hole, and starting the
+  clock at the first record by `seq` would leave a held frame's sound outside every interval.
 
 ## Rejected
 

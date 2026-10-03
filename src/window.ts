@@ -130,10 +130,13 @@ export function parseSince(spec: string | undefined, now: Date): Since {
  * zone, which is UTC in the container and the developer's own on a laptop. A
  * value that carries its zone (`Z`, `+07:00`) is the instant it spells;
  * anything else is handed to `Date` as it stands. Null when `Date` cannot read
- * it at all.
+ * it at all, or when the value opens with a date that is not on the calendar —
+ * whichever form follows it, as `report-calls --since` refuses every form.
  */
 function parseAbsolute(trimmed: string): Date | null {
   const zoneless = LOCAL_DATE_TIME.exec(trimmed);
+  const date = /^\d{4}-\d{2}-\d{2}/.exec(trimmed)?.[0];
+  if (date !== undefined && !isCalendarDate(date)) return null;
   const raw = DATE_ONLY.test(trimmed)
     ? `${trimmed}T00:00:00${CALL_TIME_ZONE_OFFSET}`
     : zoneless !== null
@@ -141,6 +144,17 @@ function parseAbsolute(trimmed: string): Date | null {
       : trimmed;
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * False for a date `Date` would roll over: `2026-02-30` parses, as March 2.
+ * Copied from `../Fonnus/tools/report-calls.ts` `isCalendarDate` (pipeline
+ * commit `d877f35`), so the screen refuses the dates `report-calls --since`
+ * refuses.
+ */
+function isCalendarDate(date: string): boolean {
+  const midnight = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(midnight.getTime()) && midnight.toISOString().startsWith(date);
 }
 
 /**

@@ -26,7 +26,7 @@ import {
 import { getConfig } from '@/config';
 import { STORED_COST_TIP, callCostView, costCell, floorMark, floorSentence, formatVnd } from '@/cost';
 import { configuredRouterOf, parseSnapshot, renderValue } from '@/dashboard';
-import { heardNote, type LaneSegment } from '@/interval-lane';
+import { anyBeforeRecording, heardNote, type LaneSegment } from '@/interval-lane';
 import {
   callIntervals,
   intervalCells,
@@ -211,6 +211,8 @@ export default async function CallPage({
         }));
   // The caveat shown only where it applies: a caller whose sound reached nobody.
   const anyUnheard = (intervals ?? []).some((interval) => interval.unheard);
+  // And a caller whose sound came before the recording, so has no audio to seek.
+  const beforeRecording = anyBeforeRecording(intervals ?? []);
 
   // The placement rules of `docs/upstream.md` §Artifacts, run once on the
   // server; the islands draw what this returns and re-derive nothing.
@@ -446,6 +448,7 @@ export default async function CallPage({
           current={currentAnnotations}
           history={annotationRows}
           anyUnheard={anyUnheard}
+          anyBeforeRecording={beforeRecording}
         />
 
         <details>

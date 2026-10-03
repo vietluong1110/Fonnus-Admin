@@ -26,7 +26,7 @@
 import { annotationCellItems, currentAnnotations, type AnnotationCellItem } from '@/annotations';
 import { isConsentGranted, showCallerData } from '@/calls';
 import type { ConsentGate } from '@/config';
-import { EMPTY_CELL, EXPIRED, WITHHELD, seconds } from '@/interval-lane';
+import { BEFORE_RECORDING, EMPTY_CELL, EXPIRED, WITHHELD, seconds } from '@/interval-lane';
 import type { AnnotationRow, CallEventRow } from '@/queries/calls';
 
 // ── the trail: rows as this module reads them ───────────────────────────
@@ -403,8 +403,13 @@ export function callIntervals(
   const last = placed[placed.length - 1];
   if (first === undefined || last === undefined) return [];
   // Records before `recorder/started` are placed as they are: a negative t is a
-  // fact about the call, not an error to clamp away (`:622-624`).
-  const clockStart = first.t;
+  // fact about the call, not an error to clamp away. The clock starts at the
+  // earliest instant, not at the first record by `seq`: caller energy from the
+  // frames held while the session opened is written after the records of the
+  // open but stamped with the frames' arrival, and a clock starting later would
+  // leave it outside every interval (`call-evidence.ts:637-645` at pipeline
+  // commit `5355e26`, blob `c75f042`; contract trap 9, §8 rule 1).
+  const clockStart = placed.reduce((min, p) => Math.min(min, p.t), first.t);
   const finalized = placed.find((p) => p.key === 'recorder/finalized');
   const clockEnd = Math.max(clockStart, finalized?.t ?? last.t);
   const exhausted = placed.find((p) => p.key === 'stt/reconnect_exhausted');
@@ -477,13 +482,17 @@ function textRef(p: Placed): TextRef {
  * seq differently — the recorder's is the last record it minted, the mirror's
  * is the first row it lost — and both land between the same two present
  * records, so both are read the same way here. Every interval from that instant
- * on is unsupported (§8 rule 7).
+ * on is unsupported (§8 rule 7). The instant is the latest `ts` among the
+ * records at or before the hole, not the last one's: a held frame's
+ * `caller_energy` follows the open's records by `seq` with an earlier `ts`
+ * (trap 9), and reading it as the hole's place would unsupport intervals the
+ * trail had already recorded before the hole.
  */
 function holeAtMs(placed: Placed[], holeFromSeq: number | null): number | null {
   if (holeFromSeq === null) return null;
   let at: number | null = null;
   for (const p of placed) {
-    if (p.r.seq <= holeFromSeq) at = p.t;
+    if (p.r.seq <= holeFromSeq) at = at === null ? p.t : Math.max(at, p.t);
   }
   // A hole at or before the first record leaves nothing supported at all.
   return at ?? placed[0]?.t ?? null;
@@ -824,7 +833,10 @@ function callerLineCell(interval: Interval): string {
     energy.length > ENERGY_SHOWN
       ? `sound ×${String(energy.length)} (${seconds(firstAt)}…${seconds(lastAt)})`
       : `sound at ${energy.map(seconds).join(', ')}`;
-  return interval.unheard ? `${shown} (unheard — feed muted)` : shown;
+  const heard = interval.unheard ? `${shown} (unheard — feed muted)` : shown;
+  // Console-own: sound stamped before `recording_started_at` has no sample in
+  // `call.wav` (contract §8 rule 4); the reference prints the instant alone.
+  return energy.some((t) => t < 0) ? `${heard} ${BEFORE_RECORDING}` : heard;
 }
 
 /**

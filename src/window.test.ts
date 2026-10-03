@@ -133,6 +133,33 @@ describe('parseWindow — the URL contract of ADR 0006', () => {
     expect(until.preset).toBe(DEFAULT_SINCE);
   });
 
+  it('refuses a date the calendar does not have, as report-calls --since does', () => {
+    // `../Fonnus/tools/report-calls.ts` `isCalendarDate`: Date rolls 2026-02-30
+    // over to March 2 rather than refusing it.
+    // A zoned form rolls the same way (`new Date('2026-02-30T00:00Z')` is March 2).
+    for (const spec of ['2026-02-30', '2026-13-01', '2026-02-30T08:00', '2026-02-30T00:00Z']) {
+      const since = parseSince(spec, NOW);
+      expect(since.error).toContain('since expects');
+      expect(since.since.toISOString()).toBe('2026-08-31T10:00:00.000Z');
+    }
+    for (const spec of ['2026-02-30', '2026-13-01', '2026-09-31T08:00']) {
+      const window = parseWindow({ since: '2026-09-01', until: spec }, NOW);
+      expect(window.error).toContain('until expects');
+      expect(window.until).toBeNull();
+      expect(window.preset).toBe(DEFAULT_SINCE);
+    }
+  });
+
+  it('still reads a calendar date and a zoneless date-time as the clinic’s zone', () => {
+    expect(parseSince('2026-09-20T08:00', NOW).since.toISOString()).toBe('2026-09-20T01:00:00.000Z');
+    expect(parseSince('2026-09-20', NOW).since.toISOString()).toBe('2026-09-19T17:00:00.000Z');
+    expect(parseSince('2026-09-20', NOW).error).toBeUndefined();
+    // A date-only `until` is still the start of the following day.
+    const window = parseWindow({ since: '2026-09-01', until: '2026-09-10' }, NOW);
+    expect(window.error).toBeUndefined();
+    expect(window.until?.toISOString()).toBe('2026-09-10T17:00:00.000Z');
+  });
+
   it('reads the first value when a key arrives repeated', () => {
     expect(parseWindow({ since: ['24h', '30d'] }, NOW).preset).toBe('24h');
   });
