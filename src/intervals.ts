@@ -10,9 +10,10 @@
  * Two departures from the reference, both ADR 0010's:
  *
  *  - offsets are milliseconds on the recording clock, not seconds, and a
- *    negative one is kept rather than clamped (`call-evidence.ts:622-624`); the
+ *    negative one is kept rather than clamped (`call-evidence.ts:656-662`); the
  *    cells print seconds with the reference's own `toFixed(2)` so a card and an
- *    `intervals.txt` of the same call read the same;
+ *    `intervals.txt` of the same call read the same. A record tied with a
+ *    boundary (§8 rule 1) is the same exact `===` in either unit;
  *  - an `Interval` carries facts and never caller text. Text is resolved once,
  *    in `intervalCells`, through the single gate `showCallerData` (ADR 0005);
  *    the derivation has nothing to leak;
@@ -69,7 +70,7 @@ export function parseEventRow(value: unknown): EventRow | null {
     turnIdx: typeof row.turn_idx === 'number' ? row.turn_idx : null,
     phase: typeof row.phase === 'string' ? row.phase : null,
     sensitive: row.sensitive === true,
-    // `fields` in the reference (`call-evidence.ts:1036-1038`): a payload that
+    // `fields` in the reference (`call-evidence.ts:1159-1161`): a payload that
     // is not an object has no fields to read by name.
     data:
       typeof row.data === 'object' && row.data !== null && !Array.isArray(row.data)
@@ -78,7 +79,7 @@ export function parseEventRow(value: unknown): EventRow | null {
   };
 }
 
-/** A record's payload as fields to read by name (`call-evidence.ts:1036-1038`). */
+/** A record's payload as fields to read by name (`call-evidence.ts:1159-1161`). */
 function fields(data: Record<string, unknown> | null): Record<string, unknown> {
   return data ?? {};
 }
@@ -103,7 +104,7 @@ export interface TrailVerdict {
 }
 
 /**
- * Copied from `call-evidence.ts:389-476`. The verdict is a state of the trail,
+ * Copied from `call-evidence.ts:395-482`. The verdict is a state of the trail,
  * never an error: a running call is `open` by design, and `complete` needs both
  * halves — the `recorder/finalized` record AND `count(*) = max(seq)` — because
  * the mirror latches off after its first failed insert, so the rows that are
@@ -219,7 +220,7 @@ export function trailVerdict(
 
 /**
  * What the terminal record says about the recorder that minted it: whether its
- * disk latched off mid-call (`call-evidence.ts:486-489`). Where the hole starts
+ * disk latched off mid-call (`call-evidence.ts:492-495`). Where the hole starts
  * needs no field — nothing is routed after the latch, and the terminal record
  * is the last one of the trail, so the record before it is the last real one.
  */
@@ -230,7 +231,7 @@ function recorderFailed(terminal: EventRow | undefined): boolean {
 
 /**
  * What the terminal record says about the mirror that wrote it: how many rows
- * it could not write and where the hole starts (`call-evidence.ts:497-505`).
+ * it could not write and where the hole starts (`call-evidence.ts:503-511`).
  * Null — absent — on a call recorded before the record carried the key and on
  * one that ran under no mirror, and absent is not zero: it is "this trail
  * cannot say", so a `finalized` record with no `mirror` key is no gap on that
@@ -330,6 +331,23 @@ interface Span {
   /** Null on a stretch whose holder the records inside it decide. */
   holder: Holder | null;
   deaf: boolean;
+  /**
+   * The lowest `seq` this span owns at its `from`: a record stamped at that
+   * very instant but written earlier belongs to the span before. Set from the
+   * record that drew the boundary; null when no record did (a clamp, the
+   * clock's start), where `recordsOf` falls back to the instant alone
+   * (`call-evidence.ts:547-553`).
+   */
+  fromSeq: number | null;
+}
+
+/**
+ * A bot span, with the `seq` of the record that ended it — the first record
+ * the caller's stretch after it owns at that instant. Null when no record did
+ * (`call-evidence.ts:560-562`).
+ */
+interface BotSpan extends Span {
+  toSeq: number | null;
 }
 
 /** A stretch of the recording clock, `[from, to)` in ms. */
@@ -341,11 +359,11 @@ interface Stretch {
 /**
  * The three records that open a bot interval, all of them carrying `gen`: the
  * greeting (`speak_text`), a canned line, and a committed turn — only the third
- * has a `turn` row (`call-evidence.ts:555`).
+ * has a `turn` row (`call-evidence.ts:576`).
  */
 const INTENTS = new Set(['effect/speak_text', 'effect/speak_canned', 'effect/start_reply']);
 
-/** Evidence a stretch was the caller's rather than silence (`:558-563`). */
+/** Evidence a stretch was the caller's rather than silence (`:579-584`). */
 const HEARD = new Set([
   'event/caller_energy',
   'event/stt_partial',
@@ -353,7 +371,7 @@ const HEARD = new Set([
   'event/turn_end',
 ]);
 
-/** More instants than a reader takes in one glance collapse to a count (`:569`). */
+/** More instants than a reader takes in one glance collapse to a count (`:590`). */
 const ENERGY_SHOWN = 6;
 /**
  * A payload that is there but carries no `text` — the ASSUMED key was not
@@ -365,9 +383,11 @@ const NO_TEXT = '[no text in payload]';
 /**
  * The call's recording clock as intervals — contiguous, non-overlapping, from
  * the first record to `recorder/finalized` (or to the last record when there is
- * none). Copied from `call-evidence.ts:610-665`; the rules are read-contract §8:
+ * none). Copied from `call-evidence.ts:644-709`; the rules are read-contract §8:
  *
  *  1. Order by `seq`, place by `ts − recording_started_at`; never re-sort by `ts`.
+ *     A record stamped on the very instant of a boundary goes by `seq`: before
+ *     the record that drew the boundary, it belongs to the interval it ends.
  *  2. A bot interval opens at the intent, becomes audible at
  *     `event/first_audible` of that `gen` and ends at the LAST
  *     `event/playback_completed` for it; a `playback_completed` of another
@@ -407,25 +427,35 @@ export function callIntervals(
   // earliest instant, not at the first record by `seq`: caller energy from the
   // frames held while the session opened is written after the records of the
   // open but stamped with the frames' arrival, and a clock starting later would
-  // leave it outside every interval (`call-evidence.ts:637-645` at pipeline
-  // commit `5355e26`, blob `c75f042`; contract trap 9, §8 rule 1).
+  // leave it outside every interval (`call-evidence.ts:656-662` at pipeline
+  // commit `070709d`, blob `be88eeb`; contract trap 9, §8 rule 1).
   const clockStart = placed.reduce((min, p) => Math.min(min, p.t), first.t);
   const finalized = placed.find((p) => p.key === 'recorder/finalized');
   const clockEnd = Math.max(clockStart, finalized?.t ?? last.t);
   const exhausted = placed.find((p) => p.key === 'stt/reconnect_exhausted');
   const deafFrom =
     exhausted === undefined ? null : Math.min(Math.max(exhausted.t, clockStart), clockEnd);
+  const deaf = {
+    from: deafFrom,
+    seq: exhausted !== undefined && exhausted.t === deafFrom ? exhausted.r.seq : null,
+  };
 
   const spans: Span[] = [];
   let cursor = clockStart;
+  // The record that ended the last bot interval opens the caller's stretch after it.
+  let cursorSeq: number | null = null;
   for (const bot of botSpans(placed, clockStart, clockEnd)) {
     if (bot.to <= cursor) continue;
     const from = Math.max(bot.from, cursor);
-    if (from > cursor) spans.push(...callerSpans(placed, cursor, from, deafFrom));
-    spans.push({ ...bot, from });
+    if (from > cursor) spans.push(...callerSpans(placed, { from: cursor, fromSeq: cursorSeq }, from, deaf));
+    const { toSeq, ...span } = bot;
+    spans.push({ ...span, from, fromSeq: from === bot.from ? span.fromSeq : null });
     cursor = bot.to;
+    cursorSeq = toSeq;
   }
-  if (cursor < clockEnd) spans.push(...callerSpans(placed, cursor, clockEnd, deafFrom));
+  if (cursor < clockEnd) {
+    spans.push(...callerSpans(placed, { from: cursor, fromSeq: cursorSeq }, clockEnd, deaf));
+  }
   // A trail whose every span collapsed — one record, or a bot intent stamped at
   // the last instant of the call — still accounts for its clock with one line.
   if (spans.length === 0) {
@@ -434,6 +464,7 @@ export function callIntervals(
       to: clockEnd,
       holder: null,
       deaf: deafFrom !== null && clockStart >= deafFrom,
+      fromSeq: null,
     });
   }
 
@@ -441,7 +472,7 @@ export function callIntervals(
   const muted = mutedStretches(placed, clockStart, clockEnd);
   const holeAt = holeAtMs(placed, opts.holeFromSeq);
   return spans.map((span, i) => {
-    const owned = recordsOf(placed, span, { first: i === 0, last: i === spans.length - 1 });
+    const owned = recordsOf(placed, span, { first: i === 0, next: spans[i + 1] });
     const energyMs = owned.filter((p) => p.key === 'event/caller_energy').map((p) => p.t);
     const finals = owned.filter((p) => p.key === 'event/stt_final').map(textRef);
     const produced = owned.some((p) => p.key === 'event/stt_partial' || p.key === 'event/stt_final');
@@ -452,7 +483,7 @@ export function callIntervals(
       energyMs,
       unheard: energyMs.some((t) => unheardAt(t, muted)),
       finals,
-      // The first overtaken partial only, as the reference reads it (`:857`,
+      // The first overtaken partial only, as the reference reads it (`:980`,
       // `find`): two intents in the same instant (trap 9) can leave one
       // interval owning two, and the card and `intervals.txt` must agree.
       overtaken: owned
@@ -461,7 +492,7 @@ export function callIntervals(
         .map(textRef),
       // The signatures of a recogniser that produced nothing are what a reader
       // comes here for — and they are only a finding where nothing came out
-      // (`:864-870`).
+      // (`:982-988`).
       signalRuns: produced ? [] : signalRuns(owned),
       watchdog: owned.some(
         (p) => p.key === 'event/timer_fired' && fields(p.r.data)['id'] === 'no_input',
@@ -500,7 +531,7 @@ function holeAtMs(placed: Placed[], holeFromSeq: number | null): number | null {
 
 /**
  * The stretches the feed to the recogniser was muted across — where the
- * caller's sound reached nobody. Copied from `call-evidence.ts:683-698`, and
+ * caller's sound reached nobody. Copied from `call-evidence.ts:727-742`, and
  * read off the trail itself because the trail carries the state: every change
  * of it is an engine effect. So: from the call's birth — the shell starts
  * muted, so the greeting plays into a dead feed — to the first
@@ -525,19 +556,19 @@ function mutedStretches(placed: Placed[], clockStart: number, clockEnd: number):
   return out;
 }
 
-/** Whether the caller's line was unheard at one instant (`:701-703`). */
+/** Whether the caller's line was unheard at one instant (`:745-747`). */
 function unheardAt(t: number, muted: Stretch[]): boolean {
   return muted.some((s) => t >= s.from && t < s.to);
 }
 
 /**
  * Every stretch the bot held the line, in order, clamped to the clock
- * (`call-evidence.ts:727-801`). Whether the caller's sound was heard across any
+ * (`call-evidence.ts:754-851`). Whether the caller's sound was heard across any
  * of them is not decided here: `mutedStretches` reads that off the trail.
  */
-function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[] {
+function botSpans(placed: Placed[], clockStart: number, clockEnd: number): BotSpan[] {
   const intents = placed.filter((p) => INTENTS.has(p.key));
-  const out: Span[] = [];
+  const out: BotSpan[] = [];
   for (const [i, intent] of intents.entries()) {
     const next = intents[i + 1];
     const from = Math.min(Math.max(intent.t, clockStart), clockEnd);
@@ -548,7 +579,7 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
     const mine = (p: Placed, key: string): boolean =>
       p.key === key && gen !== null && p.r.gen === gen && p.t >= from && p.t <= windowEnd;
     const audible = placed.find((p) => mine(p, 'event/first_audible'));
-    // The holding line (ADR 0030, `call-evidence.ts:735-748`) is audio of the
+    // The holding line (ADR 0030, `call-evidence.ts:767-782`) is audio of the
     // reply's own generation, sent while the answer was still coming. Its drain
     // is not the reply's: only a drain after the answer's first audible byte
     // ends the reply. `effect/speak_holding_line`, `event/holding_line_failed`
@@ -578,20 +609,34 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
       intent.key !== 'effect/speak_text'
         ? placed.find((p) => mine(p, 'event/synthesis_complete'))
         : undefined;
-    let to = windowEnd;
-    if (barge !== undefined) to = barge.t;
-    else if (lastDrain !== undefined) to = lastDrain.t;
-    else if (audible === undefined && failed !== undefined) to = failed.t;
+    // The record that ends the interval, not only its instant: it drew the
+    // boundary, so it decides which side a record tied with it falls on
+    // (`call-evidence.ts:796-817`).
+    let end: Placed | undefined = next;
+    // The recorder writes the caller's record that triggered a barge-in right
+    // before `barge_in/detected`, on the same instant: that record is the
+    // caller's, so it is the one that drew the boundary.
+    if (barge !== undefined) end = bargeTrigger(placed, barge) ?? barge;
+    else if (lastDrain !== undefined) end = lastDrain;
+    else if (audible === undefined && failed !== undefined) end = failed;
     else if (audible === undefined && line !== undefined) {
-      // An empty answer behind an audible line (`call-evidence.ts:765-771`):
+      // An empty answer behind an audible line (`call-evidence.ts:803-811`):
       // the engine hands the line back only once the answer is over AND the
       // line has drained, whichever of the two comes last; with either missing
       // it never did.
       if (synthesized !== undefined && lastLineDrain !== undefined) {
-        to = Math.max(synthesized.t, lastLineDrain.t);
+        const synthesizedLast =
+          synthesized.t === lastLineDrain.t
+            ? synthesized.r.seq > lastLineDrain.r.seq
+            : synthesized.t > lastLineDrain.t;
+        end = synthesizedLast ? synthesized : lastLineDrain;
       }
-    } else if (audible === undefined && synthesized !== undefined) to = synthesized.t;
-    to = Math.min(Math.max(to, from), windowEnd);
+    } else if (audible === undefined && synthesized !== undefined) end = synthesized;
+    const to = Math.min(Math.max(end?.t ?? windowEnd, from), windowEnd);
+    // A boundary that a clamp moved off its record was drawn by no record.
+    const seqAt = (p: Placed | undefined, at: number): number | null =>
+      p !== undefined && p.t === at ? p.r.seq : null;
+    const toSeq = seqAt(end, to);
     const audibleAt = audible === undefined ? null : Math.min(Math.max(audible.t, from), to);
     const heard = audible !== undefined;
     if (intent.key === 'effect/start_reply') {
@@ -608,15 +653,39 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
         audible: heard,
       });
       // The wait ends at whichever the caller heard first: the holding line or
-      // the answer (`call-evidence.ts:780-785`).
+      // the answer (`call-evidence.ts:824-844`).
       const lineAt = line === undefined ? null : Math.min(Math.max(line.t, from), audibleAt ?? to);
       const waitEnd = lineAt ?? audibleAt ?? to;
-      out.push({ from, to: waitEnd, holder: holder('waiting', waiting), deaf: false });
+      // Whichever stretch reaches the reply's end hands it to the caller's.
+      const endSeq = (at: number): number | null => (at === to ? toSeq : null);
+      out.push({
+        from,
+        to: waitEnd,
+        holder: holder('waiting', waiting),
+        deaf: false,
+        fromSeq: seqAt(intent, from),
+        toSeq: endSeq(waitEnd),
+      });
       if (lineAt !== null) {
-        out.push({ from: lineAt, to: audibleAt ?? to, holder: holder('holding', holding), deaf: false });
+        const holdEnd = audibleAt ?? to;
+        out.push({
+          from: lineAt,
+          to: holdEnd,
+          holder: holder('holding', holding),
+          deaf: false,
+          fromSeq: seqAt(line, lineAt),
+          toSeq: endSeq(holdEnd),
+        });
       }
       if (audibleAt !== null) {
-        out.push({ from: audibleAt, to, holder: holder('reply', reply), deaf: false });
+        out.push({
+          from: audibleAt,
+          to,
+          holder: holder('reply', reply),
+          deaf: false,
+          fromSeq: seqAt(audible, audibleAt),
+          toSeq,
+        });
       }
       continue;
     }
@@ -632,12 +701,27 @@ function botSpans(placed: Placed[], clockStart: number, clockEnd: number): Span[
         audible: heard,
       },
       deaf: false,
+      fromSeq: seqAt(intent, from),
+      toSeq,
     });
   }
   return out.filter((s) => s.to > s.from);
 }
 
-/** `effect/speak_canned` says which of the three lines it was (`:760-763`). */
+/**
+ * The record a `barge_in/detected` names as its trigger, when it is the one
+ * written just before it on the same instant (`call-evidence.ts:858-864`;
+ * `engineEvent`, `../Fonnus/app/src/recording/artifact-recorder.ts`).
+ */
+function bargeTrigger(placed: Placed[], barge: Placed): Placed | undefined {
+  const trigger = fields(barge.r.data)['trigger'];
+  const before = placed[placed.indexOf(barge) - 1];
+  return before !== undefined && before.t === barge.t && before.key === `event/${String(trigger)}`
+    ? before
+    : undefined;
+}
+
+/** `effect/speak_canned` says which of the three lines it was (`:867-870`). */
 function cannedHolder(r: EventRow): string {
   const line = fields(r.data)['line'];
   return typeof line === 'string' ? `bot: ${line}` : 'bot: canned line';
@@ -646,27 +730,37 @@ function cannedHolder(r: EventRow): string {
 /**
  * A stretch between two bot intervals, cut at the recogniser's own segmentation
  * — and at the instant the STT socket gave up, so that no interval is half deaf
- * and half not (`call-evidence.ts:771-785`). No finer boundary is invented: the
+ * and half not (`call-evidence.ts:878-902`). No finer boundary is invented: the
  * pipeline knows of no other instant at which the line changed hands.
  */
-function callerSpans(placed: Placed[], from: number, to: number, deafFrom: number | null): Span[] {
+function callerSpans(
+  placed: Placed[],
+  start: { from: number; fromSeq: number | null },
+  to: number,
+  deaf: { from: number | null; seq: number | null },
+): Span[] {
+  const deafFrom = deaf.from;
+  // A turn-end signal belongs to the interval it ended, so the next one owns
+  // only what was written after it.
   const cuts = [
-    ...placed.filter((p) => p.key === 'event/turn_end' && p.t > from && p.t < to).map((p) => p.t),
-    ...(deafFrom !== null && deafFrom > from && deafFrom < to ? [deafFrom] : []),
-  ].sort((a, b) => a - b);
-  const bounds = [from, ...cuts, to];
+    ...placed
+      .filter((p) => p.key === 'event/turn_end' && p.t > start.from && p.t < to)
+      .map((p) => ({ t: p.t, seq: p.r.seq + 1 })),
+    ...(deafFrom !== null && deafFrom > start.from && deafFrom < to ? [{ t: deafFrom, seq: deaf.seq }] : []),
+  ].sort((a, b) => a.t - b.t || (a.seq ?? 0) - (b.seq ?? 0));
+  const bounds = [{ t: start.from, seq: start.fromSeq }, ...cuts, { t: to, seq: null }];
   const out: Span[] = [];
   for (let i = 0; i + 1 < bounds.length; i += 1) {
     const a = bounds[i];
     const b = bounds[i + 1];
-    if (a === undefined || b === undefined || b <= a) continue;
-    out.push({ from: a, to: b, holder: null, deaf: deafFrom !== null && a >= deafFrom });
+    if (a === undefined || b === undefined || b.t <= a.t) continue;
+    out.push({ from: a.t, to: b.t, holder: null, deaf: deafFrom !== null && a.t >= deafFrom, fromSeq: a.seq });
   }
   return out;
 }
 
 /**
- * Copied from `call-evidence.ts:787-790`. The label is the contract's word
+ * Copied from `call-evidence.ts:904-907`. The label is the contract's word
  * `deaf` (`console-call-view.md` holder vocabulary); the reference prints
  * `deaf (stt exhausted)`, which this console renders as the explanation beside
  * the label rather than as the label (ADR 0010).
@@ -681,28 +775,29 @@ function holderOf(owned: Placed[], deaf: boolean): Holder {
 }
 
 /**
- * The records one interval owns (`call-evidence.ts:798-805`). `[from, to)`,
- * with two edges: a turn-end signal belongs to the interval it ended — it sits
- * exactly on that interval's `to` whenever the segmentation cut there — and the
- * last interval keeps a record stamped at its very end, which is where
- * `recorder/finalized` sits.
+ * The records one interval owns (`call-evidence.ts:919-928`): those stamped
+ * inside `(from, to)`, and those stamped exactly on a boundary by `seq` against
+ * the record that drew it (read-contract §8 rule 1, trap 9): two records can
+ * share a millisecond, and one written before the boundary's record belongs to
+ * the interval before it (`Span.fromSeq`). A boundary no record drew falls back
+ * to `[from, to)`, except that a turn-end signal stays with the interval it
+ * ended. The first interval keeps every record at its start and the last every
+ * record at its end, which is where `recorder/finalized` sits.
  */
-function recordsOf(
-  placed: Placed[],
-  span: { from: number; to: number },
-  o: { first: boolean; last: boolean },
-): Placed[] {
+function recordsOf(placed: Placed[], span: Span, o: { first: boolean; next: Span | undefined }): Placed[] {
+  const before = (p: Placed, boundarySeq: number | null): boolean =>
+    boundarySeq === null ? p.key === 'event/turn_end' : p.r.seq < boundarySeq;
   return placed.filter((p) => {
-    if (p.key === 'event/turn_end') {
-      return (o.first ? p.t >= span.from : p.t > span.from) && p.t <= span.to;
-    }
-    return p.t >= span.from && (o.last ? p.t <= span.to : p.t < span.to);
+    if (p.t < span.from || p.t > span.to) return false;
+    if (p.t === span.from) return o.first || !before(p, span.fromSeq);
+    if (p.t === span.to) return o.next === undefined || before(p, o.next.fromSeq);
+    return true;
   });
 }
 
 /**
  * The partials no final ever replaced before the bot spoke again
- * (`call-evidence.ts:813-826`) — the caller's words were on their way and the
+ * (`call-evidence.ts:936-949`) — the caller's words were on their way and the
  * farewell went out over them. Only the trailing one of a run is named: the
  * earlier ones were superseded by the partials that followed, which is the
  * recogniser working as designed.
@@ -724,7 +819,7 @@ function overtakenPartials(placed: Placed[]): Set<number> {
 
 /**
  * The turn-end signals of one interval, grouped in order
- * (`call-evidence.ts:878-888`). The label is the vendor's own name for the
+ * (`call-evidence.ts:1001-1011`). The label is the vendor's own name for the
  * frame it promoted (`turn_end.source` is an open vocabulary, §3.1): printed,
  * never switched on.
  */
@@ -747,7 +842,7 @@ export const ANSWER_NEVER_AUDIBLE = 'the answer never became audible';
 
 /** One interval as the card prints it — every cell a string, text already gated. */
 export interface IntervalCell {
-  /** Seconds on the recording clock, as `intervals.txt` prints them (`:1041-1043`). */
+  /** Seconds on the recording clock, as `intervals.txt` prints them (`:1164-1166`). */
   from: string;
   to: string;
   holder: string;
@@ -817,7 +912,7 @@ export function intervalCells(
 }
 
 /**
- * What the caller's line carried (`call-evidence.ts:836-846`).
+ * What the caller's line carried (`call-evidence.ts:959-969`).
  * `event/caller_energy` is measured before the mute gate, so it exists inside
  * bot intervals too — there it is speech the pipeline never heard. The note is
  * added for energy that fell inside a muted stretch, whatever kind of interval
@@ -840,7 +935,7 @@ function callerLineCell(interval: Interval): string {
 }
 
 /**
- * What the recogniser produced in this interval (`call-evidence.ts:854-870`) —
+ * What the recogniser produced in this interval (`call-evidence.ts:977-993`) —
  * including the two ways it produced nothing, which are the findings a reader
  * comes here for: a turn-end signal with no partial and no final behind it (it
  * segmented speech and returned no words), and a partial no final ever replaced.
@@ -858,7 +953,7 @@ function recogniserCell(interval: Interval, text: (ref: TextRef) => string): str
 }
 
 /**
- * One recogniser text under the consent rule (`call-evidence.ts:897-901`). A
+ * One recogniser text under the consent rule (`call-evidence.ts:1020-1024`). A
  * `sensitive` payload is withheld unless the gate opens; a payload that is not
  * there at all still proves the recogniser produced words, and trap 10 says
  * which of the two erasures it was — the refusal stripped it at write time, or

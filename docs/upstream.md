@@ -216,35 +216,35 @@ below are verified against the recorder (`../Fonnus/app/src/recording/artifact-r
 | `event/timer_fired` | `id` (`no_input`) | the no-input watchdog — named by §8 rule 5 (not assumed) |
 | `event/caller_energy` | none | the instant alone; `suppressed` is not read |
 
-**The verdict** (`trailVerdict`, copied from `call-evidence.ts:389-476`; contract trap 8),
+**The verdict** (`trailVerdict`, copied from `call-evidence.ts:395-482`; contract trap 8),
 rendered above the card before any interval, in the pipeline's five words: `absent` when
 the call has no row (the text names `config_snapshot->>'RECORD_CALLS'` and the four causes;
 the lane falls back to the turn blocks of §Audio ↔ marks under a caveat); `open` when there
 is no `recorder/finalized` and `ended_at` is null; `truncated` when there is none and the
 call ended; `gap` when `recorder/finalized` carries `failed = true` (hole from the record
-before it, `max(seq) − 1`; `:486-489`), or `mirror.dropped > 0` (hole from `mirror.fromSeq`;
-`:497-505`), or `count(*) ≠ max(seq)` — both holes listed when both apply, and every interval
+before it, `max(seq) − 1`; `:492-495`), or `mirror.dropped > 0` (hole from `mirror.fromSeq`;
+`:503-511`), or `count(*) ≠ max(seq)` — both holes listed when both apply, and every interval
 after the earliest hole is marked unsupported (§8 rule 7) — the hole's place on the clock
 being the latest `ts` among the records at or before its seq, not the last record's, since a
 held frame's `caller_energy` can be that last record with a `ts` before the whole open
 (`holeAtMs`, console-own; review finding 2026-10-03); `complete` otherwise. The
 verdict is a state of the trail, never an error: a running call is `open` by design.
 
-**The intervals** (`callIntervals`, copied from `call-evidence.ts:627-686`), each `[from,
+**The intervals** (`callIntervals`, copied from `call-evidence.ts:644-709` at pipeline `070709d`), each `[from,
 to)` in ms on the recording clock, contiguous from the trail's **earliest instant** to
 `recorder/finalized` (or the last record when the trail is not finalized). The clock starts
-at the earliest `ts`, not at the first record by `seq` (`:637-645`): a held frame's
+at the earliest `ts`, not at the first record by `seq` (`:656-662`): a held frame's
 `caller_energy` is written after the open's records and stamped before them, and a clock
 starting at the first record would leave it outside every interval; a negative offset is
 kept, never clamped (ADR 0010 Decision 4). The rules, each cited:
 
-- **Bot intervals** (§8 rule 3; `botSpans` `:723-792`): one per intent record —
+- **Bot intervals** (§8 rule 3; `botSpans` `:754-851`): one per intent record —
   `effect/speak_text` → `bot: greeting`; `effect/speak_canned` → `bot: <data.line>`
-  (`cannedHolder` `:760-763`, `bot: canned line` when the key is missing);
+  (`cannedHolder` `:867-870`, `bot: canned line` when the key is missing);
   `effect/start_reply` → `bot: waiting on reply N` from the intent to the first
   `event/first_audible` of the same `gen`, then `bot: reply N` to the end, with
   `N = turn_idx ?? gen` and no N at all when both are null. Since pipeline ADR 0030 (row
-  A20, `:735-748`, `:765-771`, `:780-785`): when the first `event/holding_line_audible` of
+  A20, `:767-782`, `:803-811`, `:824-844`): when the first `event/holding_line_audible` of
   the `gen` precedes the answer's `first_audible`, the wait ends at the line and
   `bot: holding line N` runs from there to the answer's `first_audible` — or, when the
   answer never became audible, to the later of `synthesis_complete` and the last
@@ -263,23 +263,34 @@ kept, never clamped (ADR 0010 Decision 4). The rules, each cited:
   line back there; a silent greeting exits to the farewell, the next intent); else the
   window end. An empty span (`to ≤ from`) is dropped. A canned line that never reports
   `synthesis_complete` still holds the line to the next intent, as the reference does.
-- **Caller or silence** (§8 rule 5; `callerSpans` `:771-785`, `holderOf` `:787-790`): every
+- **Caller or silence** (§8 rule 5; `callerSpans` `:878-902`, `holderOf` `:904-907`): every
   gap between bot intervals, and the stretch after the last one, cut at each `event/turn_end`
   strictly inside it and at the deaf point; a segment holding any `event/caller_energy`,
-  `event/stt_partial`, `event/stt_final` or `event/turn_end` (`HEARD` `:558-563`) is
+  `event/stt_partial`, `event/stt_final` or `event/turn_end` (`HEARD` `:579-584`) is
   `caller`, one holding none is `silence`. A trail with no bot interval is one span over
-  the whole clock. Records fall into a span by `recordsOf` `:798-805`: a `turn_end` at the
-  span's start belongs to the span before it (it cut there), except on the first span.
+  the whole clock. Records fall into a span by `recordsOf` `:919-928` (§8 rule 1): a record
+  strictly inside the span is its own; one stamped exactly on a boundary goes by `seq`
+  against the record that drew that boundary — written before it, it belongs to the span
+  that ends there, written after, to the one that starts there. A `turn_end` cut opens the
+  next span at `seq + 1`, so the `turn_end` and every record written before it at that
+  instant stay with the span it ended (call c306c655 at 86.789 s: `stt_final` seq 373,
+  `turn_end` seq 374, `start_reply` seq 376). A bot span's end is drawn by the record that
+  ended it, and a barge-in's by its trigger (`bargeTrigger` `:858-864`: the `stt_partial`,
+  `stt_final` or `caller_energy` named by `data.trigger`, written just before
+  `barge_in/detected` on the same `ts`), which therefore opens the caller's span. A boundary
+  no record drew (a clamp, the clock's start) falls back to `[from, to)`, a `turn_end` still
+  staying with the span it ended; the first span keeps every record at its start and the
+  last every record at its end.
 - **Deaf** (§8 rule 6): from `stt/reconnect_exhausted` (clamped at 0) to the end of the
   clock, every non-bot segment is `deaf`, not `silence` — the contract's label is `deaf`
   (`console-call-view.md` holder vocabulary); the reference prints `deaf (stt exhausted)`
-  (`:788`), which this console renders as the explanation beside the label, not as the
+  (`:905`), which this console renders as the explanation beside the label, not as the
   label.
-- **The sound-instant note** (§8 rule 4; `callerLineCell` `:836-846`, `mutedStretches`
-  `:683-698`): the "caller line" column of the reference is not a column here since row A19
+- **The sound-instant note** (§8 rule 4; `callerLineCell` `:959-969`, `mutedStretches`
+  `:727-742`): the "caller line" column of the reference is not a column here since row A19
   (brief decision 4). Its facts survive as a note inside "What was heard", printed only when
   they change the reading: the `caller_energy` instants — `sound at 31.40, 31.70`, collapsed
-  to `sound ×N (first…last)` above six (`ENERGY_SHOWN` `:569`) — when the interval holds
+  to `sound ×N (first…last)` above six (`ENERGY_SHOWN` `:590`) — when the interval holds
   sound and nothing recognised (no `stt_final`, no overtaken partial), and with ` (unheard —
   feed muted)` when any instant lies in a muted stretch, and with ` (before the recording —
   no audio in call.wav)` when any instant is negative — §8 rule 4's fact in the console's
@@ -290,14 +301,14 @@ kept, never clamped (ADR 0010 Decision 4). The rules, each cited:
   never re-derived from `STT_MUTE_ON_FIRST_AUDIO` or from the bot's intervals. An interval
   whose sound was recognised prints the recognised text alone; `intervals.txt` still prints
   every instant, so the two agree on facts, not on layout.
-- **What was heard** (the recogniser cell, §8 rule 4; `recogniserCell` `:854-870`, `overtakenPartials`
-  `:813-826`, `signalRuns` `:878-888`): every `stt_final` in the interval as quoted text;
+- **What was heard** (the recogniser cell, §8 rule 4; `recogniserCell` `:977-993`, `overtakenPartials`
+  `:936-949`, `signalRuns` `:1001-1011`): every `stt_final` in the interval as quoted text;
   a `stt_partial` with no `stt_final` after it before the next intent or the trail's end
   as `partial overtaken: "…"`; when the interval has neither, each run of `turn_end`
   records as `segmented, returned nothing (<data.source>)`, with ` ×N` for a run of N
   (`turn_end` without a source prints `segmented, returned nothing`); `timer_fired` with
   `id = 'no_input'` as `no-input watchdog fired`; items joined with ` · `, `—` when none.
-  Text (`sttText` `:897-901`) is `[withheld]` on a `sensitive` record when consent is not
+  Text (`sttText` `:1020-1024`) is `[withheld]` on a `sensitive` record when consent is not
   granted, `[withheld]` when it is granted and `data` has no text (the copy's rule); this
   console tells the second case apart as `[expired]` by trap 10 when the outcome is
   `granted` (a console-own rendering, see the "withheld vs expired" fork of the A1b

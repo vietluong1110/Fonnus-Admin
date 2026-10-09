@@ -175,14 +175,14 @@ const UNSUPPORTED_NOTE = "after the trail's hole — unsupported";
 
 /**
  * Seconds on the recording clock, as every column of `intervals.txt` prints
- * them (`call-evidence.ts:1041-1043`) and every offset of the card follows.
+ * them (`call-evidence.ts:1164-1166`) and every offset of the card follows.
  */
 export function seconds(ms: number): string {
   return (ms / 1000).toFixed(2);
 }
 
 /**
- * The empty cell (`call-evidence.ts:566`): a column that has nothing is never
+ * The empty cell (`call-evidence.ts:588`): a column that has nothing is never
  * blank, it says so. The card asks whether a cell has content before it puts
  * a second line under it.
  */

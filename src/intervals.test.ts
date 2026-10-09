@@ -17,7 +17,7 @@ import {
 /*
  * The pipeline's own cases for the same rules, ported from
  * `../Fonnus/test/tools/call-evidence.test.ts` (the `callIntervals` describe
- * block, :595-1047) so that a §8 rule which drifts from the pipeline's fails
+ * block, :596-1357) so that a §8 rule which drifts from the pipeline's fails
  * here rather than on screen (ADR 0010). The reference asserts on the strings
  * `intervals.txt` prints; here the same strings come out of `intervalCells`,
  * with two deliberate differences: the holder of a deaf stretch is the
@@ -211,6 +211,87 @@ describe('callIntervals', () => {
     expect(cells[4]?.botText).toBe('Phòng khám mở cửa 7h30.');
     expect(cells[4]?.turnIdx).toBe(1);
     expectContiguous(list, 0, 25);
+  });
+
+  /**
+   * Call c306c655, turn 3 (`call-evidence.test.ts:664-705`): the final and the
+   * turn-end signal were stamped in the same millisecond (seq 373, 374 at
+   * 86.789), and the record that drew the caller's interval's end shared that
+   * instant. Written before it by `seq`, the final is the caller's, whichever
+   * record drew the boundary: the reply's intent at the same instant, or the
+   * turn-end signal itself when the intent came a millisecond later.
+   */
+  it.each([
+    { case: 'the reply opened in the same millisecond', replyAt: 12, between: [] },
+    { case: 'the turn-end signal cut the stretch first', replyAt: 12.001, between: ['silence'] },
+  ])("keeps a final tied with the boundary on the caller's side ($case)", ({ replyAt, between }) => {
+    const trail = trailAt(
+      [0, 'recorder/started'],
+      [0.05, 'effect/speak_text', { gen: 1, data: { text: 'Xin chào…' } }],
+      [1.2, 'event/first_audible', { gen: 1 }],
+      [10, 'event/playback_completed', { gen: 1 }],
+      [10.02, 'effect/unmute_stt', { gen: 1 }],
+      [11, 'event/caller_energy', { data: { suppressed: 0 } }],
+      [12, 'event/stt_final', { sensitive: true, data: { text: 'Anh nghe nói có chỗ có 20 triệu à?', words: 9 } }],
+      [12, 'event/turn_end', { data: { source: 'endpoint' } }],
+      [replyAt, 'effect/start_reply', { gen: 2, turnIdx: 1, sensitive: true, data: { source: 'endpoint' } }],
+      [13.5, 'event/first_audible', { gen: 2 }],
+      [20, 'event/playback_completed', { gen: 2 }],
+      [25, 'recorder/finalized', { data: { reason: 'caller_hangup', consented: true, failed: false } }],
+    );
+    const list = intervalsOf(trail);
+    const cells = cellsOf(trail);
+    expect(cells.map((c) => c.holder)).toEqual([
+      'silence',
+      'bot: greeting',
+      'caller',
+      ...between,
+      'bot: waiting on reply 1',
+      'bot: reply 1',
+      'silence',
+    ]);
+    expect(list[2]?.toMs).toBe(12000);
+    expect(cells[2]?.recogniser).toBe('"Anh nghe nói có chỗ có 20 triệu à?"');
+    expect(cells.slice(3).map((c) => c.recogniser)).toEqual(cells.slice(3).map(() => NOTHING_CELL));
+    expectContiguous(list, 0, 25);
+  });
+
+  it('gives the caller the record that triggered a barge-in, written just before it on the same instant', () => {
+    // The recorder's own shape: the trigger, then `barge_in/detected` stamped
+    // with the trigger's instant (`artifact-recorder.ts`, `engineEvent`).
+    const trail = trailAt(
+      [0, 'effect/start_reply', { gen: 1, turnIdx: 1, sensitive: true, data: { source: 'speech_final', transcript: 'x' } }],
+      [1, 'event/first_audible', { gen: 1 }],
+      [3, 'event/stt_partial', { sensitive: true, data: { text: 'khoan', words: 1 } }],
+      [3, 'barge_in/detected', { gen: 1, phase: 'listening', data: { trigger: 'stt_partial' } }],
+      [3.6, 'event/turn_end', { data: { source: 'speech_final' } }],
+      [10, 'recorder/finalized'],
+    );
+    const list = intervalsOf(trail);
+    const cells = cellsOf(trail);
+    expect(cells.map((c) => c.holder)).toEqual(['bot: waiting on reply 1', 'bot: reply 1', 'caller', 'silence']);
+    expect(cells[1]?.recogniser).toBe(NOTHING_CELL);
+    expect(list[2]?.fromMs).toBe(3000);
+    expect(cells[2]?.recogniser).toContain('"khoan"');
+    expect(cells[2]?.recogniser).not.toContain('returned nothing');
+    expectContiguous(list, 0, 10);
+  });
+
+  it("keeps the caller's sound written before the socket gave up out of the deaf interval", () => {
+    const cells = cellsOf(
+      trailAt(
+        [0, 'recorder/started'],
+        [0.01, 'effect/unmute_stt'],
+        [5, 'event/caller_energy', { data: { suppressed: 0 } }],
+        [5, 'stt/reconnect_exhausted', { data: { attempts: 3 } }],
+        [5, 'event/caller_energy', { data: { suppressed: 0 } }],
+        [8, 'recorder/finalized'],
+      ),
+    );
+    // The contract's word `deaf` where the reference prints `deaf (stt exhausted)`.
+    expect(cells.map((c) => c.holder)).toEqual(['caller', 'deaf']);
+    expect(cells[0]?.callerLine).toBe('sound at 5.00');
+    expect(cells[1]?.callerLine).toBe('sound at 5.00');
   });
 
   it("shows the reply's own words on a call that did not reach consent", () => {
@@ -1040,7 +1121,7 @@ describe('trailVerdict', () => {
   });
 
   it('takes a terminal record with no mirror key as "cannot say", not as a gap', () => {
-    // Absent is not zero (`call-evidence.ts:497-505`): a call recorded before
+    // Absent is not zero (`call-evidence.ts:503-511`): a call recorded before
     // the key existed, or one that ran under no mirror.
     const noKey = complete.map((r) =>
       r.type === 'finalized' ? { ...r, data: { reason: 'caller_hangup' } } : r,
