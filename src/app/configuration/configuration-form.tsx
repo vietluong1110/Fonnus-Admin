@@ -51,8 +51,10 @@ import {
 } from '@/configuration/document';
 import { GROUPS, displayGroupOf, type Group } from '@/configuration/groups';
 import {
+  dialogueSocketAbsentWords,
   optionLabel,
   reasoningAdvice,
+  refusedOnDialogueSocket,
   rowsOn,
   tabLabel,
   voiceCaption,
@@ -271,9 +273,13 @@ function EditStep({
 
   const providerOf = (of: Group): string => carried(values[`${of}.provider`]);
   // Whether a field is in the DOM, and so submitted: with script, a vendor
-  // branch only while its vendor is the one chosen.
+  // branch only while its vendor is the one chosen, less the ElevenLabs voice
+  // settings the dialogue socket refuses while a dialogue model is chosen.
   const live = (field: Field): boolean =>
-    field.vendor === null || !scripted || field.vendor === providerOf(field.group);
+    field.vendor === null ||
+    !scripted ||
+    (field.vendor === providerOf(field.group) &&
+      !refusedOnDialogueSocket(field, carried(values[`${field.group}.model`])));
 
   // Pending: every leaf whose submitted value differs from the newest row's —
   // a leaf of a vendor no longer chosen counts, since the save drops it.
@@ -1255,7 +1261,9 @@ function providerIn(document: unknown, leg: string): string | null {
 /**
  * The words for a leaf one side of the diff leaves out: "not a <vendor>
  * setting" when that side's vendor has no such leaf at all — the other
- * vendor's parameters a vendor switch drops — else the boot value, with the
+ * vendor's parameters a vendor switch drops — or "not a setting of <model>"
+ * when that side's ElevenLabs model runs on the dialogue socket, which has no
+ * such setting (`dialogueSocketAbsentWords`); else the boot value, with the
  * value when the last call shows it (`bootValueOf`).
  */
 function absentWords(
@@ -1269,7 +1277,10 @@ function absentWords(
   const leg = path.slice(0, path.indexOf('.'));
   const provider = providerIn(document, leg) ?? bootValueOf(ranOn, `${leg}.provider`, null, false);
   if (provider !== null && !vendors.includes(provider)) return `not a ${provider} setting`;
-  return bootWords(bootValueOf(ranOn, path, provider, true), 200);
+  return (
+    dialogueSocketAbsentWords(path, document, fields) ??
+    bootWords(bootValueOf(ranOn, path, provider, true), 200)
+  );
 }
 
 /** One side of a diff line: the value clamped to three lines, or the words for an absent leaf (§3.4). */

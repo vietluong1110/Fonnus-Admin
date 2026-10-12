@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { offeredOf, parseBootReport } from '@/boot-report';
 import { REASONING_VALUES } from '@/contract/config/runtime-document';
 import { REASONING_OFF_ADVICE } from './advice';
-import { fieldsOf } from './document';
+import { diffDocuments, fieldsOf } from './document';
 import { GROUPS } from './groups';
 import {
+  dialogueSocketAbsentWords,
   optionLabel,
   reasoningAdvice,
   reasoningGloss,
+  refusedOnDialogueSocket,
   rowsOn,
   tabLabel,
   voiceCaption,
@@ -45,6 +47,75 @@ describe('rowsOn — which rows a tab holds', () => {
     expect(rows.every(({ field }) => field.vendor === null || field.vendor === 'deepgram')).toBe(true);
     expect(rows.map(({ field }) => field.path)).toContain('stt.params.endpointing_ms');
     expect(rows.map(({ field }) => field.path)).not.toContain('stt.params.max_endpoint_delay_ms');
+  });
+});
+
+describe('refusedOnDialogueSocket — the ElevenLabs rows a dialogue model drops (pipeline ADR 0033 Decision 5)', () => {
+  const field = (path: string, vendor: string) => {
+    const found = fieldsOf().find((f) => f.path === path && f.vendor === vendor);
+    if (found === undefined) throw new Error(`no field ${path} of ${vendor}`);
+    return found;
+  };
+
+  it('keeps speed on Flash, which runs on the multi-context websocket', () => {
+    expect(refusedOnDialogueSocket(field('tts.params.speed', 'elevenlabs'), 'eleven_flash_v2_5')).toBe(false);
+  });
+
+  it('drops speed on eleven_v4_turbo and eleven_v4', () => {
+    expect(refusedOnDialogueSocket(field('tts.params.speed', 'elevenlabs'), 'eleven_v4_turbo')).toBe(true);
+    expect(refusedOnDialogueSocket(field('tts.params.speed', 'elevenlabs'), 'eleven_v4')).toBe(true);
+  });
+
+  it('keeps stability and the pronunciation dictionary on a dialogue model', () => {
+    for (const path of [
+      'tts.params.stability',
+      'tts.params.pronunciation_dict_id',
+      'tts.params.pronunciation_dict_version_id',
+    ]) {
+      expect(refusedOnDialogueSocket(field(path, 'elevenlabs'), 'eleven_v4_turbo')).toBe(false);
+    }
+  });
+
+  it('drops exactly the four leaves the pipeline lists, and only from the ElevenLabs branch', () => {
+    const dropped = fieldsOf()
+      .filter((f) => refusedOnDialogueSocket(f, 'eleven_v4_turbo'))
+      .map((f) => f.path);
+    expect(dropped).toEqual([
+      'tts.params.similarity_boost',
+      'tts.params.style',
+      'tts.params.speaker_boost',
+      'tts.params.speed',
+    ]);
+    expect(refusedOnDialogueSocket(field('tts.params.speed', 'cartesia'), 'eleven_v4_turbo')).toBe(false);
+  });
+
+  it('hides nothing while tts.model is blank — the boot value the form cannot read', () => {
+    expect(refusedOnDialogueSocket(field('tts.params.speed', 'elevenlabs'), '')).toBe(false);
+  });
+});
+
+describe('dialogueSocketAbsentWords — the review diff after a dialogue model drops a leaf', () => {
+  const flash = { tts: { provider: 'elevenlabs', model: 'eleven_flash_v2_5', params: { speed: 1.1 } } };
+  const turbo = { tts: { provider: 'elevenlabs', model: 'eleven_v4_turbo', params: {} } };
+
+  it('names the model, not the boot value, for a leaf the dialogue socket has no setting for', () => {
+    const entry = diffDocuments(flash, turbo).find((e) => e.path === 'tts.params.speed');
+    expect(entry).toMatchObject({ change: 'removed', to: undefined });
+    expect(dialogueSocketAbsentWords('tts.params.speed', turbo, fieldsOf())).toBe(
+      'not a setting of eleven_v4_turbo',
+    );
+  });
+
+  it('says nothing for stability, which the dialogue socket carries', () => {
+    expect(dialogueSocketAbsentWords('tts.params.stability', turbo, fieldsOf())).toBeNull();
+  });
+
+  it('says nothing on Flash, another vendor, or a document naming no model', () => {
+    expect(dialogueSocketAbsentWords('tts.params.speed', flash, fieldsOf())).toBeNull();
+    expect(
+      dialogueSocketAbsentWords('tts.params.speed', { tts: { provider: 'cartesia', model: 'eleven_v4' } }, fieldsOf()),
+    ).toBeNull();
+    expect(dialogueSocketAbsentWords('tts.params.speed', { tts: { provider: 'elevenlabs' } }, fieldsOf())).toBeNull();
   });
 });
 

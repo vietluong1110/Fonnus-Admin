@@ -38,8 +38,39 @@ export const MODEL_CATALOGUE = {
   soniox: ['stt-rt-v5'],
   speechmatics: ['enhanced'],
   cartesia: ['sonic-3.6', 'sonic-3.5'],
-  elevenlabs: ['eleven_flash_v2_5'],
+  elevenlabs: ['eleven_flash_v2_5', 'eleven_v4_turbo', 'eleven_v4'],
 } as const;
+
+/**
+ * The ElevenLabs model ids that run on the **dialogue socket** rather than the
+ * multi-context websocket (ADR 0033 Decision 1): the vendor serves the v3 and
+ * v4 families only through its Text to Dialogue API, and refuses them on the
+ * other socket at the upgrade. A prefix, not the catalogue, on purpose: an
+ * operator-named `.env` id the catalogue does not carry still dispatches by
+ * what it is. The adapter, both schemas and `provider-smoke` read this one
+ * list through `isElevenLabsDialogueModel`.
+ */
+export const ELEVENLABS_DIALOGUE_MODEL_PREFIXES = ['eleven_v3', 'eleven_v4'] as const;
+
+/** Whether `modelId` runs on the dialogue socket (ADR 0033 Decision 1). */
+export function isElevenLabsDialogueModel(modelId: string): boolean {
+  return ELEVENLABS_DIALOGUE_MODEL_PREFIXES.some((prefix) => modelId.startsWith(prefix));
+}
+
+/**
+ * The four ElevenLabs voice settings a dialogue model does not take (ADR 0033
+ * Decision 5): the vendor documents `stability` alone for these models and
+ * accepts the other four silently, ignoring at least `speed`, so a row setting
+ * one would record a setting the audio never had. Refused wherever the model is
+ * known; exported so a console can hide these fields when the form's model
+ * satisfies `isElevenLabsDialogueModel`.
+ */
+export const ELEVENLABS_DIALOGUE_REFUSED_LEAVES = [
+  'similarity_boost',
+  'style',
+  'speaker_boost',
+  'speed',
+] as const;
 
 /**
  * What `OPENROUTER_REASONING` and `llm.params.reasoning` may say, and what each
@@ -687,31 +718,64 @@ export function speechmaticsCrossFieldRefusals(params: {
  * A refusal that no single ElevenLabs leaf can carry, and the leaf it is
  * reported on — the Speechmatics shape one leg over (ADR 0026 Decision 5). Both
  * parsers call `elevenlabsCrossFieldRefusals` and report what it returns on
- * their own key, so the rule is written once (ADR 0011 P3).
+ * their own key, so the rules are written once (ADR 0011 P3).
  */
 export interface ElevenLabsCrossFieldRefusal {
-  leaf: 'pronunciation_dict_id' | 'pronunciation_dict_version_id';
+  leaf:
+    | 'pronunciation_dict_id'
+    | 'pronunciation_dict_version_id'
+    | (typeof ELEVENLABS_DIALOGUE_REFUSED_LEAVES)[number];
   message: string;
 }
 
 /**
- * The one rule that reads more than one ElevenLabs leaf: a pronunciation
- * dictionary is named by a locator carrying BOTH an id and a version id, so
- * half a locator is refused rather than sent as a locator the vendor rejects —
- * or, worse, dropped silently by the adapter. Reported on the half that is
- * missing, which is the field an editor has to fill.
+ * The rules that read more than one ElevenLabs leaf:
+ *
+ *  - a pronunciation dictionary is named by a locator carrying BOTH an id and a
+ *    version id, so half a locator is refused rather than sent as a locator the
+ *    vendor rejects — or, worse, dropped silently by the adapter. Reported on
+ *    the half that is missing, which is the field an editor has to fill;
+ *  - on a dialogue model the dialogue socket carries `stability` only (ADR 0033
+ *    Decision 5), so each of the four other voice settings is refused, one
+ *    refusal per leaf that is set.
+ *
+ * Called with whatever the caller has: a row may leave `model` out, in which
+ * case the second rule has nothing to read and the merged flat record, which
+ * always has a model, is checked by the same rules a moment later.
  */
 export function elevenlabsCrossFieldRefusals(params: {
+  model?: string | undefined;
   pronunciation_dict_id?: string | undefined;
   pronunciation_dict_version_id?: string | undefined;
+  similarity_boost?: number | undefined;
+  style?: number | undefined;
+  speaker_boost?: boolean | undefined;
+  speed?: number | undefined;
 }): readonly ElevenLabsCrossFieldRefusal[] {
+  const refusals: ElevenLabsCrossFieldRefusal[] = [];
   const id = params.pronunciation_dict_id;
   const versionId = params.pronunciation_dict_version_id;
-  if ((id === undefined) === (versionId === undefined)) return [];
-  const message =
-    'a pronunciation dictionary needs both pronunciation_dict_id and pronunciation_dict_version_id — ' +
-    "ElevenLabs' locator carries the two together, and half of one names no dictionary";
-  return [{ leaf: id === undefined ? 'pronunciation_dict_id' : 'pronunciation_dict_version_id', message }];
+  if ((id === undefined) !== (versionId === undefined)) {
+    refusals.push({
+      leaf: id === undefined ? 'pronunciation_dict_id' : 'pronunciation_dict_version_id',
+      message:
+        'a pronunciation dictionary needs both pronunciation_dict_id and pronunciation_dict_version_id — ' +
+        "ElevenLabs' locator carries the two together, and half of one names no dictionary",
+    });
+  }
+  const model = params.model;
+  if (model !== undefined && isElevenLabsDialogueModel(model)) {
+    for (const leaf of ELEVENLABS_DIALOGUE_REFUSED_LEAVES) {
+      // `!== undefined`, not truthiness: `speaker_boost: false` and `style: 0`
+      // are settings too.
+      if (params[leaf] === undefined) continue;
+      refusals.push({
+        leaf,
+        message: `${leaf} is not a setting of ${model}: the dialogue socket carries stability only`,
+      });
+    }
+  }
+  return refusals;
 }
 
 /**
@@ -860,15 +924,17 @@ export const runtimeConfigSchema = z.strictObject({
             pronunciation_dict_version_id:
               LEAF.tts.params.pronunciation_dict_version_id.optional(),
           })
-          // The rule that reads more than one leaf, from the one place it is
-          // written; reported on the half an editor has to fill.
-          .superRefine((params, ctx) => {
-            for (const refusal of elevenlabsCrossFieldRefusals(params)) {
-              ctx.addIssue({ code: 'custom', message: refusal.message, path: [refusal.leaf] });
-            }
-          })
           .optional(),
-      }),
+      })
+        // The rules that read more than one leaf, from the one place they are
+        // written. On the branch rather than on `params`, because the
+        // dialogue-model rule reads `model` too; reported on the leaf an editor
+        // has to change, so the path from the root is `tts.params.<leaf>`.
+        .superRefine((branch, ctx) => {
+          for (const refusal of elevenlabsCrossFieldRefusals({ model: branch.model, ...branch.params })) {
+            ctx.addIssue({ code: 'custom', message: refusal.message, path: ['params', refusal.leaf] });
+          }
+        }),
     ])
     .optional(),
   /**

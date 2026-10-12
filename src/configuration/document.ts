@@ -214,8 +214,9 @@ function objectFields(
     const inner = unwrapOptional(child);
     const innerDef = defOf(inner);
     // A nested group (`stt.params`, `llm.params`) rather than a leaf. The
-    // Speechmatics and ElevenLabs branches carry a `superRefine` on their
-    // params object, which is a check on the object, not another wrapper.
+    // Speechmatics branch carries a `superRefine` on its params object and the
+    // ElevenLabs branch one on the branch itself (it reads `model` too); each
+    // is a check on the object, not another wrapper.
     if (innerDef.type === 'object') objectFields(inner, path, group, vendor, out);
     else out.push(leafField(path, group, vendor, inner));
   }

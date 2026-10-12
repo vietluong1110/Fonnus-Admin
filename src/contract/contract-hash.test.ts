@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest';
 
 /** The two lines of `../Fonnus/docs/read-contract.md` §7, verbatim. */
 const CONTRACT_HASH_LINES = [
-  'contract-hash: app/src/config/runtime-document.ts sha256:714eadafa30b853c83bab25b165643538b91818c8f281458ad896c428ec50cc9',
+  'contract-hash: app/src/config/runtime-document.ts sha256:d160e2ed39ecf5e1723baf0f698d6534bd2378c0da1a8e442e88557cdb66e118',
   'contract-hash: app/src/domain/speakable.ts sha256:934e0fe58d520ce689613fcf992319bae0848923b2a3d1c316f707ac2d2bac08',
 ] as const;
 

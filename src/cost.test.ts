@@ -10,6 +10,7 @@ import {
   VND_PER_USD,
   type TurnCostInput,
 } from './cost';
+import { ttsCostUsd } from './contract/pricing';
 
 const QWEN = 'qwen/qwen3.5-397b-a17b';
 
@@ -128,6 +129,25 @@ describe('callCostView', () => {
       'totalVnd',
       'unpriced',
     ]);
+  });
+});
+
+describe('the ElevenLabs dialogue models (pipeline ADR 0033 Decision 6)', () => {
+  it('prices eleven_v4_turbo and eleven_v4 at their list rates through the copy', () => {
+    expect(ttsCostUsd(1000, 'eleven_v4_turbo')).toBe(0.04);
+    expect(ttsCostUsd(1000, 'eleven_v4')).toBe(0.08);
+  });
+
+  it('names neither as unpriced on a call that ran it', () => {
+    const call = {
+      total_cost_vnd: '120.5000',
+      started_at: new Date('2026-10-12T07:00:00Z'),
+      ended_at: new Date('2026-10-12T07:02:00Z'),
+      stt_model: 'nova-3',
+    };
+    for (const tts_model of ['eleven_v4_turbo', 'eleven_v4']) {
+      expect(callCostView({ ...call, tts_model }, [PRICED_TURN], QWEN, null).unpriced).toEqual([]);
+    }
   });
 });
 

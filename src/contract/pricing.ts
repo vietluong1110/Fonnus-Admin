@@ -99,6 +99,16 @@ export const PRICES: Prices = {
     // against the vendor's usage page for the day of a recorded call, compared
     // with `sum(call_log.tts_chars)` (runbook §10.2).
     eleven_flash_v2_5: 0.05,
+    // ElevenLabs v4 on the dialogue socket (ADR 0033 Decision 6),
+    // elevenlabs.io/pricing/api read 2026-10-12, the list rates once the v4
+    // launch discount ended that day. `eleven_v4` is catalogued for the eval
+    // and the ear, not for live calls. ASSUMED (ADR 0033 A10), as on the Flash
+    // row: a Vietnamese NFC character counts as one, and a short flushed
+    // context bills its own length, not a minimum block. Settles against the
+    // vendor's usage page for the day of a recorded call, compared with
+    // `sum(call_log.tts_chars)` by model (runbook §2.5 row 38).
+    eleven_v4_turbo: 0.04,
+    eleven_v4: 0.08,
     // The offline fakes make no request to anybody — see the LLM row below.
     'fake/echo-1': 0,
   },

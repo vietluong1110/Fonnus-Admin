@@ -7,9 +7,13 @@
  */
 
 import type { Offered } from '@/boot-report';
-import { REASONING_VALUES } from '@/contract/config/runtime-document';
+import {
+  ELEVENLABS_DIALOGUE_REFUSED_LEAVES,
+  isElevenLabsDialogueModel,
+  REASONING_VALUES,
+} from '@/contract/config/runtime-document';
 import { REASONING_OFF_ADVICE } from './advice';
-import { mergeBranches, type BranchMerge, type Field } from './document';
+import { mergeBranches, valueAt, type BranchMerge, type Field } from './document';
 import { displayGroupOf, type Group } from './groups';
 
 /**
@@ -32,6 +36,42 @@ export function rowsOn(
     else branches.push(field);
   }
   return [...byPath.values()].map(mergeBranches);
+}
+
+/**
+ * Whether a row of the ElevenLabs branch is one the dialogue socket refuses
+ * under `model`, the form's current `tts.model` (pipeline ADR 0033 Decision 5):
+ * a dialogue model takes `stability` only, so the four other voice settings in
+ * `ELEVENLABS_DIALOGUE_REFUSED_LEAVES` leave the form the way another vendor's
+ * branch does. The list and the predicate are the copy's, never restated here.
+ * A blank `model` is the boot value, which the form cannot read, so it hides
+ * nothing.
+ */
+export function refusedOnDialogueSocket(field: Field, model: string): boolean {
+  return (
+    field.group === 'tts' &&
+    field.vendor === 'elevenlabs' &&
+    isElevenLabsDialogueModel(model) &&
+    ELEVENLABS_DIALOGUE_REFUSED_LEAVES.some((leaf) => field.path === `tts.params.${leaf}`)
+  );
+}
+
+/**
+ * The review diff's words for a leaf `document` leaves out because its
+ * `tts.model` is a dialogue model that has no such setting — the sibling of
+ * "not a <vendor> setting" for a vendor switch — or `null` when the leaf's
+ * absence means something else (the boot value applies).
+ */
+export function dialogueSocketAbsentWords(
+  path: string,
+  document: unknown,
+  fields: readonly Field[],
+): string | null {
+  const model = valueAt(document, 'tts.model');
+  if (typeof model !== 'string') return null;
+  const field = fields.find((f) => f.path === path && f.vendor === valueAt(document, 'tts.provider'));
+  if (field === undefined || !refusedOnDialogueSocket(field, model)) return null;
+  return `not a setting of ${model}`;
 }
 
 /**

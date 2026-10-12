@@ -119,6 +119,13 @@ describe('fieldsOf', () => {
     expect(field('tts.params.speed', 'elevenlabs')).toMatchObject({ min: 0.7, max: 1.2 });
     expect(field('stt.model', 'deepgram').options).toEqual(['nova-3']);
     expect(field('stt.model', 'soniox').options).toEqual(['stt-rt-v5']);
+    // MODEL_CATALOGUE: Flash on the multi-context websocket, the two v4 ids on
+    // the dialogue socket (pipeline ADR 0033).
+    expect(field('tts.model', 'elevenlabs').options).toEqual([
+      'eleven_flash_v2_5',
+      'eleven_v4_turbo',
+      'eleven_v4',
+    ]);
   });
 });
 
@@ -252,6 +259,15 @@ describe('parseDocument', () => {
     });
     if (parsed.ok) throw new Error('expected the document to be refused');
     expect(parsed.issues[0]?.path).toBe('tts.params.pronunciation_dict_version_id');
+  });
+
+  it('refuses a voice setting the dialogue socket does not carry, on its leaf path (ADR 0033 Decision 5)', () => {
+    const issuesOn = (model: string): string[] => {
+      const parsed = parseDocument({ tts: { provider: 'elevenlabs', model, params: { speed: 1.1 } } });
+      return parsed.ok ? [] : parsed.issues.map((issue) => issue.path);
+    };
+    expect(issuesOn('eleven_v4_turbo')).toContain('tts.params.speed');
+    expect(issuesOn('eleven_flash_v2_5')).not.toContain('tts.params.speed');
   });
 });
 

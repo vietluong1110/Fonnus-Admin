@@ -84,7 +84,17 @@ render only while it is chosen (a client component flips them; with JavaScript o
 every branch shares — `stt.model`, `tts.model`, `tts.params.speed`,
 `tts.params.pronunciation_dict_id` — renders once with the union of every branch's options
 and no `min` / `max` attribute, the per-vendor bounds in its hint, and the schema refuses the
-wrong value at review). `llm.model` is free text,
+wrong value at review). Since the pipeline's `313ed5d` (pipeline ADR 0033) the same rule
+reads the model too: the four `tts.params` leaves the copy exports as
+`ELEVENLABS_DIALOGUE_REFUSED_LEAVES` (`similarity_boost`, `style`, `speaker_boost`,
+`speed`) render only while `tts.model` does not satisfy the copy's
+`isElevenLabsDialogueModel` — a dialogue model takes `stability` only — so a loaded row
+that set one and is switched to `eleven_v4_turbo` shows the leaf as `removed` in the review
+diff with "not a setting of eleven_v4_turbo" on the after side, as a vendor swap reads "not
+a <vendor> setting" — never "boot value", because the pipeline refuses the merged record
+when the box `.env` still sets that knob (pipeline ADR 0033 D5), so no boot value applies;
+with JavaScript off nothing hides and the copied schema refuses the leaf at review, on
+`tts.params.<leaf>`. `llm.model` is free text,
 `stt.model` / `tts.model` are `MODEL_CATALOGUE[provider]`. Each text field offers "restore
 shipped text" (fills `SHIPPED_TEXT.<leaf>`); "back to boot config" submits the empty
 document. The groups are tabs over the one `<form>` (`?group=`, ADR 0006), so an edit on

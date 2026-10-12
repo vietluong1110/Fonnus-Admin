@@ -5,9 +5,9 @@
 ## Decision
 
 1. **`src/contract/pricing.ts` is a byte copy of `../Fonnus/app/src/domain/pricing.ts`**
-   (244 lines, imports nothing; sha256
-   `b8abdb8e18fc86b0a07f6d729ce7b212ed699712665e250b67fa5f678616d386` at pipeline commit
-   `cbaa791`, 2026-09-17). It brings `PRICES`, `priceRow`, `sttCostUsd`, `ttsCostUsd`,
+   (307 lines, imports nothing; sha256
+   `a6683db5c362023b133730ae0c14d93c6d8f2d51e982d49bcfdbd58d1639b049` at pipeline commit
+   `313ed5d`, 2026-10-12). It brings `PRICES`, `priceRow`, `sttCostUsd`, `ttsCostUsd`,
    `llmCostUsd`, `callCostVnd` and `round4` unchanged. Re-copying is the only edit.
    `src/contract/pricing.test.ts` pins the bytes to the hash above and, when `../Fonnus`
    is checked out beside this repo, compares the copy to the source byte for byte and
@@ -143,14 +143,17 @@ vendor-reported cost per turn (G1). The forces:
 
 ## Verified facts
 
-- `PRICES` (`../Fonnus/app/src/domain/pricing.ts:48-113`): STT per minute `nova-3` 0.0077,
+- `PRICES` (`../Fonnus/app/src/domain/pricing.ts:56-141`): STT per minute `nova-3` 0.0077,
   `stt-rt-v5` 0.002, `enhanced` 0.43/60, `fake/echo-1` 0; TTS per 1 000 chars `sonic-3.6`
-  0.05, `sonic-3.5` 0.05, `eleven_flash_v2_5` 0.05, `fake/echo-1` 0; LLM per Mtok only
-  `qwen/qwen3.5-397b-a17b` (0.39 / 2.34 / 0.39 cached) and `fake/echo-1`. **No row for
+  0.05, `sonic-3.5` 0.05, `eleven_flash_v2_5` 0.05, `eleven_v4_turbo` 0.04 and `eleven_v4`
+  0.08 (the dialogue-socket models, ASSUMED in pipeline ADR 0033 A10 until settled against
+  the vendor's usage page), `fake/echo-1` 0; LLM per Mtok only
+  `qwen/qwen3.5-397b-a17b` (0.39 / 2.34 / 0.39 cached) and `fake/echo-1`; router per Mtok
+  `jev-1.13.0` (0.042 in / 0 out) and `fake/echo-1`. **No row for
   `openai/gpt-oss-120b`**, the model the box runs (brief) — every LLM cell on a call it
   ran reads `unpriced (openai/gpt-oss-120b)` until G1 lands.
 - `llmCostUsd` clamps `tokensCached` to `[0, tokensIn]` and charges fresh + cached + out
-  (`pricing.ts:195-205`); `tokens_cached` is the cached *share* of `tokens_in`, not on top
+  (`pricing.ts:240-251`); `tokens_cached` is the cached *share* of `tokens_in`, not on top
   of it (contract §3 `turn` table, `:123`).
 - `turn.llm_model` / `tokens_*` come from `t.llm` (`persistence/rows.ts` `turnRow`), and
   `call-sink.ts:166-171` pushes the same `t.llm` into `llmUsage`, which `callCostVnd`

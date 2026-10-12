@@ -11,8 +11,8 @@ import { describe, expect, it } from 'vitest';
  * lives here: the `contract-hash.test.ts` shape without the contract line.
  */
 
-/** sha256 of the copy, pipeline commit 3f08b8b (2026-10-01). */
-const PINNED_SHA256 = '6cc69184cb28807d75682e671012a5cd3225616d7f3b2436469b2eb6b8b148bc';
+/** sha256 of the copy, pipeline commit 313ed5d (2026-10-12). */
+const PINNED_SHA256 = 'a6683db5c362023b133730ae0c14d93c6d8f2d51e982d49bcfdbd58d1639b049';
 
 const here = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
 const copyPath = here('./pricing.ts');
